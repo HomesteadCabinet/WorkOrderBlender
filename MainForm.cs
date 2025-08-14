@@ -435,6 +435,20 @@ namespace WorkOrderBlender
       OpenSettingsDialog();
     }
 
+    private void btnUpdate_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        Program.CheckForUpdates(silent: false);
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Manual update check failed", ex);
+        MessageBox.Show("Failed to check for updates: " + ex.Message, "Update Check",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     private void OpenSettingsDialog()
     {
       var dlg = new Form
