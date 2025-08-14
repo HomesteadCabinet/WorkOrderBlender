@@ -129,8 +129,8 @@ namespace WorkOrderBlender
         {
             Text = "Pending Changes Preview";
             StartPosition = FormStartPosition.CenterScreen;
-            Width = 1000;
-            Height = 650;
+            Width = 300;
+            Height = 450;
             MinimumSize = new Size(800, 450);
             Icon = SystemIcons.Information;
             ShowInTaskbar = false;

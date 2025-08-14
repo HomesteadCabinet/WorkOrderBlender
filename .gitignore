@@ -1,3 +1,7 @@
 
 bin/Debug/net48/
 obj/
+
+bin/
+
+installer/WorkOrderBlender.wixpdb

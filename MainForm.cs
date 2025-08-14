@@ -37,6 +37,33 @@ namespace WorkOrderBlender
     public MainForm()
     {
       InitializeComponent();
+
+      // Set window title with version number
+      var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+      this.Text = $"Work Order SDF Consolidator v{version.Major}.{version.Minor}.{version.Build}";
+
+      // Set the application icon
+      try
+      {
+        string iconPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "resources", "icon.ico");
+        if (File.Exists(iconPath))
+        {
+          this.Icon = new System.Drawing.Icon(iconPath);
+        }
+        else
+        {
+          // Try embedded resource as fallback
+          var iconStream = System.Reflection.Assembly.GetExecutingAssembly().GetManifestResourceStream("WorkOrderBlender.resources.icon.ico");
+          if (iconStream != null)
+          {
+            this.Icon = new System.Drawing.Icon(iconStream);
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Failed to load application icon", ex);
+      }
       try
       {
         userConfig = UserConfig.Load(DefaultRoot, DefaultOutput, SdfFileName);
@@ -435,19 +462,7 @@ namespace WorkOrderBlender
       OpenSettingsDialog();
     }
 
-    private void btnUpdate_Click(object sender, EventArgs e)
-    {
-      try
-      {
-        Program.CheckForUpdates(silent: false);
-      }
-      catch (Exception ex)
-      {
-        Program.Log("Manual update check failed", ex);
-        MessageBox.Show("Failed to check for updates: " + ex.Message, "Update Check",
-          MessageBoxButtons.OK, MessageBoxIcon.Error);
-      }
-    }
+
 
     private void OpenSettingsDialog()
     {
@@ -466,7 +481,7 @@ namespace WorkOrderBlender
       {
         Dock = DockStyle.Fill,
         ColumnCount = 4,
-        RowCount = 3,
+        RowCount = 4,
         Padding = new Padding(10)
       };
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -522,11 +537,71 @@ namespace WorkOrderBlender
       table.Controls.Add(lblSdf, 0, 2);
       table.Controls.Add(txtSdfLocal, 1, 2);
 
-      var panelButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, Height = 40, Padding = new Padding(10) };
-      var btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
-      var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
-      panelButtons.Controls.Add(btnOk);
-      panelButtons.Controls.Add(btnCancel);
+      // Add Check Updates button
+      // var lblUpdates = new Label { Text = "Application:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var btnCheckUpdates = new Button {
+        Text = "Check for Updates",
+        AutoSize = true,
+        Anchor = AnchorStyles.Left
+      };
+      btnCheckUpdates.Click += (s, e) =>
+      {
+        try
+        {
+          Program.CheckForUpdates(silent: false);
+        }
+        catch (Exception ex)
+        {
+          Program.Log("Manual update check failed", ex);
+          MessageBox.Show("Failed to check for updates: " + ex.Message, "Update Check",
+            MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+      };
+
+      // table.Controls.Add(lblUpdates, 0, 3);
+      // table.Controls.Add(btnCheckUpdates, 1, 3);
+
+      // Create a table layout for buttons with precise positioning
+      var panelButtons = new TableLayoutPanel
+      {
+        Dock = DockStyle.Bottom,
+        Height = 50,
+        Padding = new Padding(10),
+        ColumnCount = 3,
+        RowCount = 1
+      };
+
+      // Set up columns: Check Updates (left), spacer (stretch), OK+Cancel (right)
+      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Check Updates
+      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // Spacer
+      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // OK+Cancel
+      panelButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
+      var btnOk = new Button {
+        Text = "OK",
+        DialogResult = DialogResult.OK,
+        AutoSize = true
+      };
+      var btnCancel = new Button {
+        Text = "Cancel",
+        DialogResult = DialogResult.Cancel,
+        AutoSize = true
+      };
+
+      // Create a panel for OK+Cancel buttons (right side)
+      var rightButtonPanel = new FlowLayoutPanel
+      {
+        FlowDirection = FlowDirection.RightToLeft,
+        AutoSize = true,
+        Margin = new Padding(0)
+      };
+      rightButtonPanel.Controls.Add(btnOk);
+      rightButtonPanel.Controls.Add(btnCancel);
+
+      // Position the buttons: Check Updates on far left, OK+Cancel on right
+      panelButtons.Controls.Add(btnCheckUpdates, 0, 0); // Far left
+      panelButtons.Controls.Add(rightButtonPanel, 2, 0); // Far right
+
       dlg.Controls.Add(panelButtons);
       dlg.AcceptButton = btnOk;
       dlg.CancelButton = btnCancel;
@@ -927,17 +1002,33 @@ namespace WorkOrderBlender
 
     private static void CopyDatabaseCombined(string sourcePath, SqlCeConnection destConn, string sourceTag, string sourcePathDir)
     {
-      using (var srcConn = SqlCeUtils.CreateReadOnlyConnection(sourcePath))
+      string tempCopyPath;
+      using (var srcConn = SqlCeUtils.OpenWithFallback(sourcePath, out tempCopyPath))
       {
-        srcConn.Open();
-        var schema = srcConn.GetSchema("Tables");
-        foreach (DataRow row in schema.Rows)
+        try
         {
-          string table = row["TABLE_NAME"].ToString();
-          if (table.StartsWith("__")) continue;
+          var tables = new List<string>();
+          using (var cmd = new SqlCeCommand("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'TABLE'", srcConn))
+          {
+            using (var r = cmd.ExecuteReader())
+            {
+              while (r.Read()) tables.Add(r.GetString(0));
+            }
+          }
+          foreach (string table in tables)
+          {
+            if (table.StartsWith("__")) continue;
 
-          EnsureDestinationTableCombined(destConn, srcConn, table);
-          CopyRowsCombined(srcConn, destConn, table, sourceTag, sourcePathDir);
+            EnsureDestinationTableCombined(destConn, srcConn, table);
+            CopyRowsCombined(srcConn, destConn, table, sourceTag, sourcePathDir);
+          }
+        }
+        finally
+        {
+          if (!string.IsNullOrEmpty(tempCopyPath))
+          {
+            try { File.Delete(tempCopyPath); } catch { }
+          }
         }
       }
     }

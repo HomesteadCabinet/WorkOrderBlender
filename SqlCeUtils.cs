@@ -14,7 +14,19 @@ namespace WorkOrderBlender
     public static SqlCeConnection CreateReadOnlyConnection(string dataSourcePath)
     {
       string tempDir = GetTempDirectory();
-      try { Directory.CreateDirectory(tempDir); } catch { }
+      try
+      {
+        Directory.CreateDirectory(tempDir);
+        // Test write access to temp directory
+        string testFile = Path.Combine(tempDir, "test_" + Guid.NewGuid().ToString("N") + ".tmp");
+        File.WriteAllText(testFile, "test");
+        File.Delete(testFile);
+      }
+      catch
+      {
+        // If we can't write to our preferred temp dir, use system temp as fallback
+        tempDir = Path.GetTempPath();
+      }
       return new SqlCeConnection($"Data Source={dataSourcePath};Mode=Read Only;Temp File Directory={tempDir}");
     }
 
@@ -32,7 +44,19 @@ namespace WorkOrderBlender
         try
         {
           string tempDir = GetTempDirectory();
-          Directory.CreateDirectory(tempDir);
+          try
+          {
+            Directory.CreateDirectory(tempDir);
+            // Test write access to temp directory
+            string testFile = Path.Combine(tempDir, "test_" + Guid.NewGuid().ToString("N") + ".tmp");
+            File.WriteAllText(testFile, "test");
+            File.Delete(testFile);
+          }
+          catch
+          {
+            // If we can't write to our preferred temp dir, use system temp as fallback
+            tempDir = Path.GetTempPath();
+          }
           string temp = Path.Combine(tempDir, Path.GetFileName(sourcePath) + "." + Guid.NewGuid().ToString("N") + ".sdf");
           File.Copy(sourcePath, temp, true);
           var rw = new SqlCeConnection($"Data Source={temp};");

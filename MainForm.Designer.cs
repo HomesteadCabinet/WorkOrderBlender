@@ -247,12 +247,11 @@ namespace WorkOrderBlender
       this.panelSearchLeft.TabIndex = 14;
       // build a table layout to avoid overlap
       var tableSearch = new System.Windows.Forms.TableLayoutPanel();
-      tableSearch.ColumnCount = 5;
+      tableSearch.ColumnCount = 4;
       tableSearch.RowCount = 1;
       tableSearch.Dock = System.Windows.Forms.DockStyle.Fill;
       tableSearch.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
       tableSearch.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-      tableSearch.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
       tableSearch.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
       tableSearch.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
       tableSearch.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
@@ -274,21 +273,13 @@ namespace WorkOrderBlender
       this.btnSelectAll.UseVisualStyleBackColor = true;
       this.btnSelectAll.Click += new System.EventHandler(this.btnSelectAll_Click);
       tableSearch.Controls.Add(this.btnSelectAll, 2, 0);
-      var btnSettings = new System.Windows.Forms.Button();
+            var btnSettings = new System.Windows.Forms.Button();
       btnSettings.AutoSize = true;
       btnSettings.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
       btnSettings.Text = "Settings...";
       btnSettings.UseVisualStyleBackColor = true;
       btnSettings.Click += new System.EventHandler(this.btnSettings_Click);
       tableSearch.Controls.Add(btnSettings, 3, 0);
-
-      var btnUpdate = new System.Windows.Forms.Button();
-      btnUpdate.AutoSize = true;
-      btnUpdate.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
-      btnUpdate.Text = "Check Updates";
-      btnUpdate.UseVisualStyleBackColor = true;
-      btnUpdate.Click += new System.EventHandler(this.btnUpdate_Click);
-      tableSearch.Controls.Add(btnUpdate, 4, 0);
 
       // panelMetricsTop
       //

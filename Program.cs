@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 using System.Windows.Forms;
-// using AutoUpdaterDotNET; // Uncomment when AutoUpdater.NET is properly referenced
+using AutoUpdaterDotNET;
 
 namespace WorkOrderBlender
 {
@@ -52,11 +52,13 @@ namespace WorkOrderBlender
         }
       };
 
-      try
+            try
       {
-        // TODO: Uncomment when AutoUpdater.NET is properly integrated
-        // ConfigureAutoUpdater();
-        // CheckForUpdates(silent: true);
+        // Configure auto-updater
+        ConfigureAutoUpdater();
+
+        // Check for updates on startup (optional)
+        CheckForUpdates(silent: true);
 
         Application.Run(new MainForm());
       }
@@ -67,8 +69,7 @@ namespace WorkOrderBlender
       }
     }
 
-    /* TODO: Uncomment when AutoUpdater.NET is properly integrated
-    private static void ConfigureAutoUpdater()
+        private static void ConfigureAutoUpdater()
     {
       // Configure AutoUpdater.NET
       AutoUpdater.UpdateMode = Mode.ForcedDownload;
@@ -89,30 +90,53 @@ namespace WorkOrderBlender
       AutoUpdater.ReportErrors = true;
     }
 
-    public static void CheckForUpdates(bool silent = false)
+        public static void CheckForUpdates(bool silent = false)
     {
       try
       {
         // URL to your update XML file on GitHub
-        // This will be: https://raw.githubusercontent.com/HomesteadCabinet/WorkOrderBlender/main/update.xml
+        // TODO: Uncomment when HomesteadCabinet/WorkOrderBlender repository is set up
         string updateUrl = "https://raw.githubusercontent.com/HomesteadCabinet/WorkOrderBlender/main/update.xml";
 
-        if (silent)
+        // TEMPORARY: Using test URL to verify auto-updater functionality
+        // string updateUrl = "https://raw.githubusercontent.com/ravibpatel/AutoUpdater.NET/master/AutoUpdaterTest/update.xml";
+
+        // Configure AutoUpdater for this check
+        AutoUpdater.Synchronous = true; // Make it synchronous for better error handling
+
+        // Store the silent flag for use in event handlers
+        bool isSilentCheck = silent;
+
+        // Set up event handler for update check results
+        AutoUpdater.CheckForUpdateEvent += (args) =>
         {
-          // Silent check - don't show UI if no updates
-          AutoUpdater.CheckForUpdateEvent += (args) =>
+          try
           {
-            if (!args.IsUpdateAvailable)
+            if (args.IsUpdateAvailable)
             {
-              // No updates available, continue silently
-              return;
+              // Update available - show the update dialog
+              AutoUpdater.ShowUpdateForm(args);
             }
+            else if (!isSilentCheck)
+            {
+              // Manual check and no updates - inform user
+              MessageBox.Show("You are using the latest version.", "No Updates Available",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            // If silent and no updates, do nothing
+          }
+          catch (Exception ex)
+          {
+            Log("Error in CheckForUpdateEvent handler", ex);
+            if (!isSilentCheck)
+            {
+              MessageBox.Show("Error checking for updates: " + ex.Message, "Update Check Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+          }
+        };
 
-            // Update available - show the update dialog
-            AutoUpdater.ShowUpdateForm(args);
-          };
-        }
-
+        Log($"Checking for updates from: {updateUrl}");
         AutoUpdater.Start(updateUrl);
       }
       catch (Exception ex)
@@ -120,20 +144,9 @@ namespace WorkOrderBlender
         Log("Auto-update check failed", ex);
         if (!silent)
         {
-          MessageBox.Show("Failed to check for updates: " + ex.Message, "Update Check",
+          MessageBox.Show("Failed to check for updates: " + ex.Message + "\n\nPlease check your internet connection and try again.", "Update Check",
             MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
-      }
-    }
-    */
-
-    // Temporary placeholder until AutoUpdater.NET is integrated
-    public static void CheckForUpdates(bool silent = false)
-    {
-      if (!silent)
-      {
-        MessageBox.Show("Auto-update functionality will be available once AutoUpdater.NET is properly integrated.\n\nFor now, check the GitHub releases page for updates.",
-          "Check for Updates", MessageBoxButtons.OK, MessageBoxIcon.Information);
       }
     }
   }

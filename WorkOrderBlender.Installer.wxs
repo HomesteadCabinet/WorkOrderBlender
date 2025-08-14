@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Work Order Blender"
+           Language="1033"
+           Version="1.0.1.0"
+           Manufacturer="WorkOrderBlender"
+           UpgradeCode="12345678-1234-1234-1234-123456789012">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Work Order Blender is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Properties -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <!-- Icon definition -->
+    <Icon Id="ApplicationIcon.ico" SourceFile="resources\icon.ico" />
+
+    <!-- Features -->
+    <Feature Id="ProductFeature"
+             Title="Work Order Blender">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+
+    <!-- Directory structure -->
+    <StandardDirectory Id="ProgramFilesFolder">
+      <Directory Id="INSTALLFOLDER" Name="WorkOrderBlender">
+        <!-- Main executable -->
+        <Component Id="MainExecutable" Guid="11111111-1111-1111-1111-111111111111">
+          <File Id="WorkOrderBlender.exe"
+                Name="WorkOrderBlender.exe"
+                Source="bin\Release\net48\WorkOrderBlender.exe"
+                KeyPath="yes" />
+
+          <!-- Configuration file -->
+          <File Id="WorkOrderBlender.exe.config"
+                Name="WorkOrderBlender.exe.config"
+                Source="bin\Release\net48\WorkOrderBlender.exe.config" />
+
+          <!-- Dependencies -->
+          <File Id="AutoUpdater.NET.dll"
+                Name="AutoUpdater.NET.dll"
+                Source="bin\Release\net48\AutoUpdater.NET.dll" />
+
+          <!-- SQL CE Managed Assembly -->
+          <File Id="System.Data.SqlServerCe.dll"
+                Name="System.Data.SqlServerCe.dll"
+                Source="bin\Release\net48\System.Data.SqlServerCe.dll" />
+
+          <!-- SQL CE Native DLLs in root for direct loading -->
+          <File Id="sqlceca40_root" Source="bin\Release\net48\sqlceca40.dll" />
+          <File Id="sqlcecompact40_root" Source="bin\Release\net48\sqlcecompact40.dll" />
+          <File Id="sqlceer40EN_root" Source="bin\Release\net48\sqlceer40EN.dll" />
+          <File Id="sqlceme40_root" Source="bin\Release\net48\sqlceme40.dll" />
+          <File Id="sqlceqp40_root" Source="bin\Release\net48\sqlceqp40.dll" />
+          <File Id="sqlcese40_root" Source="bin\Release\net48\sqlcese40.dll" />
+        </Component>
+
+        <!-- SQL CE Runtime Components -->
+        <Directory Id="SqlCeLibDir" Name="lib">
+          <Directory Id="SqlCeX86Dir" Name="x86">
+            <Component Id="SqlCeX86Runtime" Guid="44444444-4444-4444-4444-444444444444">
+              <File Id="sqlceca40_x86" Source="bin\Release\net48\lib\x86\sqlceca40.dll" />
+              <File Id="sqlcecompact40_x86" Source="bin\Release\net48\lib\x86\sqlcecompact40.dll" />
+              <File Id="sqlceer40EN_x86" Source="bin\Release\net48\lib\x86\sqlceer40EN.dll" />
+              <File Id="sqlceme40_x86" Source="bin\Release\net48\lib\x86\sqlceme40.dll" />
+              <File Id="sqlceqp40_x86" Source="bin\Release\net48\lib\x86\sqlceqp40.dll" />
+              <File Id="sqlcese40_x86" Source="bin\Release\net48\lib\x86\sqlcese40.dll" />
+            </Component>
+          </Directory>
+
+          <Directory Id="SqlCeAmd64Dir" Name="amd64">
+            <Component Id="SqlCeAmd64Runtime" Guid="55555555-5555-5555-5555-555555555555">
+              <File Id="sqlceca40_amd64" Source="bin\Release\net48\lib\amd64\sqlceca40.dll" />
+              <File Id="sqlcecompact40_amd64" Source="bin\Release\net48\lib\amd64\sqlcecompact40.dll" />
+              <File Id="sqlceer40EN_amd64" Source="bin\Release\net48\lib\amd64\sqlceer40EN.dll" />
+              <File Id="sqlceme40_amd64" Source="bin\Release\net48\lib\amd64\sqlceme40.dll" />
+              <File Id="sqlceqp40_amd64" Source="bin\Release\net48\lib\amd64\sqlceqp40.dll" />
+              <File Id="sqlcese40_amd64" Source="bin\Release\net48\lib\amd64\sqlcese40.dll" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Start Menu -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="WorkOrderBlender">
+        <Component Id="ApplicationShortcut" Guid="22222222-2222-2222-2222-222222222222">
+          <Shortcut Id="ApplicationStartMenuShortcut"
+                    Name="Work Order Blender"
+                    Description="Work Order SDF Consolidator"
+                    Target="[INSTALLFOLDER]WorkOrderBlender.exe"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="ApplicationIcon.ico" />
+          <RemoveFolder Id="ApplicationProgramsFolder"
+                        Directory="ApplicationProgramsFolder"
+                        On="uninstall" />
+          <RegistryValue Root="HKCU"
+                        Key="Software\WorkOrderBlender"
+                        Name="installed"
+                        Type="integer"
+                        Value="1"
+                        KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Desktop shortcut -->
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="ApplicationDesktopShortcut" Guid="33333333-3333-3333-3333-333333333333">
+        <Shortcut Id="ApplicationDesktopShortcut"
+                  Name="Work Order Blender"
+                  Description="Work Order SDF Consolidator"
+                  Target="[INSTALLFOLDER]WorkOrderBlender.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="ApplicationIcon.ico" />
+      </Component>
+    </StandardDirectory>
+
+
+
+    <!-- Component groups -->
+    <ComponentGroup Id="ProductComponents">
+      <ComponentRef Id="MainExecutable" />
+      <ComponentRef Id="SqlCeX86Runtime" />
+      <ComponentRef Id="SqlCeAmd64Runtime" />
+      <ComponentRef Id="ApplicationShortcut" />
+      <ComponentRef Id="ApplicationDesktopShortcut" />
+    </ComponentGroup>
+
+    <!-- Custom actions for launch after install -->
+    <CustomAction Id="LaunchApplication"
+                  FileRef="WorkOrderBlender.exe"
+                  ExeCommand=""
+                  Return="asyncNoWait" />
+
+  </Package>
+</Wix>

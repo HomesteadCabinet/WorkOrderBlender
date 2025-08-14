@@ -1,3 +1,4 @@
+
 using System;
 using System.Data;
 using System.Data.SqlServerCe;
@@ -7,6 +8,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Diagnostics;
 using System.IO;
+using System.Drawing;
 
 namespace WorkOrderBlender
 {
@@ -35,11 +37,12 @@ namespace WorkOrderBlender
 
     private readonly SplitContainer splitContainer;
     private readonly TextBox txtSearch;
-    private readonly CheckBox chkAllowEdit;
     private readonly Label lblStatus;
     private readonly DataGridView grid;
+    private readonly Panel gridBorderPanel;
     private readonly ContextMenuStrip ctxMenu;
     private bool isApplyingLayout;
+    private bool isEditMode = false; // Track edit mode state
 
     private SqlCeConnection connection;
     private SqlCeDataAdapter adapter;
@@ -76,25 +79,21 @@ namespace WorkOrderBlender
       var layoutTop = new TableLayoutPanel
       {
         Dock = DockStyle.Fill,
-        ColumnCount = 5,
+        ColumnCount = 3,
         RowCount = 1,
       };
       layoutTop.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       layoutTop.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
       layoutTop.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      layoutTop.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      layoutTop.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       panelTop.Controls.Add(layoutTop);
 
       var lblSearch = new Label { Text = "Search:", AutoSize = true, Anchor = AnchorStyles.Left };
       txtSearch = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 600 };
-      chkAllowEdit = new CheckBox { Text = "Allow editing", AutoSize = true, Checked = false, Anchor = AnchorStyles.Left };
       lblStatus = new Label { Text = string.Empty, AutoSize = true, Anchor = AnchorStyles.Left };
 
       layoutTop.Controls.Add(lblSearch, 0, 0);
       layoutTop.Controls.Add(txtSearch, 1, 0);
-      layoutTop.Controls.Add(chkAllowEdit, 2, 0);
-      layoutTop.Controls.Add(lblStatus, 4, 0);
+      layoutTop.Controls.Add(lblStatus, 2, 0);
 
       grid = new DataGridView
       {
@@ -107,11 +106,19 @@ namespace WorkOrderBlender
         SelectionMode = DataGridViewSelectionMode.FullRowSelect,
         MultiSelect = true,
         EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2,
+        BorderStyle = BorderStyle.None,
       };
       grid.DefaultCellStyle.WrapMode = DataGridViewTriState.False;
       grid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
       grid.AllowUserToOrderColumns = true;
-      splitContainer.Panel2.Controls.Add(grid);
+      gridBorderPanel = new Panel
+      {
+        Dock = DockStyle.Fill,
+        Padding = new Padding(4),
+        BackColor = SystemColors.Control
+      };
+      gridBorderPanel.Controls.Add(grid);
+      splitContainer.Panel2.Controls.Add(gridBorderPanel);
 
       // Context menu
       ctxMenu = new ContextMenuStrip();
@@ -126,7 +133,6 @@ namespace WorkOrderBlender
       Load += MetricsDialog_Load;
       FormClosing += MetricsDialog_FormClosing;
       txtSearch.TextChanged += TxtSearch_TextChanged;
-      chkAllowEdit.CheckedChanged += ChkAllowEdit_CheckedChanged;
       grid.CellValueChanged += Grid_CellValueChanged;
       grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
       grid.CellEndEdit += Grid_CellEndEdit;
@@ -136,10 +142,14 @@ namespace WorkOrderBlender
       grid.MouseDown += Grid_MouseDown;
       grid.MouseUp += Grid_MouseUp;
       grid.MouseClick += Grid_MouseClick;
-            grid.Sorted += (s, e) => { ApplyPersistedColumnWidths(); ApplyPersistedColumnOrder(); };
-            grid.SizeChanged += (s, e) => ApplyPersistedColumnWidths();
-            grid.ColumnDisplayIndexChanged += Grid_ColumnDisplayIndexChanged;
-            grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
+      grid.DoubleClick += Grid_DoubleClick; // Add double-click handler
+      grid.Sorted += (s, e) => { ApplyPersistedColumnWidths(); ApplyPersistedColumnOrder(); };
+      grid.SizeChanged += (s, e) => ApplyPersistedColumnWidths();
+      grid.ColumnDisplayIndexChanged += Grid_ColumnDisplayIndexChanged;
+      grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
+
+      // Initialize grid state based on edit mode
+      InitializeGridEditState();
     }
 
     // Pre-consolidation constructor: loads from multiple source SDFs into memory
@@ -148,7 +158,25 @@ namespace WorkOrderBlender
     {
       this.showFromConsolidated = false;
       this.sourceSdfPaths = inputSdfPaths ?? new List<string>();
-      chkAllowEdit.Checked = allowEditingInMemory;
+      this.isEditMode = allowEditingInMemory; // Set initial edit mode state
+      InitializeGridEditState();
+    }
+
+    private void InitializeGridEditState()
+    {
+      grid.ReadOnly = !isEditMode;
+      if (isEditMode)
+      {
+        grid.EditMode = DataGridViewEditMode.EditOnKeystroke;
+        grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+        gridBorderPanel.BackColor = Color.LimeGreen;
+      }
+      else
+      {
+        grid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
+        grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+        gridBorderPanel.BackColor = SystemColors.Control;
+      }
     }
 
     private void MetricsDialog_Load(object sender, EventArgs e)
@@ -162,12 +190,35 @@ namespace WorkOrderBlender
           {
             grid.DataSource = null;
             lblStatus.Text = "No consolidated database found. Run consolidation first.";
-            chkAllowEdit.Enabled = false;
+            // chkAllowEdit.Enabled = false; // Removed checkbox
             return;
           }
 
-          connection = new SqlCeConnection($"Data Source={databasePath};");
-          connection.Open();
+          // Try to open with read-write access first, fallback to read-only if needed
+          try
+          {
+            connection = new SqlCeConnection($"Data Source={databasePath};");
+            connection.Open();
+          }
+          catch (Exception ex)
+          {
+            // If failed, try read-only access
+            Program.Log($"Failed to open consolidated database read-write, trying read-only: {ex.Message}");
+            try
+            {
+              connection?.Close();
+              connection?.Dispose();
+              connection = SqlCeUtils.CreateReadOnlyConnection(databasePath);
+              connection.Open();
+              lblStatus.Text = "Database opened in read-only mode. Editing disabled.";
+              canPersistEdits = false;
+            }
+            catch (Exception ex2)
+            {
+              Program.Log($"Failed to open consolidated database read-only: {ex2.Message}");
+              throw new Exception($"Failed to open database: {ex.Message}. Read-only attempt also failed: {ex2.Message}", ex);
+            }
+          }
 
           adapter = new SqlCeDataAdapter($"SELECT * FROM [" + tableName + "]", connection);
           adapter.MissingSchemaAction = MissingSchemaAction.AddWithKey;
@@ -190,84 +241,112 @@ namespace WorkOrderBlender
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
 
-          // Prepare manual commands for DB persistence using LinkID as PK
-          var keyCol = FindLinkIdColumn(dataTable.Columns)?.ColumnName;
-          ConfigureManualAdapterCommands(connection, keyCol);
-          canPersistEdits = adapter.UpdateCommand != null;
+          // Prepare manual commands for DB persistence using LinkID as PK (only if not already set to read-only)
+          if (canPersistEdits != false) // Don't override if already set to false due to read-only
+          {
+            var keyCol = FindLinkIdColumn(dataTable.Columns)?.ColumnName;
+            ConfigureManualAdapterCommands(connection, keyCol);
+            canPersistEdits = adapter.UpdateCommand != null;
+          }
 
-          lblStatus.Text = canPersistEdits ? "Editing updates the consolidated database." : "Editing disabled: no suitable key column found.";
-          chkAllowEdit.Enabled = canPersistEdits;
+          // Set status message if not already set by read-only fallback
+          if (lblStatus.Text.IndexOf("read-only", StringComparison.OrdinalIgnoreCase) < 0)
+          {
+            lblStatus.Text = canPersistEdits ? "Editing updates the consolidated database. Double-click to enable." : "Editing disabled: no suitable key column found.";
+          }
+          // chkAllowEdit.Enabled = canPersistEdits; // Removed checkbox
+
+          // Ensure grid state matches current edit mode
+          InitializeGridEditState();
         }
         else
         {
           // Pre-consolidation: build DataTable by unioning rows from all sources, and applying in-memory edits
           dataTable = new DataTable(tableName);
           DataTable schema = null;
-          foreach (var path in sourceSdfPaths)
+          var tempFiles = new List<string>();
+          try
           {
-            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) continue;
-            using (var conn = SqlCeUtils.CreateReadOnlyConnection(path))
+            foreach (var path in sourceSdfPaths)
             {
-              conn.Open();
-              try
-              {
-                using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", conn))
-                using (var reader = cmd.ExecuteReader(CommandBehavior.SchemaOnly))
-                {
-                  schema = reader.GetSchemaTable();
-                  break;
-                }
-              }
-              catch { }
-            }
-          }
-          if (schema == null)
-          {
-            lblStatus.Text = "Table not found in selected sources.";
-            chkAllowEdit.Enabled = false;
-            return;
-          }
+              if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) continue;
 
-          foreach (DataRow r in schema.Rows)
-          {
-            var colName = r["ColumnName"].ToString();
-            var dataType = (Type)r["DataType"];
-            dataTable.Columns.Add(colName, dataType);
-          }
-          var pkCol = FindLinkIdColumn(dataTable.Columns);
-          if (pkCol != null) dataTable.PrimaryKey = new[] { pkCol };
-
-          foreach (var path in sourceSdfPaths)
-          {
-            if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) continue;
-            using (var conn = SqlCeUtils.CreateReadOnlyConnection(path))
-            {
-              conn.Open();
-              try
+              string tempCopyPath;
+              using (var conn = SqlCeUtils.OpenWithFallback(path, out tempCopyPath))
               {
-                using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", conn))
-                using (var reader = cmd.ExecuteReader())
+                if (!string.IsNullOrEmpty(tempCopyPath)) tempFiles.Add(tempCopyPath);
+
+                try
                 {
-                  var values = new object[dataTable.Columns.Count];
-                  while (reader.Read())
+                  using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", conn))
+                  using (var reader = cmd.ExecuteReader(CommandBehavior.SchemaOnly))
                   {
-                    reader.GetValues(values);
-                    var row = dataTable.NewRow();
-                    row.ItemArray = (object[])values.Clone();
-                    // Apply pending overrides
-                    var linkIdString = GetLinkIdString(row);
-                    if (linkIdString != null && Program.Edits.TryGetRowOverrides(tableName, linkIdString, out var overrides))
-                    {
-                      foreach (var kv in overrides)
-                      {
-                        if (dataTable.Columns.Contains(kv.Key)) row[kv.Key] = kv.Value ?? DBNull.Value;
-                      }
-                    }
-                    AddOrMergeRowByLinkId(row);
+                    schema = reader.GetSchemaTable();
+                    break;
                   }
                 }
+                catch { }
               }
-              catch { }
+            }
+
+            if (schema == null)
+            {
+              lblStatus.Text = "Table not found in selected sources.";
+              // chkAllowEdit.Enabled = false; // Removed checkbox
+              return;
+            }
+
+            foreach (DataRow r in schema.Rows)
+            {
+              var colName = r["ColumnName"].ToString();
+              var dataType = (Type)r["DataType"];
+              dataTable.Columns.Add(colName, dataType);
+            }
+            var pkCol = FindLinkIdColumn(dataTable.Columns);
+            if (pkCol != null) dataTable.PrimaryKey = new[] { pkCol };
+
+            foreach (var path in sourceSdfPaths)
+            {
+              if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) continue;
+
+              string tempCopyPath;
+              using (var conn = SqlCeUtils.OpenWithFallback(path, out tempCopyPath))
+              {
+                if (!string.IsNullOrEmpty(tempCopyPath)) tempFiles.Add(tempCopyPath);
+                try
+                {
+                  using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", conn))
+                  using (var reader = cmd.ExecuteReader())
+                  {
+                    var values = new object[dataTable.Columns.Count];
+                    while (reader.Read())
+                    {
+                      reader.GetValues(values);
+                      var row = dataTable.NewRow();
+                      row.ItemArray = (object[])values.Clone();
+                      // Apply pending overrides
+                      var linkIdString = GetLinkIdString(row);
+                      if (linkIdString != null && Program.Edits.TryGetRowOverrides(tableName, linkIdString, out var overrides))
+                      {
+                        foreach (var kv in overrides)
+                        {
+                          if (dataTable.Columns.Contains(kv.Key)) row[kv.Key] = kv.Value ?? DBNull.Value;
+                        }
+                      }
+                      AddOrMergeRowByLinkId(row);
+                    }
+                  }
+                }
+                catch { }
+              }
+            }
+          }
+          finally
+          {
+            // Clean up any temporary database copies
+            foreach (var tempFile in tempFiles.Distinct())
+            {
+              try { System.IO.File.Delete(tempFile); } catch { }
             }
           }
 
@@ -276,10 +355,15 @@ namespace WorkOrderBlender
           ApplyPreferredColumnOrder();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
+          // Mark all initially loaded rows as unchanged so only user edits are tracked
+          dataTable.AcceptChanges();
           canPersistEdits = true; // persist to in-memory store only
-          chkAllowEdit.Enabled = true;
-          lblStatus.Text = "Editing updates the in-memory buffer until consolidation.";
+          // chkAllowEdit.Enabled = true; // Removed checkbox
+          lblStatus.Text = "Editing updates the in-memory buffer until consolidation. Double-click to enable.";
         }
+
+        // Ensure grid state matches current edit mode
+        InitializeGridEditState();
       }
       catch (Exception ex)
       {
@@ -353,9 +437,25 @@ namespace WorkOrderBlender
 
     private void MetricsDialog_FormClosing(object sender, FormClosingEventArgs e)
     {
-      try { connection?.Close(); } catch { }
+      try
+      {
+        // Ensure any in-progress cell edit is committed before closing
+        try { Validate(); } catch { }
+        try { if (grid != null && grid.IsCurrentCellInEditMode) grid.EndEdit(DataGridViewDataErrorContexts.Commit); } catch { }
+        try { if (grid != null) grid.CommitEdit(DataGridViewDataErrorContexts.Commit); } catch { }
+        try { if (grid?.DataSource is BindingSource bs) bs.EndEdit(); } catch { }
+
+        // Persist any pending changes only for consolidated mode
+        // Pre-consolidation mode saves changes immediately to in-memory store
+        if (showFromConsolidated && connection != null)
+        {
+          TrySaveChanges();
+        }
+      }
+      catch { }
       finally
       {
+        try { connection?.Close(); } catch { }
         connection?.Dispose();
         adapter?.Dispose();
         dataTable?.Dispose();
@@ -375,9 +475,9 @@ namespace WorkOrderBlender
       try
       {
         // Persist the specific changed cell after editing completes
-        if (!isInitializing && chkAllowEdit.Checked && e.RowIndex >= 0 && e.ColumnIndex >= 0)
+        if (!isInitializing && isEditMode && e.RowIndex >= 0 && e.ColumnIndex >= 0)
         {
-          TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex);
+          TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex, true);
         }
       }
       catch { }
@@ -385,26 +485,45 @@ namespace WorkOrderBlender
 
     private void Grid_CellValueChanged(object sender, DataGridViewCellEventArgs e)
     {
-      if (isInitializing || !chkAllowEdit.Checked) return;
+      if (isInitializing || !isEditMode) return;
       if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
       {
-        try { TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex); }
+        try { TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex, false); }
         catch (Exception ex) { Program.Log("CellValueChanged save failed", ex); MessageBox.Show("Save failed: " + ex.Message); }
       }
     }
 
-    private void ChkAllowEdit_CheckedChanged(object sender, EventArgs e)
+    private void Grid_DoubleClick(object sender, EventArgs e)
     {
-      grid.ReadOnly = !chkAllowEdit.Checked;
-      if (!grid.ReadOnly)
+      // Toggle edit mode on double-click
+      isEditMode = !isEditMode;
+      grid.ReadOnly = !isEditMode;
+      if (isEditMode)
       {
-      grid.EditMode = DataGridViewEditMode.EditOnKeystroke;
+        grid.EditMode = DataGridViewEditMode.EditOnKeystroke;
         grid.SelectionMode = DataGridViewSelectionMode.CellSelect;
       }
       else
       {
+        grid.EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2;
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
       }
+      UpdateEditModeStatus();
+    }
+
+    private void UpdateEditModeStatus()
+    {
+      if (isEditMode)
+      {
+        lblStatus.Text = "Editing enabled. Double-click to disable.";
+      }
+      else
+      {
+        lblStatus.Text = "Editing disabled. Double-click to enable.";
+      }
+
+      // Update grid state to match edit mode
+      InitializeGridEditState();
     }
 
     private void TxtSearch_TextChanged(object sender, EventArgs e)
@@ -454,7 +573,7 @@ namespace WorkOrderBlender
       return value.Replace("'", "''").Replace("[", "[[]").Replace("]", "]]").Replace("%", "[%]").Replace("*", "[*]");
     }
 
-        private void TrySaveSingleCellChange(int rowIndex, int columnIndex)
+    private void TrySaveSingleCellChange(int rowIndex, int columnIndex, bool isEndEdit = false)
     {
       if (dataTable == null || rowIndex < 0 || columnIndex < 0) return;
 
@@ -483,10 +602,26 @@ namespace WorkOrderBlender
           if (string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) return;
 
           var cellValue = row.Cells[columnIndex].Value;
-          var value = cellValue == DBNull.Value ? null : cellValue;
+          var newValue = cellValue == DBNull.Value ? null : cellValue;
 
-          Program.Edits.UpsertOverride(tableName, linkKey, columnName, value);
-          lblStatus.Text = $"Edit saved: {columnName} changed for {linkKey}";
+          // Get the original value from the DataRow
+          var originalValue = dataRow.HasVersion(DataRowVersion.Original) ? dataRow[columnName, DataRowVersion.Original] : dataRow[columnName];
+          if (originalValue == DBNull.Value) originalValue = null;
+
+          // Only save if the value actually changed
+          if (!object.Equals(newValue, originalValue))
+          {
+            Program.Edits.UpsertOverride(tableName, linkKey, columnName, newValue);
+            lblStatus.Text = $"Edit saved: {columnName} changed for {linkKey}";
+          }
+          else if (isEndEdit)
+          {
+            // If no change occurred, just update status
+            lblStatus.Text = $"No change detected for {columnName}";
+          }
+
+          // Mark the row as clean so we don't later treat all columns as modified
+          try { dataRow.AcceptChanges(); } catch { }
         }
       }
     }
@@ -514,42 +649,8 @@ namespace WorkOrderBlender
       }
       else
       {
-                // This method is now primarily used for bulk operations like delete
-        var linkCol = FindLinkIdColumn(dataTable.Columns);
-        if (linkCol == null) return;
-        var changes = dataTable.GetChanges();
-        if (changes != null)
-        {
-          foreach (DataRow row in changes.Rows)
-          {
-            // Skip deleted rows - they are handled separately by MarkDeleted
-            if (row.RowState == DataRowState.Deleted)
-            {
-              continue;
-            }
-
-            var linkKey = GetLinkIdString(row);
-            if (linkKey == null) continue;
-
-            // Only save columns that were actually modified
-            foreach (DataColumn col in changes.Columns)
-            {
-              if (string.Equals(col.ColumnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
-
-              // Check if this specific column was modified
-              var original = row.HasVersion(DataRowVersion.Original) ? row[col, DataRowVersion.Original] : DBNull.Value;
-              var current = row[col, DataRowVersion.Current];
-
-              // Only store override if the value actually changed
-              if (!object.Equals(original, current))
-              {
-                var value = current == DBNull.Value ? null : current;
-                Program.Edits.UpsertOverride(tableName, linkKey, col.ColumnName, value);
-              }
-            }
-          }
-        }
-        dataTable.AcceptChanges();
+        // Pre-consolidation: rely on per-cell saves. Only need to clear change flags.
+        try { dataTable.AcceptChanges(); } catch { }
         lblStatus.Text = "Edits saved in memory; will apply on consolidation.";
       }
     }

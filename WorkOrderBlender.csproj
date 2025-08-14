@@ -10,28 +10,74 @@
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
+    <Version>1.0.1</Version>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <FileVersion>1.0.1.0</FileVersion>
     <Company>WorkOrderBlender</Company>
     <Product>Work Order SDF Consolidator</Product>
     <Copyright>Copyright © $(Company) $([System.DateTime]::Now.Year)</Copyright>
     <Description>A tool for consolidating work order SDF files with pending changes preview</Description>
+    <ApplicationIcon>resources\icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="resources\icon.ico" />
+    <Content Include="resources\icon.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
   <!-- Remove NuGet package, add DLL reference instead -->
   <!-- Download AutoUpdater.NET.dll from GitHub releases and add to project -->
 
   <ItemGroup>
     <Reference Include="AutoUpdater.NET">
       <HintPath>lib\AutoUpdater.NET.dll</HintPath>
+      <Private>True</Private>
     </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <Reference Include="System.Data.SqlServerCe">
-      <HintPath>C:\Program Files\Microsoft SQL Server Compact Edition\v4.0\Desktop\System.Data.SqlServerCe.dll</HintPath>
+      <HintPath>lib\System.Data.SqlServerCe.dll</HintPath>
       <SpecificVersion>false</SpecificVersion>
-      <Private>false</Private>
+      <Private>true</Private>
     </Reference>
+  </ItemGroup>
+
+  <!-- Include SQL CE native runtime files -->
+  <ItemGroup>
+    <!-- Copy amd64 native DLLs to root output directory for x64 processes -->
+    <Content Include="lib\amd64\sqlceca40.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sqlceca40.dll</Link>
+    </Content>
+    <Content Include="lib\amd64\sqlcecompact40.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sqlcecompact40.dll</Link>
+    </Content>
+    <Content Include="lib\amd64\sqlceer40EN.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sqlceer40EN.dll</Link>
+    </Content>
+    <Content Include="lib\amd64\sqlceme40.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sqlceme40.dll</Link>
+    </Content>
+    <Content Include="lib\amd64\sqlceqp40.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sqlceqp40.dll</Link>
+    </Content>
+    <Content Include="lib\amd64\sqlcese40.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sqlcese40.dll</Link>
+    </Content>
+
+    <!-- Also copy to lib subdirectories for fallback -->
+    <Content Include="lib\x86\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="lib\amd64\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>
