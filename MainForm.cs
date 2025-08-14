@@ -75,8 +75,9 @@ namespace WorkOrderBlender
         if (string.IsNullOrWhiteSpace(userConfig.DefaultOutput)) userConfig.DefaultOutput = DefaultOutput;
         if (string.IsNullOrWhiteSpace(userConfig.SdfFileName)) userConfig.SdfFileName = SdfFileName;
       }
-      txtRoot.Text = userConfig.DefaultRoot ?? DefaultRoot;
-      txtOutput.Text = Path.Combine(userConfig.DefaultOutput ?? DefaultOutput, GetSdfFileName());
+
+      // Show only the output directory; file name is fixed as MicrovellumWorkOrder.sdf
+      txtOutput.Text = (userConfig.DefaultOutput ?? DefaultOutput);
       // Virtualize the big list for performance
       this.listWorkOrders.VirtualMode = true;
       this.listWorkOrders.RetrieveVirtualItem += listWorkOrders_RetrieveVirtualItem;
@@ -128,19 +129,14 @@ namespace WorkOrderBlender
       {
         // Reload latest config to avoid overwriting metrics dialog persisted settings
         var cfg = UserConfig.LoadOrDefault();
-        cfg.DefaultRoot = (txtRoot.Text ?? string.Empty).Trim();
+        cfg.DefaultRoot = DefaultRoot;
         try
         {
-          var outDir = Path.GetDirectoryName((txtOutput.Text ?? string.Empty).Trim());
+          var outDir = (txtOutput.Text ?? string.Empty).Trim();
           if (!string.IsNullOrEmpty(outDir)) cfg.DefaultOutput = outDir;
         }
         catch { }
-        try
-        {
-          var fileName = Path.GetFileName((txtOutput.Text ?? string.Empty).Trim());
-          if (!string.IsNullOrEmpty(fileName)) cfg.SdfFileName = fileName;
-        }
-        catch { }
+        // File name is fixed; do not update cfg.SdfFileName here
         cfg.Save();
         userConfig = cfg;
       }
@@ -235,7 +231,7 @@ namespace WorkOrderBlender
     {
       if (string.IsNullOrEmpty(absoluteDir)) return absoluteDir;
       string root = string.Empty;
-      try { root = txtRoot.Text?.Trim() ?? string.Empty; }
+      try { root = DefaultRoot; }
       catch { }
       if (string.IsNullOrEmpty(root)) return absoluteDir;
       string absNorm = absoluteDir.Replace('/', '\\');
@@ -248,10 +244,7 @@ namespace WorkOrderBlender
       return absoluteDir;
     }
 
-    private void btnScan_Click(object sender, EventArgs e)
-    {
-      _ = ScanAsync();
-    }
+
 
     private async Task ScanAsync()
     {
@@ -262,7 +255,7 @@ namespace WorkOrderBlender
 
       SetBusy(true);
       listWorkOrders.Items.Clear();
-      string root = txtRoot.Text.Trim();
+      string root = DefaultRoot;
       if (!Directory.Exists(root))
       {
         MessageBox.Show("Root directory not found.");
@@ -336,19 +329,19 @@ namespace WorkOrderBlender
 
     private void btnChooseOutput_Click(object sender, EventArgs e)
     {
-      using (var sfd = new SaveFileDialog())
+      using (var fbd = new FolderBrowserDialog())
       {
-        sfd.Filter = "SQL CE Database (*.sdf)|*.sdf";
-        sfd.FileName = Path.GetFileName(txtOutput.Text);
-        if (sfd.ShowDialog(this) == DialogResult.OK)
+        fbd.Description = "Choose output folder";
+        fbd.SelectedPath = (txtOutput.Text ?? string.Empty).Trim();
+        if (fbd.ShowDialog(this) == DialogResult.OK)
         {
-          txtOutput.Text = sfd.FileName;
+          txtOutput.Text = fbd.SelectedPath;
           try
           {
             var cfg = UserConfig.LoadOrDefault();
-            cfg.DefaultOutput = Path.GetDirectoryName(sfd.FileName);
-            var nameOnly = Path.GetFileName(sfd.FileName);
-            if (!string.IsNullOrEmpty(nameOnly)) cfg.SdfFileName = nameOnly;
+            cfg.DefaultOutput = fbd.SelectedPath;
+            // Always fix the output file name
+            cfg.SdfFileName = SdfFileName;
             cfg.Save();
             userConfig = cfg;
           }
@@ -370,12 +363,13 @@ namespace WorkOrderBlender
         return;
       }
 
-      string destPath = txtOutput.Text.Trim();
-      if (string.IsNullOrEmpty(destPath))
+      string outDir = txtOutput.Text.Trim();
+      if (string.IsNullOrEmpty(outDir))
       {
-        MessageBox.Show("Choose an output .sdf file.");
+        MessageBox.Show("Choose an output folder.");
         return;
       }
+      string destPath = Path.Combine(outDir, SdfFileName);
 
       try
       {
@@ -493,8 +487,8 @@ namespace WorkOrderBlender
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       dlg.Controls.Add(table);
 
-      var lblRoot = new Label { Text = "Root Directory:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var txtRootLocal = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400, Text = txtRoot.Text };
+      var lblRoot = new Label { Text = "Work Order Directory:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var txtRootLocal = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400, Text = DefaultRoot };
       var btnBrowseRoot = new Button { Text = "Browse...", AutoSize = true };
       btnBrowseRoot.Click += (s, e) =>
       {
@@ -524,7 +518,12 @@ namespace WorkOrderBlender
       };
 
       var lblSdf = new Label { Text = ".sdf File Name:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var txtSdfLocal = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400, Text = GetSdfFileName() };
+      var txtSdfLocal = new TextBox {
+        Anchor = AnchorStyles.Left | AnchorStyles.Right,
+        Width = 400,
+        Text = GetSdfFileName(),
+        ReadOnly = true
+      };
 
       table.Controls.Add(lblRoot, 0, 0);
       table.Controls.Add(txtRootLocal, 1, 0);
@@ -616,7 +615,7 @@ namespace WorkOrderBlender
           userConfig.SdfFileName = (txtSdfLocal.Text ?? string.Empty).Trim();
           userConfig.Save();
 
-          txtRoot.Text = userConfig.DefaultRoot;
+
           txtOutput.Text = Path.Combine(userConfig.DefaultOutput, GetSdfFileName());
         }
         catch (Exception ex)

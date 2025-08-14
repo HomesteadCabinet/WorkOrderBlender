@@ -15,20 +15,7 @@ namespace WorkOrderBlender
   public sealed class MetricsDialog : Form
   {
     // Use shared utility for SQL CE connections
-    // Preferred column ordering for the details dialog. Columns not listed will follow alphabetically after these.
-    private readonly List<string> metricPreferredColumnOrder = new List<string>
-    {
-      "RoomName",
-      "Name",
-      "Quantity",
-      "TotalQuantity",
-      "MaterialXData1",
-      "LinkID",
-      "LinkIDWorkOrder",
-      "LinkIDPart",
-      "LinkIDProduct",
-      "LinkIDSubassembly",
-    };
+    // Removed legacy preferred column order; defaults now come from UserConfig.ColumnOrders
 
     private readonly string tableName;
     private readonly string databasePath;
@@ -237,7 +224,6 @@ namespace WorkOrderBlender
 
           var binding = new BindingSource { DataSource = dataTable };
           grid.DataSource = binding;
-          ApplyPreferredColumnOrder();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
 
@@ -352,7 +338,6 @@ namespace WorkOrderBlender
 
           var binding = new BindingSource { DataSource = dataTable };
           grid.DataSource = binding;
-          ApplyPreferredColumnOrder();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
           // Mark all initially loaded rows as unchanged so only user edits are tracked
@@ -976,37 +961,11 @@ namespace WorkOrderBlender
       }
     }
 
-    private void ApplyPreferredColumnOrder()
-    {
-      try
-      {
-        if (grid.Columns.Count == 0) return;
-        var prevFlag = isApplyingLayout;
-        isApplyingLayout = true;
-        var orderedNames = grid.Columns.Cast<DataGridViewColumn>()
-          .Select(c => c.Name)
-          .OrderBy(name =>
-          {
-            int idx = metricPreferredColumnOrder.FindIndex(p => string.Equals(p, name, StringComparison.OrdinalIgnoreCase));
-            return idx < 0 ? int.MaxValue : idx;
-          })
-          .ThenBy(name => name, StringComparer.OrdinalIgnoreCase)
-          .ToList();
-        for (int displayIndex = 0; displayIndex < orderedNames.Count; displayIndex++)
-        {
-          var name = orderedNames[displayIndex];
-          var col = grid.Columns[name];
-          if (col != null) col.DisplayIndex = displayIndex;
-        }
-        isApplyingLayout = prevFlag;
-      }
-      catch { }
-    }
+    // Removed legacy ApplyPreferredColumnOrder; order now comes entirely from UserConfig
 
     private void Grid_DataBindingComplete(object sender, DataGridViewBindingCompleteEventArgs e)
     {
-      // Only read & apply user prefs; do not persist during open
-      ApplyPreferredColumnOrder();
+      // Apply defaults from config (order and widths)
       ApplyPersistedColumnOrder();
       ApplyPersistedColumnWidths();
     }

@@ -17,9 +17,7 @@ namespace WorkOrderBlender
 
     private void InitializeComponent()
     {
-      this.labelRoot = new System.Windows.Forms.Label();
-      this.txtRoot = new System.Windows.Forms.TextBox();
-      this.btnScan = new System.Windows.Forms.Button();
+
       this.listWorkOrders = new System.Windows.Forms.ListView();
       this.colDir = new System.Windows.Forms.ColumnHeader();
       this.colSdf = new System.Windows.Forms.ColumnHeader();
@@ -44,35 +42,7 @@ namespace WorkOrderBlender
       this.splitMain.Panel2.SuspendLayout();
       this.splitMain.SuspendLayout();
       this.SuspendLayout();
-      //
-      // labelRoot
-      //
-      this.labelRoot.AutoSize = true;
-      this.labelRoot.Location = new System.Drawing.Point(12, 15);
-      this.labelRoot.Name = "labelRoot";
-      this.labelRoot.Size = new System.Drawing.Size(83, 13);
-      this.labelRoot.TabIndex = 0;
-      this.labelRoot.Text = "Root Directory:";
-      //
-      // txtRoot
-      //
-      this.txtRoot.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
-      | System.Windows.Forms.AnchorStyles.Right)));
-      this.txtRoot.Location = new System.Drawing.Point(101, 12);
-      this.txtRoot.Name = "txtRoot";
-      this.txtRoot.Size = new System.Drawing.Size(546, 20);
-      this.txtRoot.TabIndex = 1;
-      //
-      // btnScan
-      //
-      this.btnScan.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-      this.btnScan.Location = new System.Drawing.Point(660, 10);
-      this.btnScan.Name = "btnScan";
-      this.btnScan.Size = new System.Drawing.Size(75, 23);
-      this.btnScan.TabIndex = 2;
-      this.btnScan.Text = "Scan";
-      this.btnScan.UseVisualStyleBackColor = true;
-      this.btnScan.Click += new System.EventHandler(this.btnScan_Click);
+
       //
       // colDir
       //
@@ -127,31 +97,34 @@ namespace WorkOrderBlender
       // btnChooseOutput
       //
       this.btnChooseOutput.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-      this.btnChooseOutput.Location = new System.Drawing.Point(660, 38);
+      this.btnChooseOutput.Location = new System.Drawing.Point(640, 28);
       this.btnChooseOutput.Name = "btnChooseOutput";
-      this.btnChooseOutput.Size = new System.Drawing.Size(75, 23);
+      this.btnChooseOutput.Size = new System.Drawing.Size(95, 28);
       this.btnChooseOutput.TabIndex = 4;
       this.btnChooseOutput.Text = "Browse...";
       this.btnChooseOutput.UseVisualStyleBackColor = true;
+      this.btnChooseOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.btnChooseOutput.Click += new System.EventHandler(this.btnChooseOutput_Click);
       //
       // txtOutput
       //
       this.txtOutput.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
       | System.Windows.Forms.AnchorStyles.Right)));
-      this.txtOutput.Location = new System.Drawing.Point(101, 40);
+      this.txtOutput.Location = new System.Drawing.Point(121, 30);
       this.txtOutput.Name = "txtOutput";
-      this.txtOutput.Size = new System.Drawing.Size(546, 20);
+      this.txtOutput.Size = new System.Drawing.Size(500, 20);
       this.txtOutput.TabIndex = 6;
+      this.txtOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       //
       // labelOutput
       //
       this.labelOutput.AutoSize = true;
-      this.labelOutput.Location = new System.Drawing.Point(12, 43);
+      this.labelOutput.Location = new System.Drawing.Point(12, 33);
       this.labelOutput.Name = "labelOutput";
       this.labelOutput.Size = new System.Drawing.Size(79, 13);
       this.labelOutput.TabIndex = 7;
-      this.labelOutput.Text = "Output .sdf file:";
+      this.labelOutput.Text = "Output folder:";
+      this.labelOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       //
       // progress
       //
@@ -302,9 +275,6 @@ namespace WorkOrderBlender
       this.Controls.Add(this.btnChooseOutput);
       this.Controls.Add(this.btnPreviewChanges);
       this.Controls.Add(this.btnConsolidate);
-      this.Controls.Add(this.btnScan);
-      this.Controls.Add(this.txtRoot);
-      this.Controls.Add(this.labelRoot);
       this.MinimumSize = new System.Drawing.Size(700, 350);
       this.Name = "MainForm";
       this.Text = "Work Order SDF Consolidator";
@@ -316,9 +286,7 @@ namespace WorkOrderBlender
       this.PerformLayout();
     }
 
-    private Label labelRoot;
-    private TextBox txtRoot;
-    private Button btnScan;
+
     private ListView listWorkOrders;
     private ColumnHeader colDir;
     private ColumnHeader colSdf;

@@ -31,6 +31,82 @@ namespace WorkOrderBlender
 
     public List<ColumnOrderEntry> ColumnOrders { get; set; } = new List<ColumnOrderEntry>();
 
+    // Seed defaults when loading config if none present
+    private void EnsureDefaultMetricsLayout()
+    {
+      if (ColumnOrders == null) ColumnOrders = new List<ColumnOrderEntry>();
+      if (ColumnWidths == null) ColumnWidths = new List<ColumnWidthEntry>();
+
+      // Only add if missing to avoid overwriting user's preferences
+      bool HasOrder(string table) => ColumnOrders.Exists(e => string.Equals(e.TableName, table, StringComparison.OrdinalIgnoreCase));
+      bool HasWidth(string table, string col) => ColumnWidths.Exists(e => string.Equals(e.TableName, table, StringComparison.OrdinalIgnoreCase) && string.Equals(e.ColumnName, col, StringComparison.OrdinalIgnoreCase));
+
+      // Column orders
+      if (!HasOrder("Products"))
+      {
+        ColumnOrders.Add(new ColumnOrderEntry
+        {
+          TableName = "Products",
+          Columns = new List<string>
+          {
+            "RoomName","Name","ItemNumber","Quantity","Width","Height","Depth","Comments","ProductSpecGroupName",
+            "LinkID","ActivityPath","LinkIDWorkOrder","Angle","Comments1","Comments2","Comments3","CopiedLinkIDList",
+            "DateShipped","DrawIndex","Extruded","ID","IsBuyOut","JPegName","JPegStream","LinkIDCategory","LinkIDLibrary",
+            "LinkIDLocation","LinkIDProductGroup","LinkIDProject","LinkIDRelease","LinkIDSpecificationGroup","LinkIDWall",
+            "Modified","PerfectGrainChar","PrintFlag","PrintFlags","QuantityShipped","QuoteName","RoomComponentType","Row_ID",
+            "ScanCode","ShippingTicketName","TiffName","TiffStream","Type","UITreeFilter","WMFName","WMFStream","WorkBook",
+            "WorkOrderName","X","Y","Z","ActivityPathShort","AncorType"
+          }
+        });
+      }
+
+      if (!HasOrder("Parts"))
+      {
+        ColumnOrders.Add(new ColumnOrderEntry
+        {
+          TableName = "Parts",
+          Columns = new List<string>
+          {
+            "Name","Quantity","TotalQuantity","Width","Length","Thickness","MaterialThickness","MaterialName","MaterialXData1",
+            "AdjustedCutPartWidth","AdjustedCutPartLength","LinkID","LinkIDWorkOrder","Barcode","LinkIDProduct","LinkIDSubAssembly",
+            "BasePoint","BasePointX","BasePointY","BasePointZ","Code","CodeFormula","Comments","Comments1","Comments2","Comments3",
+            "CutPartLength","CutPartWidth","DontIncludeRoutesinNestBorder","DrawToken2DElv","DrawToken3D","DXFFileName","EdgeNameBottom",
+            "EdgeNameBottomWMF","EdgeNameLeft","EdgeNameLeftWMF","EdgeNameRight","EdgeNameRightWMF","EdgeNameTop","EdgeNameTopWMF",
+            "EdgeSequence","Face6Barcode","Face6FileName","FileName","FinishPriority","FullFace6FileName","FullFileName","Grain",
+            "GrainFormula","HandlingCode","HandlingCodeFormula","HatchType","HboreBarcodeLeft","HboreBarcodeLower","HboreBarcodeRight",
+            "HboreBarcodeUpper","HboreFileNameLeft","HboreFileNameLower","HboreFileNameRight","HboreFileNameUpper","ID","Index",
+            "InventoryAvailableQty","InventoryCurrentQty","InventoryMinQty","IrregularShape","IsFormulaMaterial","JPegStream","LabelPosition",
+            "LinkIDBottomFaceRendering","LinkIDCategory","LinkIDCoreRendering","LinkIDDefaultVendor","LinkIDEQPart","LinkIDMaterial",
+            "LinkIDParentSubAssembly","LinkIDProcessingStations","LinkIDProject","LinkIDSheetSize","LinkIDTopFaceRendering","LinkIDVendor",
+            "Location1","Location2","MachinePoint","MarkUp","MarkUpFormula","MaterialCode","MaterialComments","MaterialCommentsFormula",
+            "MaterialFlipSetting","MaterialLaborValue","MaterialLaborValueFormula","MaterialType","MaterialXData1Formula","MaterialXData2",
+            "MaterialXData2Formula","MaterialXData3","MaterialXData3Formula","Modified","OverProductionQuantity","OverridePartCutLength",
+            "OverridePartCutThickness","OverridePartCutWidth","Par1","Par2","Par3","PartType","PerfectGrainCaption","PrintFlag","Region",
+            "RemoveRoutesOutsideBorder","RotationX","RotationY","RotationZ","Row_ID","RunFieldNameFace5","RunFieldNameFace6","ScanCode",
+            "SkipSpreadsheetSync","TiffStream","Type","UDID","UnderProductionQuantity","UnitType","VendorCost","WasteFactor",
+            "WasteFactorFormula","WMFName","WMFNameFace6","WMFStream","WMFStreamDimensioned","WMFStreamFace6","WMFStreamFace6Dimensioned",
+            "XD01","XD02","XD03","XD04","XD05","XD06","XD07","XD08","XD09","XD10","XD11","XD12","XD13","XD14","XD15","XD16",
+            "XD17","XD18"
+          }
+        });
+      }
+
+      // Column widths
+      void AddWidth(string table, string col, int width)
+      {
+        if (!HasWidth(table, col)) ColumnWidths.Add(new ColumnWidthEntry { TableName = table, ColumnName = col, Width = width });
+      }
+      AddWidth("Products", "RoomName", 194);
+      AddWidth("Products", "Name", 229);
+      AddWidth("Products", "ProductSpecGroupName", 155);
+      AddWidth("Products", "Comments", 208);
+      AddWidth("Products", "Quantity", 58);
+      AddWidth("Products", "ItemNumber", 59);
+      AddWidth("Parts", "Code", 55);
+      AddWidth("Parts", "Name", 374);
+      AddWidth("Parts", "MaterialName", 171);
+    }
+
     public int? TryGetColumnWidth(string tableName, string columnName)
     {
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
@@ -104,6 +180,7 @@ namespace WorkOrderBlender
             cfg.DefaultRoot = string.IsNullOrWhiteSpace(cfg.DefaultRoot) ? fallbackRoot : cfg.DefaultRoot;
             cfg.DefaultOutput = string.IsNullOrWhiteSpace(cfg.DefaultOutput) ? fallbackOutput : cfg.DefaultOutput;
             cfg.SdfFileName = string.IsNullOrWhiteSpace(cfg.SdfFileName) ? fallbackSdf : cfg.SdfFileName;
+            cfg.EnsureDefaultMetricsLayout();
             return cfg;
           }
         }
@@ -128,12 +205,16 @@ namespace WorkOrderBlender
           var ser = new XmlSerializer(typeof(UserConfig));
           using (var fs = File.OpenRead(path))
           {
-            return (UserConfig)ser.Deserialize(fs);
+            var cfg = (UserConfig)ser.Deserialize(fs);
+            cfg.EnsureDefaultMetricsLayout();
+            return cfg;
           }
         }
       }
       catch { }
-      return new UserConfig();
+      var created = new UserConfig();
+      created.EnsureDefaultMetricsLayout();
+      return created;
     }
 
     public void Save()
