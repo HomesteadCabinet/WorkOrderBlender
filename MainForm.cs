@@ -4,7 +4,6 @@ using System.Data;
 using System.Data.SqlServerCe;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -65,6 +64,7 @@ namespace WorkOrderBlender
         {
           await Task.Delay(100); // allow initial paint
           await ScanAsync();
+          UpdatePreviewChangesButton(); // Update button state after loading
         }
         catch (Exception ex)
         {
@@ -73,43 +73,21 @@ namespace WorkOrderBlender
         }
       };
       this.FormClosing += MainForm_FormClosing;
+
+      // Subscribe to changes in the edit store
+      Program.Edits.ChangesUpdated += (s, e) =>
+      {
+        if (InvokeRequired)
+          Invoke(new Action(UpdatePreviewChangesButton));
+        else
+          UpdatePreviewChangesButton();
+      };
+
+      // Initialize button state
+      UpdatePreviewChangesButton();
     }
 
-    private static SqlCeConnection CreateReadOnlyCeConnection(string dataSourcePath)
-    {
-      string tempDir = Path.GetTempPath();
-      return new SqlCeConnection($"Data Source={dataSourcePath};Mode=Read Only;Temp File Directory={tempDir}");
-    }
-
-    private static SqlCeConnection OpenMetricsConnection(string sourcePath, out string tempCopyPath)
-    {
-      tempCopyPath = null;
-      try
-      {
-        var ro = CreateReadOnlyCeConnection(sourcePath);
-        ro.Open();
-        return ro;
-      }
-      catch
-      {
-        // Fallback: copy to a writable temp file and open normally
-        try
-        {
-          string tempDir = Path.Combine(Path.GetTempPath(), "WOB_SQLCE");
-          Directory.CreateDirectory(tempDir);
-          string temp = Path.Combine(tempDir, Path.GetFileName(sourcePath) + "." + Guid.NewGuid().ToString("N") + ".sdf");
-          File.Copy(sourcePath, temp, true);
-          var rw = new SqlCeConnection($"Data Source={temp};");
-          rw.Open();
-          tempCopyPath = temp;
-          return rw;
-        }
-        catch
-        {
-          throw;
-        }
-      }
-    }
+    // SQL CE connection helpers are centralized in SqlCeUtils
 
     private string GetSdfFileName()
     {
@@ -384,6 +362,56 @@ namespace WorkOrderBlender
       }
     }
 
+        private void UpdatePreviewChangesButton()
+    {
+      try
+      {
+        var changeCount = Program.Edits.GetTotalChangeCount();
+        if (changeCount == 0)
+        {
+          btnPreviewChanges.Text = "Pending Changes";
+          btnPreviewChanges.Enabled = false;
+        }
+        else
+        {
+          btnPreviewChanges.Text = $"Pending Changes ({changeCount})";
+          btnPreviewChanges.Enabled = true;
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("UpdatePreviewChangesButton error", ex);
+        btnPreviewChanges.Text = "Pending Changes";
+        btnPreviewChanges.Enabled = false;
+      }
+    }
+
+    private void btnPreviewChanges_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        if (!Program.Edits.HasAnyChanges())
+        {
+          MessageBox.Show("No pending changes found.", "Pending Changes",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        using (var dialog = new PendingChangesDialog())
+        {
+          dialog.ShowDialog(this);
+          // Update button after dialog closes in case changes were cleared
+          UpdatePreviewChangesButton();
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("btnPreviewChanges_Click error", ex);
+        MessageBox.Show("Failed to open pending changes preview: " + ex.Message, "Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     private void txtSearch_TextChanged(object sender, EventArgs e)
     {
       // debounce to avoid filtering on every keystroke for thousands of items
@@ -528,14 +556,7 @@ namespace WorkOrderBlender
       listWorkOrders.Invalidate();
     }
 
-    private void listWorkOrders_ItemCheck(object sender, ItemCheckEventArgs e)
-    {
-      if (e.Index < 0 || e.Index >= filteredWorkOrders.Count) return;
-      var dir = filteredWorkOrders[e.Index].DirectoryPath;
-      if (e.NewValue == CheckState.Checked) checkedDirs.Add(dir); else checkedDirs.Remove(dir);
-      // Defer metrics update slightly to avoid multiple recalcs during mass changes
-      _ = Task.Run(async () => { await Task.Delay(150); await UpdateConsolidatedBreakdownAsync(); });
-    }
+    // removed legacy ItemCheck handler; custom state image toggling is used instead
 
     private void listWorkOrders_SelectedIndexChanged(object sender, EventArgs e)
     {
@@ -584,7 +605,7 @@ namespace WorkOrderBlender
         string tmp = null;
         try
         {
-          using (var conn = OpenMetricsConnection(sdfPath, out tmp))
+          using (var conn = SqlCeUtils.OpenWithFallback(sdfPath, out tmp))
           {
             // Basic counts; adjust as needed for your schema
             AddCount(conn, "Products", "Products");
@@ -674,7 +695,7 @@ namespace WorkOrderBlender
             string tmp = null;
             try
             {
-              using (var conn = OpenMetricsConnection(path, out tmp))
+              using (var conn = SqlCeUtils.OpenWithFallback(path, out tmp))
               {
                 foreach (var (label, table) in breakdownMetrics)
                 {
@@ -793,41 +814,31 @@ namespace WorkOrderBlender
 
     // removed btnOpenDetails handler (per-row Action buttons used instead)
 
-    private void OpenMetricDialog(MetricTag tag)
-    {
-      string destPath = (txtOutput.Text ?? string.Empty).Trim();
-      try
-      {
-        if (!string.IsNullOrEmpty(destPath) && File.Exists(destPath))
+        private void OpenMetricDialog(MetricTag tag)
         {
-          using (var dlg = new MetricsDialog(tag.Label, tag.Table, destPath))
-          {
-            dlg.ShowDialog(this);
-          }
+            try
+            {
+                // Always show metrics from selected work orders (source SDFs), not the output file
+                var srcPaths = filteredWorkOrders
+                    .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
+                    .Select(wo => wo.SdfPath)
+                    .ToList();
+                if (srcPaths.Count == 0)
+                {
+                    MessageBox.Show("No selected work orders.");
+                    return;
+                }
+                using (var dlg = new MetricsDialog(tag.Label, tag.Table, srcPaths, allowEditingInMemory: false))
+                {
+                    dlg.ShowDialog(this);
+                }
+            }
+            catch (Exception ex)
+            {
+                Program.Log("OpenMetricDialog error", ex);
+                MessageBox.Show("Failed to open metrics: " + ex.Message);
+            }
         }
-        else
-        {
-          // Pre-consolidation view: gather selected source paths
-          var srcPaths = filteredWorkOrders.Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
-                           .Select(wo => wo.SdfPath)
-                           .ToList();
-          if (srcPaths.Count == 0)
-          {
-            MessageBox.Show("No selected work orders.");
-            return;
-          }
-          using (var dlg = new MetricsDialog(tag.Label, tag.Table, srcPaths, allowEditingInMemory: false))
-          {
-            dlg.ShowDialog(this);
-          }
-        }
-      }
-      catch (Exception ex)
-      {
-        Program.Log("OpenMetricDialog error", ex);
-        MessageBox.Show("Failed to open metrics: " + ex.Message);
-      }
-    }
 
     private sealed class MetricTag
     {
@@ -890,13 +901,7 @@ namespace WorkOrderBlender
       }
     }
 
-    private static string GeneratePrefixFromDirectory(string directoryPath)
-    {
-      string name = new DirectoryInfo(directoryPath).Name;
-      string alnum = Regex.Replace(name, "[^A-Za-z0-9]+", "_");
-      if (string.IsNullOrWhiteSpace(alnum)) alnum = "WO";
-      return alnum + "_";
-    }
+    // removed unused GeneratePrefixFromDirectory
 
     private static void CreateEmptyDatabase(string path)
     {
@@ -904,26 +909,11 @@ namespace WorkOrderBlender
       engine.CreateDatabase();
     }
 
-    private static void CopyDatabase(string sourcePath, SqlCeConnection destConn, string tablePrefix)
-    {
-      using (var srcConn = CreateReadOnlyCeConnection(sourcePath))
-      {
-        srcConn.Open();
-        var schema = srcConn.GetSchema("Tables");
-        foreach (DataRow row in schema.Rows)
-        {
-          string table = row["TABLE_NAME"].ToString();
-          if (table.StartsWith("__")) continue; // skip system tables
-
-          EnsureDestinationTable(destConn, srcConn, table, tablePrefix);
-          CopyRows(srcConn, destConn, table, tablePrefix);
-        }
-      }
-    }
+    // removed legacy prefixed consolidation path
 
     private static void CopyDatabaseCombined(string sourcePath, SqlCeConnection destConn, string sourceTag, string sourcePathDir)
     {
-      using (var srcConn = CreateReadOnlyCeConnection(sourcePath))
+      using (var srcConn = SqlCeUtils.CreateReadOnlyConnection(sourcePath))
       {
         srcConn.Open();
         var schema = srcConn.GetSchema("Tables");
@@ -938,63 +928,7 @@ namespace WorkOrderBlender
       }
     }
 
-    private static void EnsureDestinationTable(SqlCeConnection dest, SqlCeConnection src, string tableName, string prefix)
-    {
-      string destTable = prefix + tableName;
-      using (var cmd = new SqlCeCommand($"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @t", dest))
-      {
-        cmd.Parameters.AddWithValue("@t", destTable);
-        var exists = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
-        if (exists) return;
-      }
-
-      var cols = src.GetSchema("Columns", new[] { null, null, tableName, null });
-      var pks = src.GetSchema("IndexColumns", new[] { null, null, null, null, tableName });
-
-      var columnDefs = new List<string>();
-      foreach (DataRow col in cols.Rows)
-      {
-        string colName = col["COLUMN_NAME"].ToString();
-        string dataType = col["DATA_TYPE"].ToString();
-        int length = col.Table.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
-        bool nullable = col.Table.Columns.Contains("IS_NULLABLE") && string.Equals(col["IS_NULLABLE"].ToString(), "YES", StringComparison.OrdinalIgnoreCase);
-
-        string typeSql = MapType(dataType, length);
-        string nullSql = nullable ? "NULL" : "NOT NULL";
-        columnDefs.Add($"[{colName}] {typeSql} {nullSql}");
-      }
-
-      string createSql = $"CREATE TABLE [{destTable}] (" + string.Join(", ", columnDefs) + ")";
-      using (var create = new SqlCeCommand(createSql, dest))
-      {
-        create.ExecuteNonQuery();
-      }
-
-      try
-      {
-        var pkCols = new List<string>();
-        foreach (DataRow r in pks.Rows)
-        {
-          if (string.Equals(r["PRIMARY_KEY"].ToString(), "True", StringComparison.OrdinalIgnoreCase))
-          {
-            pkCols.Add("[" + r["COLUMN_NAME"].ToString() + "]");
-          }
-        }
-
-        if (pkCols.Count > 0)
-        {
-          string pkSql = $"ALTER TABLE [{destTable}] ADD CONSTRAINT [PK_{destTable}] PRIMARY KEY (" + string.Join(", ", pkCols) + ")";
-          using (var pk = new SqlCeCommand(pkSql, dest))
-          {
-            pk.ExecuteNonQuery();
-          }
-        }
-      }
-      catch
-      {
-        // ignore
-      }
-    }
+    // removed legacy prefixed consolidation path
 
     private static void EnsureDestinationTableCombined(SqlCeConnection dest, SqlCeConnection src, string tableName)
     {
@@ -1121,56 +1055,7 @@ namespace WorkOrderBlender
       }
     }
 
-    private static void CopyRows(SqlCeConnection src, SqlCeConnection dest, string tableName, string prefix)
-    {
-      string destTable = prefix + tableName;
-      using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", src))
-      using (var reader = cmd.ExecuteReader())
-      {
-        var schema = reader.GetSchemaTable();
-        var colNames = schema.Rows.Cast<DataRow>().Select(r => r["ColumnName"].ToString()).ToList();
-        string columnList = string.Join(", ", colNames.Select(n => "[" + n + "]"));
-        string paramList = string.Join(", ", colNames.Select(n => "@" + n));
-
-        string insertSql = $"INSERT INTO [" + destTable + "] (" + columnList + ") VALUES (" + paramList + ")";
-        using (var insert = new SqlCeCommand(insertSql, dest))
-        {
-          foreach (var name in colNames)
-          {
-            // Let provider infer type; Variant is not supported by SQL CE
-            insert.Parameters.Add(new SqlCeParameter("@" + name, DBNull.Value));
-          }
-
-          int rowIndex = 0;
-          while (reader.Read())
-          {
-            try
-            {
-              for (int i = 0; i < colNames.Count; i++)
-              {
-                object value = reader.GetValue(i);
-                var p = insert.Parameters["@" + colNames[i]];
-                p.Value = value is DBNull ? (object)DBNull.Value : value;
-              }
-              foreach (SqlCeParameter p in insert.Parameters)
-              {
-                if (p.Value == null) p.Value = DBNull.Value;
-              }
-              insert.ExecuteNonQuery();
-            }
-            catch (Exception ex)
-            {
-              if (EnableCopyDebug)
-              {
-                LogInsertFailure(dest, tableName, destTable, colNames, insert, rowIndex, ex, null, null);
-              }
-              throw;
-            }
-            rowIndex++;
-          }
-        }
-      }
-    }
+    // removed legacy prefixed consolidation path
 
     private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
     {

@@ -38,6 +38,7 @@ namespace WorkOrderBlender
       this.panelSearchLeft = new System.Windows.Forms.Panel();
       this.btnSelectAll = new System.Windows.Forms.Button();
       this.panelMetricsTop = new System.Windows.Forms.Panel();
+      this.btnPreviewChanges = new System.Windows.Forms.Button();
       ((System.ComponentModel.ISupportInitialize)(this.splitMain)).BeginInit();
       this.splitMain.Panel1.SuspendLayout();
       this.splitMain.Panel2.SuspendLayout();
@@ -101,6 +102,17 @@ namespace WorkOrderBlender
       this.listWorkOrders.View = System.Windows.Forms.View.Details;
       this.listWorkOrders.SelectedIndexChanged += new System.EventHandler(this.listWorkOrders_SelectedIndexChanged);
       //
+      // btnPreviewChanges
+      //
+      this.btnPreviewChanges.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
+      this.btnPreviewChanges.Location = new System.Drawing.Point(524, 415);
+      this.btnPreviewChanges.Name = "btnPreviewChanges";
+      this.btnPreviewChanges.Size = new System.Drawing.Size(130, 23);
+      this.btnPreviewChanges.TabIndex = 4;
+      this.btnPreviewChanges.Text = "Preview Changes";
+      this.btnPreviewChanges.UseVisualStyleBackColor = true;
+      this.btnPreviewChanges.Click += new System.EventHandler(this.btnPreviewChanges_Click);
+      //
       // btnConsolidate
       //
       this.btnConsolidate.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
@@ -147,7 +159,7 @@ namespace WorkOrderBlender
       | System.Windows.Forms.AnchorStyles.Right)));
       this.progress.Location = new System.Drawing.Point(15, 415);
       this.progress.Name = "progress";
-      this.progress.Size = new System.Drawing.Size(632, 23);
+      this.progress.Size = new System.Drawing.Size(500, 23);
       this.progress.Style = System.Windows.Forms.ProgressBarStyle.Continuous;
       this.progress.TabIndex = 8;
       //
@@ -288,6 +300,7 @@ namespace WorkOrderBlender
       this.Controls.Add(this.labelOutput);
       this.Controls.Add(this.txtOutput);
       this.Controls.Add(this.btnChooseOutput);
+      this.Controls.Add(this.btnPreviewChanges);
       this.Controls.Add(this.btnConsolidate);
       this.Controls.Add(this.btnScan);
       this.Controls.Add(this.txtRoot);
@@ -310,6 +323,7 @@ namespace WorkOrderBlender
     private ColumnHeader colDir;
     private ColumnHeader colSdf;
     private Button btnConsolidate;
+    private Button btnPreviewChanges;
     private Button btnChooseOutput;
     private TextBox txtOutput;
     private Label labelOutput;

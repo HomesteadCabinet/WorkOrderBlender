@@ -12,12 +12,14 @@ namespace WorkOrderBlender
 {
   public sealed class MetricsDialog : Form
   {
+    // Use shared utility for SQL CE connections
     // Preferred column ordering for the details dialog. Columns not listed will follow alphabetically after these.
     private readonly List<string> metricPreferredColumnOrder = new List<string>
     {
       "RoomName",
       "Name",
       "Quantity",
+      "TotalQuantity",
       "MaterialXData1",
       "LinkID",
       "LinkIDWorkOrder",
@@ -120,7 +122,6 @@ namespace WorkOrderBlender
       miExportWmf.Click += (s, e) => ExportStreamsForSelection("WMFStream");
       miDeleteRow.Click += (s, e) => DeleteSelectedRows();
       ctxMenu.Items.AddRange(new ToolStripItem[] { miExportJpeg, miExportWmf, new ToolStripSeparator(), miDeleteRow });
-      grid.ContextMenuStrip = ctxMenu;
 
       Load += MetricsDialog_Load;
       FormClosing += MetricsDialog_FormClosing;
@@ -138,6 +139,7 @@ namespace WorkOrderBlender
             grid.Sorted += (s, e) => { ApplyPersistedColumnWidths(); ApplyPersistedColumnOrder(); };
             grid.SizeChanged += (s, e) => ApplyPersistedColumnWidths();
             grid.ColumnDisplayIndexChanged += Grid_ColumnDisplayIndexChanged;
+            grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
     }
 
     // Pre-consolidation constructor: loads from multiple source SDFs into memory
@@ -189,18 +191,11 @@ namespace WorkOrderBlender
           ApplyPersistedColumnWidths();
 
           // Prepare manual commands for DB persistence using LinkID as PK
-          var linkCol2 = FindLinkIdColumn(dataTable.Columns);
-          if (linkCol2 != null)
-          {
-            ConfigureManualAdapterCommands(connection, linkCol2.ColumnName);
-            canPersistEdits = adapter.UpdateCommand != null;
-          }
-          else
-          {
-            canPersistEdits = false;
-          }
+          var keyCol = FindLinkIdColumn(dataTable.Columns)?.ColumnName;
+          ConfigureManualAdapterCommands(connection, keyCol);
+          canPersistEdits = adapter.UpdateCommand != null;
 
-          lblStatus.Text = canPersistEdits ? "Editing updates the consolidated database (LinkID key)." : "Editing disabled: table has no LinkID.";
+          lblStatus.Text = canPersistEdits ? "Editing updates the consolidated database." : "Editing disabled: no suitable key column found.";
           chkAllowEdit.Enabled = canPersistEdits;
         }
         else
@@ -211,7 +206,7 @@ namespace WorkOrderBlender
           foreach (var path in sourceSdfPaths)
           {
             if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) continue;
-            using (var conn = new SqlCeConnection($"Data Source={path};Mode=Read Only;"))
+            using (var conn = SqlCeUtils.CreateReadOnlyConnection(path))
             {
               conn.Open();
               try
@@ -245,7 +240,7 @@ namespace WorkOrderBlender
           foreach (var path in sourceSdfPaths)
           {
             if (string.IsNullOrWhiteSpace(path) || !System.IO.File.Exists(path)) continue;
-            using (var conn = new SqlCeConnection($"Data Source={path};Mode=Read Only;"))
+            using (var conn = SqlCeUtils.CreateReadOnlyConnection(path))
             {
               conn.Open();
               try
@@ -328,19 +323,29 @@ namespace WorkOrderBlender
 
     private static DataColumn FindLinkIdColumn(DataColumnCollection columns)
     {
+      // Prefer LinkID (any casing)
       if (columns.Contains("LinkID")) return columns["LinkID"];
-      // Some tables may use different casing or types; try case-insensitive lookup
       foreach (DataColumn c in columns)
       {
         if (string.Equals(c.ColumnName, "LinkID", StringComparison.OrdinalIgnoreCase)) return c;
+      }
+      // Fallback to ID (any casing)
+      if (columns.Contains("ID")) return columns["ID"];
+      foreach (DataColumn c in columns)
+      {
+        if (string.Equals(c.ColumnName, "ID", StringComparison.OrdinalIgnoreCase)) return c;
       }
       return null;
     }
 
     private string GetLinkIdString(DataRow row)
     {
-      var linkCol = FindLinkIdColumn(dataTable.Columns);
+      if (row?.Table == null) return null;
+
+      // Use the row's own table to find the key column, not the dialog's dataTable
+      var linkCol = FindLinkIdColumn(row.Table.Columns);
       if (linkCol == null) return null;
+
       var val = row[linkCol];
       if (val == null || val == DBNull.Value) return null;
       return Convert.ToString(val);
@@ -369,10 +374,10 @@ namespace WorkOrderBlender
     {
       try
       {
-        // Persist after editing completes
-        if (!isInitializing && chkAllowEdit.Checked)
+        // Persist the specific changed cell after editing completes
+        if (!isInitializing && chkAllowEdit.Checked && e.RowIndex >= 0 && e.ColumnIndex >= 0)
         {
-          TrySaveChanges();
+          TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex);
         }
       }
       catch { }
@@ -381,7 +386,11 @@ namespace WorkOrderBlender
     private void Grid_CellValueChanged(object sender, DataGridViewCellEventArgs e)
     {
       if (isInitializing || !chkAllowEdit.Checked) return;
-      TrySaveChanges();
+      if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
+      {
+        try { TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex); }
+        catch (Exception ex) { Program.Log("CellValueChanged save failed", ex); MessageBox.Show("Save failed: " + ex.Message); }
+      }
     }
 
     private void ChkAllowEdit_CheckedChanged(object sender, EventArgs e)
@@ -445,6 +454,43 @@ namespace WorkOrderBlender
       return value.Replace("'", "''").Replace("[", "[[]").Replace("]", "]]").Replace("%", "[%]").Replace("*", "[*]");
     }
 
+        private void TrySaveSingleCellChange(int rowIndex, int columnIndex)
+    {
+      if (dataTable == null || rowIndex < 0 || columnIndex < 0) return;
+
+      if (showFromConsolidated)
+      {
+        // For consolidated database, still use the bulk save approach
+        TrySaveChanges();
+      }
+      else
+      {
+        // For pre-consolidation, save only the specific changed cell
+        var linkCol = FindLinkIdColumn(dataTable.Columns);
+        if (linkCol == null) return;
+
+        var row = grid.Rows[rowIndex];
+        if (row?.DataBoundItem is DataRowView dataRowView)
+        {
+          var dataRow = dataRowView.Row;
+          var linkKey = GetLinkIdString(dataRow);
+          if (linkKey == null) return;
+
+          var column = grid.Columns[columnIndex];
+          var columnName = column.DataPropertyName ?? column.Name;
+
+          // Skip if this is the LinkID column
+          if (string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) return;
+
+          var cellValue = row.Cells[columnIndex].Value;
+          var value = cellValue == DBNull.Value ? null : cellValue;
+
+          Program.Edits.UpsertOverride(tableName, linkKey, columnName, value);
+          lblStatus.Text = $"Edit saved: {columnName} changed for {linkKey}";
+        }
+      }
+    }
+
     private void TrySaveChanges()
     {
       if (dataTable == null) return;
@@ -468,19 +514,39 @@ namespace WorkOrderBlender
       }
       else
       {
-        // Persist to in-memory edit store keyed by LinkID (pre-consolidation)
+                // This method is now primarily used for bulk operations like delete
         var linkCol = FindLinkIdColumn(dataTable.Columns);
         if (linkCol == null) return;
         var changes = dataTable.GetChanges();
-        var rowsToProcess = changes != null ? changes.Rows.Cast<DataRow>() : dataTable.Rows.Cast<DataRow>();
-        foreach (var row in rowsToProcess)
+        if (changes != null)
         {
-          var linkKey = GetLinkIdString(row);
-          if (linkKey == null) continue;
-          foreach (DataColumn col in dataTable.Columns)
+          foreach (DataRow row in changes.Rows)
           {
-            if (string.Equals(col.ColumnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
-            Program.Edits.UpsertOverride(tableName, linkKey, col.ColumnName, row[col] == DBNull.Value ? null : row[col]);
+            // Skip deleted rows - they are handled separately by MarkDeleted
+            if (row.RowState == DataRowState.Deleted)
+            {
+              continue;
+            }
+
+            var linkKey = GetLinkIdString(row);
+            if (linkKey == null) continue;
+
+            // Only save columns that were actually modified
+            foreach (DataColumn col in changes.Columns)
+            {
+              if (string.Equals(col.ColumnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
+
+              // Check if this specific column was modified
+              var original = row.HasVersion(DataRowVersion.Original) ? row[col, DataRowVersion.Original] : DBNull.Value;
+              var current = row[col, DataRowVersion.Current];
+
+              // Only store override if the value actually changed
+              if (!object.Equals(original, current))
+              {
+                var value = current == DBNull.Value ? null : current;
+                Program.Edits.UpsertOverride(tableName, linkKey, col.ColumnName, value);
+              }
+            }
           }
         }
         dataTable.AcceptChanges();
@@ -514,7 +580,7 @@ namespace WorkOrderBlender
         var hit = grid.HitTest(e.X, e.Y);
         if (hit.RowIndex >= 0)
         {
-          grid.ContextMenuStrip?.Show(grid, new System.Drawing.Point(e.X, e.Y));
+          ctxMenu?.Show(grid, new System.Drawing.Point(e.X, e.Y));
         }
       }
     }
@@ -528,47 +594,90 @@ namespace WorkOrderBlender
       }
     }
 
-    private static bool IsStreamColumn(string columnName)
+    private void Grid_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
     {
-      return string.Equals(columnName, "JPEGStream", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(columnName, "WMFStream", StringComparison.OrdinalIgnoreCase);
+      if (e.Button != MouseButtons.Right || e.ColumnIndex < 0) return;
+      var headerPoint = grid.PointToClient(Cursor.Position);
+      ShowHeaderContextMenu(e.ColumnIndex, headerPoint);
     }
 
-    private static string SaveStreamCellToTempFile(string columnName, object value)
+    private void ShowHeaderContextMenu(int columnIndex, System.Drawing.Point clientLocation)
     {
-      byte[] bytes = null;
-      if (value is byte[] b)
+      try
       {
-        bytes = b;
-      }
-      else if (value is string s)
-      {
-        try
-        {
-          bytes = Convert.FromBase64String(s);
-        }
-        catch
-        {
-          // Not base64; treat as raw text
-          bytes = Encoding.UTF8.GetBytes(s);
-        }
-      }
-      else if (value is System.IO.Stream stream)
-      {
-        using (var ms = new MemoryStream())
-        {
-          stream.CopyTo(ms);
-          bytes = ms.ToArray();
-        }
-      }
+        var col = grid.Columns[columnIndex];
+        if (col == null) return;
+        var menu = new ContextMenuStrip();
 
-      if (bytes == null || bytes.Length == 0) return null;
+        var moveToFirst = new ToolStripMenuItem("Move to first");
+        moveToFirst.Click += (s, e) => { col.DisplayIndex = 0; };
+        var moveToLast = new ToolStripMenuItem("Move to last");
+        moveToLast.Click += (s, e) => { col.DisplayIndex = grid.Columns.Count - 1; };
+        menu.Items.Add(moveToFirst);
+        menu.Items.Add(moveToLast);
+        menu.Items.Add(new ToolStripSeparator());
 
-      string ext = string.Equals(columnName, "WMFStream", StringComparison.OrdinalIgnoreCase) ? ".wmf" : ".jpg";
-      string path = Path.Combine(Path.GetTempPath(), "WOB_" + Guid.NewGuid().ToString("N") + ext);
-      File.WriteAllBytes(path, bytes);
-      return path;
+        var moveToIndex = new ToolStripMenuItem("Move to index...");
+        moveToIndex.Click += (s, e) =>
+        {
+          var selected = PromptForDisplayIndex(col.DisplayIndex);
+          if (selected.HasValue)
+          {
+            int target = Math.Max(0, Math.Min(selected.Value, grid.Columns.Count - 1));
+            if (target != col.DisplayIndex) col.DisplayIndex = target;
+          }
+        };
+        menu.Items.Add(moveToIndex);
+
+        menu.Show(grid, clientLocation);
+      }
+      catch { }
     }
+
+    private int? PromptForDisplayIndex(int currentIndex)
+    {
+      try
+      {
+        var dlg = new Form
+        {
+          Text = "Move Column",
+          StartPosition = FormStartPosition.CenterParent,
+          FormBorderStyle = FormBorderStyle.FixedDialog,
+          MinimizeBox = false,
+          MaximizeBox = false,
+          Width = 280,
+          Height = 140
+        };
+        var lbl = new Label { Text = "Target index:", AutoSize = true, Location = new System.Drawing.Point(12, 15) };
+        var nud = new NumericUpDown
+        {
+          Minimum = 0,
+          Maximum = grid.Columns.Count > 0 ? grid.Columns.Count - 1 : 0,
+          Location = new System.Drawing.Point(100, 12),
+          Width = 150
+        };
+        int safeCurrent = Math.Max((int)nud.Minimum, Math.Min(currentIndex, (int)nud.Maximum));
+        nud.Value = safeCurrent;
+        var btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, Location = new System.Drawing.Point(dlg.ClientSize.Width - 170, 70) };
+        var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, Location = new System.Drawing.Point(dlg.ClientSize.Width - 90, 70) };
+        dlg.AcceptButton = btnOk;
+        dlg.CancelButton = btnCancel;
+        dlg.Controls.Add(lbl);
+        dlg.Controls.Add(nud);
+        dlg.Controls.Add(btnOk);
+        dlg.Controls.Add(btnCancel);
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+          return (int)nud.Value;
+        }
+      }
+      catch { }
+      return null;
+    }
+
+    // removed unused IsStreamColumn
+
+    // removed unused SaveStreamCellToTempFile
 
     private static string SaveStreamCellToFolder(string columnName, object value, string folder, string baseName)
     {
@@ -678,6 +787,7 @@ namespace WorkOrderBlender
       {
         var rows = GetSelectedRowsOrCurrent().ToList();
         if (rows.Count == 0) return;
+
         foreach (var row in rows)
         {
           if (row?.DataBoundItem is DataRowView drv)
@@ -687,10 +797,21 @@ namespace WorkOrderBlender
             {
               if (linkKey != null) Program.Edits.MarkDeleted(tableName, linkKey);
             }
+            else
+            {
+              // For consolidated database, delete the underlying data row
+              drv.Row.Delete();
+            }
           }
           grid.Rows.Remove(row);
         }
-        TrySaveChanges();
+
+        // Only save changes for consolidated database (actual deletion)
+        // For pre-consolidation, MarkDeleted already handled it
+        if (showFromConsolidated)
+        {
+          TrySaveChanges();
+        }
       }
       catch (Exception ex)
       {
@@ -699,35 +820,53 @@ namespace WorkOrderBlender
       }
     }
 
-    private void ConfigureManualAdapterCommands(SqlCeConnection conn, string linkIdColumn)
+    private void ConfigureManualAdapterCommands(SqlCeConnection conn, string preferredKeyColumn)
     {
       try
       {
+        // Determine a key column for updates/deletes
+        string keyCol = preferredKeyColumn;
+        if (string.IsNullOrWhiteSpace(keyCol) || !dataTable.Columns.Contains(keyCol))
+        {
+          var col = FindLinkIdColumn(dataTable.Columns);
+          if (col == null) throw new InvalidOperationException("No LinkID or ID column present; cannot persist edits.");
+          keyCol = col.ColumnName;
+        }
+
         // Build UPDATE SET clauses for all non-key columns
         var setCols = dataTable.Columns.Cast<DataColumn>()
-          .Where(c => !string.Equals(c.ColumnName, linkIdColumn, StringComparison.OrdinalIgnoreCase))
+          .Where(c => !string.Equals(c.ColumnName, keyCol, StringComparison.OrdinalIgnoreCase))
           .Select(c => "[" + c.ColumnName.Replace("]", "]]") + "]=@" + c.ColumnName)
           .ToList();
         var updateSql = "UPDATE [" + tableName + "] SET " + string.Join(", ", setCols) +
-                        " WHERE [" + linkIdColumn.Replace("]", "]]") + "]=@__pk";
+                        " WHERE [" + keyCol.Replace("]", "]]") + "]=@__pk";
         var upd = new SqlCeCommand(updateSql, conn);
         foreach (DataColumn c in dataTable.Columns)
         {
-          if (string.Equals(c.ColumnName, linkIdColumn, StringComparison.OrdinalIgnoreCase)) continue;
-          var p = upd.Parameters.Add("@" + c.ColumnName, System.Data.SqlDbType.Variant);
-          p.SourceColumn = c.ColumnName;
-          p.SourceVersion = DataRowVersion.Current;
+          if (string.Equals(c.ColumnName, keyCol, StringComparison.OrdinalIgnoreCase)) continue;
+          var param = new SqlCeParameter("@" + c.ColumnName, DBNull.Value)
+          {
+            SourceColumn = c.ColumnName,
+            SourceVersion = DataRowVersion.Current
+          };
+          upd.Parameters.Add(param);
         }
-        var pkey = upd.Parameters.Add("@__pk", System.Data.SqlDbType.Variant);
-        pkey.SourceColumn = linkIdColumn;
-        pkey.SourceVersion = DataRowVersion.Original;
+        var pkParam = new SqlCeParameter("@__pk", DBNull.Value)
+        {
+          SourceColumn = keyCol,
+          SourceVersion = DataRowVersion.Original
+        };
+        upd.Parameters.Add(pkParam);
         adapter.UpdateCommand = upd;
 
-        var delSql = "DELETE FROM [" + tableName + "] WHERE [" + linkIdColumn.Replace("]", "]]") + "]=@__pk";
+        var delSql = "DELETE FROM [" + tableName + "] WHERE [" + keyCol.Replace("]", "]]") + "]=@__pk";
         var del = new SqlCeCommand(delSql, conn);
-        var dkey = del.Parameters.Add("@__pk", System.Data.SqlDbType.Variant);
-        dkey.SourceColumn = linkIdColumn;
-        dkey.SourceVersion = DataRowVersion.Original;
+        var dkey = new SqlCeParameter("@__pk", DBNull.Value)
+        {
+          SourceColumn = keyCol,
+          SourceVersion = DataRowVersion.Original
+        };
+        del.Parameters.Add(dkey);
         adapter.DeleteCommand = del;
       }
       catch (Exception ex)
