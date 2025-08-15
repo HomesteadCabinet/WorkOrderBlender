@@ -55,8 +55,8 @@ namespace WorkOrderBlender
 
       Text = string.IsNullOrWhiteSpace(dialogLabel) ? $"Data for {tableName}" : $"Data for {dialogLabel}";
       StartPosition = FormStartPosition.CenterScreen;
-      Width = 1500;
-      Height = 800;
+      Width = 1400;
+      Height = 700;
 
       splitContainer = new SplitContainer
       {
@@ -795,49 +795,330 @@ namespace WorkOrderBlender
 
     private void Grid_KeyDown(object sender, KeyEventArgs e)
     {
+      // Handle keyboard shortcuts for editing
+      if (e.Control)
+      {
+        switch (e.KeyCode)
+        {
+          case Keys.C:
+            CopySelectedCells();
+            e.Handled = true;
+            break;
+          case Keys.X:
+            if (isEditMode && !grid.ReadOnly)
+            {
+              CutSelectedCells();
+              e.Handled = true;
+            }
+            break;
+          case Keys.V:
+            if (isEditMode && !grid.ReadOnly)
+            {
+              PasteToSelectedCells();
+              e.Handled = true;
+            }
+            break;
+        }
+        return;
+      }
+
       // Handle Delete key to clear cell values when in edit mode
       if (e.KeyCode == Keys.Delete && isEditMode && !grid.ReadOnly)
       {
         try
         {
-          // Check if we have a current cell selected
-          if (grid.CurrentCell != null && grid.CurrentCell.RowIndex >= 0 && grid.CurrentCell.ColumnIndex >= 0)
-          {
-            var currentCell = grid.CurrentCell;
-            var column = grid.Columns[currentCell.ColumnIndex];
-            var columnName = column.DataPropertyName ?? column.Name;
-
-            // Skip special columns and LinkID columns as they shouldn't be cleared
-            if (specialColumnNames.Contains(columnName)) return;
-
-            var linkCol = FindLinkIdColumn(dataTable.Columns);
-            if (linkCol != null && string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) return;
-
-            // If currently in edit mode for this cell, end the edit first
-            if (grid.IsCurrentCellInEditMode)
-            {
-              grid.EndEdit();
-            }
-
-            // Clear the cell value
-            currentCell.Value = DBNull.Value;
-
-            // Trigger the save logic
-            TrySaveSingleCellChange(currentCell.RowIndex, currentCell.ColumnIndex, true);
-
-            // Mark the event as handled
-            e.Handled = true;
-            e.SuppressKeyPress = true;
-
-            lblStatus.Text = $"Cleared value in column '{columnName}'";
-          }
+          ClearSelectedCells();
+          e.Handled = true;
+          e.SuppressKeyPress = true;
         }
         catch (Exception ex)
         {
-          Program.Log("Error clearing cell value", ex);
-          lblStatus.Text = "Error clearing cell value";
+          Program.Log("Error clearing cell values", ex);
+          lblStatus.Text = "Error clearing cell values";
         }
       }
+    }
+
+    private void CopySelectedCells()
+    {
+      try
+      {
+        var selectedCells = GetSelectedCellsForClipboard();
+        if (selectedCells.Count == 0)
+        {
+          lblStatus.Text = "No cells selected for copy";
+          return;
+        }
+
+        var clipboardText = ConvertCellsToClipboardText(selectedCells);
+        Clipboard.SetText(clipboardText);
+        lblStatus.Text = $"Copied {selectedCells.Count} cell(s) to clipboard";
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error copying cells", ex);
+        lblStatus.Text = "Error copying cells";
+      }
+    }
+
+    private void CutSelectedCells()
+    {
+      try
+      {
+        var selectedCells = GetSelectedCellsForClipboard();
+        if (selectedCells.Count == 0)
+        {
+          lblStatus.Text = "No cells selected for cut";
+          return;
+        }
+
+        var clipboardText = ConvertCellsToClipboardText(selectedCells);
+        Clipboard.SetText(clipboardText);
+
+        // Clear the cells after copying
+        ClearSelectedCells();
+
+        lblStatus.Text = $"Cut {selectedCells.Count} cell(s) to clipboard";
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error cutting cells", ex);
+        lblStatus.Text = "Error cutting cells";
+      }
+    }
+
+    private void PasteToSelectedCells()
+    {
+      try
+      {
+        if (!Clipboard.ContainsText())
+        {
+          lblStatus.Text = "No text data in clipboard";
+          return;
+        }
+
+        var clipboardText = Clipboard.GetText();
+        var pasteData = ParseClipboardText(clipboardText);
+
+        if (pasteData.Count == 0)
+        {
+          lblStatus.Text = "No valid data to paste";
+          return;
+        }
+
+        var targetCells = GetSelectedCellsForPaste();
+        if (targetCells.Count == 0)
+        {
+          lblStatus.Text = "No target cells selected";
+          return;
+        }
+
+        var pastedCount = ApplyPasteData(targetCells, pasteData);
+        lblStatus.Text = $"Pasted data to {pastedCount} cell(s)";
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error pasting cells", ex);
+        lblStatus.Text = "Error pasting cells";
+      }
+    }
+
+    private void ClearSelectedCells()
+    {
+      // End any current edit first
+      if (grid.IsCurrentCellInEditMode)
+      {
+        grid.EndEdit();
+      }
+
+      var clearedCount = 0;
+      var linkCol = FindLinkIdColumn(dataTable.Columns);
+
+      if (isEditMode && grid.SelectionMode == DataGridViewSelectionMode.CellSelect)
+      {
+        // In edit mode, clear all selected cells
+        foreach (DataGridViewCell cell in grid.SelectedCells)
+        {
+          if (cell.RowIndex >= 0 && cell.ColumnIndex >= 0)
+          {
+            var column = grid.Columns[cell.ColumnIndex];
+            var columnName = column.DataPropertyName ?? column.Name;
+
+            // Skip special columns and LinkID columns
+            if (specialColumnNames.Contains(columnName)) continue;
+            if (linkCol != null && string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
+
+            cell.Value = DBNull.Value;
+            TrySaveSingleCellChange(cell.RowIndex, cell.ColumnIndex, true);
+            clearedCount++;
+          }
+        }
+      }
+      else if (grid.CurrentCell != null && grid.CurrentCell.RowIndex >= 0 && grid.CurrentCell.ColumnIndex >= 0)
+      {
+        // Fallback to single cell if not in cell selection mode
+        var currentCell = grid.CurrentCell;
+        var column = grid.Columns[currentCell.ColumnIndex];
+        var columnName = column.DataPropertyName ?? column.Name;
+
+        // Skip special columns and LinkID columns
+        if (!specialColumnNames.Contains(columnName) &&
+            (linkCol == null || !string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)))
+        {
+          currentCell.Value = DBNull.Value;
+          TrySaveSingleCellChange(currentCell.RowIndex, currentCell.ColumnIndex, true);
+          clearedCount = 1;
+        }
+      }
+
+      lblStatus.Text = clearedCount > 0 ? $"Cleared {clearedCount} cell(s)" : "No editable cells selected";
+    }
+
+    private List<DataGridViewCell> GetSelectedCellsForClipboard()
+    {
+      var cells = new List<DataGridViewCell>();
+
+      if (grid.SelectionMode == DataGridViewSelectionMode.CellSelect && grid.SelectedCells.Count > 0)
+      {
+        foreach (DataGridViewCell cell in grid.SelectedCells)
+        {
+          if (cell.RowIndex >= 0 && cell.ColumnIndex >= 0)
+            cells.Add(cell);
+        }
+      }
+      else if (grid.CurrentCell != null && grid.CurrentCell.RowIndex >= 0 && grid.CurrentCell.ColumnIndex >= 0)
+      {
+        cells.Add(grid.CurrentCell);
+      }
+
+      return cells.OrderBy(c => c.RowIndex).ThenBy(c => c.ColumnIndex).ToList();
+    }
+
+    private List<DataGridViewCell> GetSelectedCellsForPaste()
+    {
+      var cells = new List<DataGridViewCell>();
+      var linkCol = FindLinkIdColumn(dataTable.Columns);
+
+      if (grid.SelectionMode == DataGridViewSelectionMode.CellSelect && grid.SelectedCells.Count > 0)
+      {
+        foreach (DataGridViewCell cell in grid.SelectedCells)
+        {
+          if (cell.RowIndex >= 0 && cell.ColumnIndex >= 0)
+          {
+            var column = grid.Columns[cell.ColumnIndex];
+            var columnName = column.DataPropertyName ?? column.Name;
+
+            // Skip special columns and LinkID columns
+            if (specialColumnNames.Contains(columnName)) continue;
+            if (linkCol != null && string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
+
+            cells.Add(cell);
+          }
+        }
+      }
+      else if (grid.CurrentCell != null && grid.CurrentCell.RowIndex >= 0 && grid.CurrentCell.ColumnIndex >= 0)
+      {
+        var currentCell = grid.CurrentCell;
+        var column = grid.Columns[currentCell.ColumnIndex];
+        var columnName = column.DataPropertyName ?? column.Name;
+
+        // Only add if it's not a special or LinkID column
+        if (!specialColumnNames.Contains(columnName) &&
+            (linkCol == null || !string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)))
+        {
+          cells.Add(currentCell);
+        }
+      }
+
+      return cells.OrderBy(c => c.RowIndex).ThenBy(c => c.ColumnIndex).ToList();
+    }
+
+    private string ConvertCellsToClipboardText(List<DataGridViewCell> cells)
+    {
+      if (cells.Count == 0) return string.Empty;
+
+      var sb = new StringBuilder();
+      var rowGroups = cells.GroupBy(c => c.RowIndex).OrderBy(g => g.Key);
+
+      foreach (var rowGroup in rowGroups)
+      {
+        var rowCells = rowGroup.OrderBy(c => c.ColumnIndex).ToList();
+        var values = new List<string>();
+
+        foreach (var cell in rowCells)
+        {
+          var value = cell.Value?.ToString() ?? string.Empty;
+          // Escape tabs and newlines for tab-delimited format
+          value = value.Replace("\t", " ").Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ");
+          values.Add(value);
+        }
+
+        sb.AppendLine(string.Join("\t", values));
+      }
+
+      return sb.ToString();
+    }
+
+    private List<List<string>> ParseClipboardText(string clipboardText)
+    {
+      var result = new List<List<string>>();
+      if (string.IsNullOrEmpty(clipboardText)) return result;
+
+      var lines = clipboardText.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+      foreach (var line in lines)
+      {
+        if (string.IsNullOrEmpty(line)) continue;
+        var values = line.Split('\t').ToList();
+        result.Add(values);
+      }
+
+      return result;
+    }
+
+    private int ApplyPasteData(List<DataGridViewCell> targetCells, List<List<string>> pasteData)
+    {
+      if (targetCells.Count == 0 || pasteData.Count == 0) return 0;
+
+      var pastedCount = 0;
+      var dataIndex = 0;
+      var colIndex = 0;
+
+      foreach (var targetCell in targetCells)
+      {
+        if (dataIndex >= pasteData.Count) break;
+        if (colIndex >= pasteData[dataIndex].Count)
+        {
+          dataIndex++;
+          colIndex = 0;
+          if (dataIndex >= pasteData.Count) break;
+        }
+
+        try
+        {
+          var newValue = pasteData[dataIndex][colIndex];
+
+          // Handle empty strings as null
+          if (string.IsNullOrEmpty(newValue))
+          {
+            targetCell.Value = DBNull.Value;
+          }
+          else
+          {
+            targetCell.Value = newValue;
+          }
+
+          TrySaveSingleCellChange(targetCell.RowIndex, targetCell.ColumnIndex, true);
+          pastedCount++;
+        }
+        catch (Exception ex)
+        {
+          Program.Log($"Error pasting to cell [{targetCell.RowIndex}, {targetCell.ColumnIndex}]", ex);
+        }
+
+        colIndex++;
+      }
+
+      return pastedCount;
     }
 
     private void Grid_MouseClick(object sender, MouseEventArgs e)

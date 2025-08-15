@@ -53,6 +53,11 @@
       <ColumnName>Name</ColumnName>
       <Width>285</Width>
     </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>#</ColumnName>
+      <Width>54</Width>
+    </ColumnWidthEntry>
   </ColumnWidths>
   <ColumnOrders>
     <ColumnOrderEntry>
@@ -118,7 +123,7 @@
     <ColumnOrderEntry>
       <TableName>Parts</TableName>
       <Columns>
-        <string>ItemNumber</string>
+        <string>#</string>
         <string>PerfectGrainCaption</string>
         <string>Name</string>
         <string>TotalQuantity</string>

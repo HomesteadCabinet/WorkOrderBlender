@@ -236,15 +236,86 @@ namespace WorkOrderBlender
       }
     }
 
-    private static string GetConfigDirectory()
+    private static bool IsDirectoryWritable(string directoryPath)
+    {
+      try
+      {
+        if (!Directory.Exists(directoryPath))
+        {
+          Directory.CreateDirectory(directoryPath);
+        }
+
+        // Try to create a temp file to test write permissions
+        string tempFile = Path.Combine(directoryPath, Path.GetRandomFileName());
+        using (File.Create(tempFile))
+        {
+          // File created successfully
+        }
+        File.Delete(tempFile);
+        return true;
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
+    private static string GetUserConfigDirectory()
+    {
+      // Use AppData\Local for user-specific config
+      var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+      return Path.Combine(appDataPath, "WorkOrderBlender");
+    }
+
+    private static string GetOriginalConfigDirectory()
     {
       // Use the directory where the executable is located
       var exeDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
       return exeDir ?? Environment.CurrentDirectory;
     }
 
+    private static string GetConfigDirectory()
+    {
+      var originalDir = GetOriginalConfigDirectory();
+
+      // If original directory is writable, use it
+      if (IsDirectoryWritable(originalDir))
+      {
+        return originalDir;
+      }
+
+      // Otherwise, use user AppData directory
+      return GetUserConfigDirectory();
+    }
+
+    private static void EnsureConfigCopiedToUserLocation()
+    {
+      var originalDir = GetOriginalConfigDirectory();
+      var userDir = GetUserConfigDirectory();
+      var originalConfigPath = Path.Combine(originalDir, "settings.xml");
+      var userConfigPath = Path.Combine(userDir, "settings.xml");
+
+      // If original is not writable and has a config file, copy it to user location
+      if (!IsDirectoryWritable(originalDir) && File.Exists(originalConfigPath) && !File.Exists(userConfigPath))
+      {
+        try
+        {
+          if (!Directory.Exists(userDir))
+          {
+            Directory.CreateDirectory(userDir);
+          }
+          File.Copy(originalConfigPath, userConfigPath);
+        }
+        catch (Exception ex)
+        {
+          Program.Log("Failed to copy config to user directory", ex);
+        }
+      }
+    }
+
     private static string GetConfigPath()
     {
+      EnsureConfigCopiedToUserLocation();
       return Path.Combine(GetConfigDirectory(), "settings.xml");
     }
 

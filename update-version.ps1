@@ -67,6 +67,30 @@ function Update-CsprojVersion {
     return $true
 }
 
+# Function to update WiX installer file
+function Update-WixVersion {
+    param(
+        [string]$FilePath,
+        [string]$Version
+    )
+
+    try {
+        $content = Get-Content $FilePath -Raw
+
+        # Update Version (append .0 for 4-part version)
+        $fourPartVersion = "$Version.0"
+        $content = $content -replace 'Version="[\d\.]+"', "Version=""$fourPartVersion"""
+
+        Set-Content $FilePath $content -NoNewline
+        Write-Host "[OK] Updated $FilePath" -ForegroundColor Green
+    }
+    catch {
+        Write-Error "[ERROR] Failed to update ${FilePath}: $($_.Exception.Message)"
+        return $false
+    }
+    return $true
+}
+
 # Validate inputs
 if (-not (Test-VersionFormat $NewVersion)) {
     Write-Error "[ERROR] Invalid version format. Use format like '1.0.2'"
@@ -109,6 +133,13 @@ if (-not (Update-XmlVersion "update.xml" $NewVersion)) {
     $success = $false
 }
 
+# Update WiX installer
+if (Test-Path "WorkOrderBlender.Installer.wxs") {
+    if (-not (Update-WixVersion "WorkOrderBlender.Installer.wxs" $NewVersion)) {
+        $success = $false
+    }
+}
+
 if (-not $success) {
     Write-Error "[ERROR] Failed to update version files"
     exit 1
@@ -120,6 +151,9 @@ Write-Host "`n[INFO] Git operations..." -ForegroundColor Cyan
 try {
     # Add changed files
     git add WorkOrderBlender.csproj update.xml
+    if (Test-Path "WorkOrderBlender.Installer.wxs") {
+        git add WorkOrderBlender.Installer.wxs
+    }
     Write-Host "[OK] Staged version files" -ForegroundColor Green
 
     # Commit changes
@@ -159,6 +193,9 @@ Write-Host "`n[SUCCESS] Version update complete!" -ForegroundColor Green
 Write-Host "[INFO] Updated files:" -ForegroundColor Cyan
 Write-Host "   - WorkOrderBlender.csproj (Version: $NewVersion, AssemblyVersion: $NewVersion.0)" -ForegroundColor White
 Write-Host "   - update.xml (Version: $NewVersion)" -ForegroundColor White
+if (Test-Path "WorkOrderBlender.Installer.wxs") {
+    Write-Host "   - WorkOrderBlender.Installer.wxs (Version: $NewVersion.0)" -ForegroundColor White
+}
 
 if (-not $SkipGitPush) {
     Write-Host "`n[INFO] The GitHub Actions workflow will:" -ForegroundColor Cyan

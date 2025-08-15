@@ -36,6 +36,11 @@
                 Name="WorkOrderBlender.exe.config"
                 Source="bin\Release\net48\WorkOrderBlender.exe.config" />
 
+          <!-- Settings file -->
+          <File Id="settings.xml"
+                Name="settings.xml"
+                Source="bin\Release\net48\settings.xml" />
+
           <!-- Dependencies -->
           <File Id="AutoUpdater.NET.dll"
                 Name="AutoUpdater.NET.dll"
@@ -78,6 +83,15 @@
               <File Id="sqlcese40_amd64" Source="bin\Release\net48\lib\amd64\sqlcese40.dll" />
             </Component>
           </Directory>
+        </Directory>
+
+        <!-- Resources directory -->
+        <Directory Id="ResourcesDir" Name="resources">
+          <Component Id="ResourcesComponent" Guid="66666666-6666-6666-6666-666666666666">
+            <File Id="icon.ico"
+                  Name="icon.ico"
+                  Source="bin\Release\net48\resources\icon.ico" />
+          </Component>
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -124,6 +138,7 @@
       <ComponentRef Id="MainExecutable" />
       <ComponentRef Id="SqlCeX86Runtime" />
       <ComponentRef Id="SqlCeAmd64Runtime" />
+      <ComponentRef Id="ResourcesComponent" />
       <ComponentRef Id="ApplicationShortcut" />
       <ComponentRef Id="ApplicationDesktopShortcut" />
     </ComponentGroup>
