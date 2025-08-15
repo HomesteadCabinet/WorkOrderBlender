@@ -20,9 +20,8 @@ namespace WorkOrderBlender
 
       this.listWorkOrders = new System.Windows.Forms.ListView();
       this.colDir = new System.Windows.Forms.ColumnHeader();
-      this.colSdf = new System.Windows.Forms.ColumnHeader();
       this.btnConsolidate = new System.Windows.Forms.Button();
-      this.btnChooseOutput = new System.Windows.Forms.Button();
+      this.btnSettings = new System.Windows.Forms.Button();
       this.txtOutput = new System.Windows.Forms.TextBox();
       this.labelOutput = new System.Windows.Forms.Label();
       this.progress = new System.Windows.Forms.ProgressBar();
@@ -37,6 +36,7 @@ namespace WorkOrderBlender
       this.btnSelectAll = new System.Windows.Forms.Button();
       this.panelMetricsTop = new System.Windows.Forms.Panel();
       this.btnPreviewChanges = new System.Windows.Forms.Button();
+      this.tableWorkOrder = new System.Windows.Forms.TableLayoutPanel();
       ((System.ComponentModel.ISupportInitialize)(this.splitMain)).BeginInit();
       this.splitMain.Panel1.SuspendLayout();
       this.splitMain.Panel2.SuspendLayout();
@@ -47,12 +47,7 @@ namespace WorkOrderBlender
       // colDir
       //
       this.colDir.Text = "Directory";
-      this.colDir.Width = 300;
-      //
-      // colSdf
-      //
-      this.colSdf.Text = "SDF Exists";
-      this.colSdf.Width = 120;
+      this.colDir.Width = 400;
       //
       // listWorkOrders
       //
@@ -60,13 +55,12 @@ namespace WorkOrderBlender
       this.listWorkOrders.CheckBoxes = false;
       this.listWorkOrders.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
         this.colDir,
-        this.colSdf,
       });
       this.listWorkOrders.FullRowSelect = true;
       this.listWorkOrders.HideSelection = false;
       this.listWorkOrders.Location = new System.Drawing.Point(0, 0);
       this.listWorkOrders.Name = "listWorkOrders";
-      this.listWorkOrders.Size = new System.Drawing.Size(120, 292);
+      this.listWorkOrders.Size = new System.Drawing.Size(220, 292);
       this.listWorkOrders.TabIndex = 3;
       this.listWorkOrders.UseCompatibleStateImageBehavior = false;
       this.listWorkOrders.View = System.Windows.Forms.View.Details;
@@ -94,37 +88,52 @@ namespace WorkOrderBlender
       this.btnConsolidate.UseVisualStyleBackColor = true;
       this.btnConsolidate.Click += new System.EventHandler(this.btnConsolidate_Click);
       //
-      // btnChooseOutput
-      //
-      this.btnChooseOutput.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Right)));
-      this.btnChooseOutput.Location = new System.Drawing.Point(640, 28);
-      this.btnChooseOutput.Name = "btnChooseOutput";
-      this.btnChooseOutput.Size = new System.Drawing.Size(95, 28);
-      this.btnChooseOutput.TabIndex = 4;
-      this.btnChooseOutput.Text = "Browse...";
-      this.btnChooseOutput.UseVisualStyleBackColor = true;
-      this.btnChooseOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
-      this.btnChooseOutput.Click += new System.EventHandler(this.btnChooseOutput_Click);
-      //
       // txtOutput
       //
-      this.txtOutput.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
-      | System.Windows.Forms.AnchorStyles.Right)));
-      this.txtOutput.Location = new System.Drawing.Point(121, 30);
       this.txtOutput.Name = "txtOutput";
-      this.txtOutput.Size = new System.Drawing.Size(500, 20);
       this.txtOutput.TabIndex = 6;
-      this.txtOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.txtOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.txtOutput.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.txtOutput.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
       //
       // labelOutput
       //
       this.labelOutput.AutoSize = true;
-      this.labelOutput.Location = new System.Drawing.Point(12, 33);
       this.labelOutput.Name = "labelOutput";
-      this.labelOutput.Size = new System.Drawing.Size(79, 13);
       this.labelOutput.TabIndex = 7;
-      this.labelOutput.Text = "Output folder:";
-      this.labelOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.labelOutput.Text = "Work Order Name:";
+      this.labelOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.labelOutput.Anchor = System.Windows.Forms.AnchorStyles.Left;
+      this.labelOutput.TextAlign = System.Drawing.ContentAlignment.MiddleLeft;
+
+      this.btnSettings.AutoSize = true;
+      this.btnSettings.Text = "Settings...";
+      this.btnSettings.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.btnSettings.UseVisualStyleBackColor = true;
+      this.btnSettings.Margin = new System.Windows.Forms.Padding(58, 0, 0, 0);
+      this.btnSettings.Click += new System.EventHandler(this.btnSettings_Click);
+      this.btnSettings.Anchor = System.Windows.Forms.AnchorStyles.Left;
+
+      //
+      // tableWorkOrder
+      //
+      this.tableWorkOrder.ColumnCount = 4;
+      this.tableWorkOrder.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
+      this.tableWorkOrder.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+      this.tableWorkOrder.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
+      this.tableWorkOrder.Controls.Add(this.labelOutput, 0, 0);
+      this.tableWorkOrder.Controls.Add(this.txtOutput, 1, 0);
+      this.tableWorkOrder.Controls.Add(this.btnSettings, 2, 0);
+      this.tableWorkOrder.Location = new System.Drawing.Point(12, 10);
+      this.tableWorkOrder.Name = "tableWorkOrder";
+      this.tableWorkOrder.RowCount = 1;
+      this.tableWorkOrder.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
+      this.tableWorkOrder.Size = new System.Drawing.Size(700, 30);
+      this.tableWorkOrder.TabIndex = 8;
+      this.tableWorkOrder.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
+      | System.Windows.Forms.AnchorStyles.Right)));
+
+
       //
       // progress
       //
@@ -141,21 +150,24 @@ namespace WorkOrderBlender
       // labelSearch
       //
       this.labelSearch.AutoSize = true;
-      this.labelSearch.Location = new System.Drawing.Point(12, 85);
-      this.labelSearch.Margin = new System.Windows.Forms.Padding(4, 6, 4, 0);
+      this.labelSearch.Location = new System.Drawing.Point(12, 80);
+      this.labelSearch.Margin = new System.Windows.Forms.Padding(4, 2, 4, 4);
       this.labelSearch.Name = "labelSearch";
       this.labelSearch.Size = new System.Drawing.Size(44, 13);
       this.labelSearch.TabIndex = 10;
+      this.labelSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.labelSearch.Text = "Search:";
 
       // txtSearch
       //
       this.txtSearch.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
       | System.Windows.Forms.AnchorStyles.Right)));
-      this.txtSearch.Location = new System.Drawing.Point(101, 90);
+      this.txtSearch.Location = new System.Drawing.Point(101, 80);
+      this.txtSearch.Margin = new System.Windows.Forms.Padding(4, 0, 4, 5);
       this.txtSearch.Name = "txtSearch";
-      this.txtSearch.Size = new System.Drawing.Size(146, 20);
+      this.txtSearch.Size = new System.Drawing.Size(146, 24);
       this.txtSearch.TabIndex = 11;
+      this.txtSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.txtSearch.TextChanged += new System.EventHandler(this.txtSearch_TextChanged);
 
       // splitMain
@@ -163,7 +175,7 @@ namespace WorkOrderBlender
       this.splitMain.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
       | System.Windows.Forms.AnchorStyles.Left)
       | System.Windows.Forms.AnchorStyles.Right)));
-      this.splitMain.Location = new System.Drawing.Point(15, 90);
+      this.splitMain.Location = new System.Drawing.Point(15, 50);
       this.splitMain.Name = "splitMain";
       // Panel1
       this.splitMain.Panel1.Controls.Add(this.listWorkOrders);
@@ -171,7 +183,7 @@ namespace WorkOrderBlender
       // Panel2
       this.splitMain.Panel2.Controls.Add(this.breakdownList);
       this.splitMain.Panel2.Controls.Add(this.panelMetricsTop);
-      this.splitMain.Size = new System.Drawing.Size(718, 319);
+      this.splitMain.Size = new System.Drawing.Size(718, 349);
       this.splitMain.SplitterDistance = 420;
       this.splitMain.TabIndex = 12;
 
@@ -220,7 +232,7 @@ namespace WorkOrderBlender
       this.panelSearchLeft.TabIndex = 14;
       // build a table layout to avoid overlap
       var tableSearch = new System.Windows.Forms.TableLayoutPanel();
-      tableSearch.ColumnCount = 4;
+      tableSearch.ColumnCount = 3;
       tableSearch.RowCount = 1;
       tableSearch.Dock = System.Windows.Forms.DockStyle.Fill;
       tableSearch.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
@@ -245,14 +257,8 @@ namespace WorkOrderBlender
       this.btnSelectAll.Text = "Select All";
       this.btnSelectAll.UseVisualStyleBackColor = true;
       this.btnSelectAll.Click += new System.EventHandler(this.btnSelectAll_Click);
+      this.btnSelectAll.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       tableSearch.Controls.Add(this.btnSelectAll, 2, 0);
-            var btnSettings = new System.Windows.Forms.Button();
-      btnSettings.AutoSize = true;
-      btnSettings.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
-      btnSettings.Text = "Settings...";
-      btnSettings.UseVisualStyleBackColor = true;
-      btnSettings.Click += new System.EventHandler(this.btnSettings_Click);
-      tableSearch.Controls.Add(btnSettings, 3, 0);
 
       // panelMetricsTop
       //
@@ -267,17 +273,15 @@ namespace WorkOrderBlender
       //
       this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-      this.ClientSize = new System.Drawing.Size(748, 450);
+      this.ClientSize = new System.Drawing.Size(750, 450);
       this.Controls.Add(this.splitMain);
       this.Controls.Add(this.progress);
-      this.Controls.Add(this.labelOutput);
-      this.Controls.Add(this.txtOutput);
-      this.Controls.Add(this.btnChooseOutput);
+      this.Controls.Add(this.tableWorkOrder);
       this.Controls.Add(this.btnPreviewChanges);
       this.Controls.Add(this.btnConsolidate);
-      this.MinimumSize = new System.Drawing.Size(700, 350);
+      this.MinimumSize = new System.Drawing.Size(750, 450);
       this.Name = "MainForm";
-      this.Text = "Work Order SDF Consolidator";
+      this.Text = "Work Order Blender";
       this.splitMain.Panel1.ResumeLayout(false);
       this.splitMain.Panel2.ResumeLayout(false);
       ((System.ComponentModel.ISupportInitialize)(this.splitMain)).EndInit();
@@ -289,10 +293,9 @@ namespace WorkOrderBlender
 
     private ListView listWorkOrders;
     private ColumnHeader colDir;
-    private ColumnHeader colSdf;
     private Button btnConsolidate;
     private Button btnPreviewChanges;
-    private Button btnChooseOutput;
+    private Button btnSettings;
     private TextBox txtOutput;
     private Label labelOutput;
     private ProgressBar progress;
@@ -306,6 +309,7 @@ namespace WorkOrderBlender
     private Panel panelSearchLeft;
     private Button btnSelectAll;
     private Panel panelMetricsTop;
+    private TableLayoutPanel tableWorkOrder;
     // removed legacy chkSelectAll field
   }
 }

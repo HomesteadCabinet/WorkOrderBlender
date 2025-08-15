@@ -11,6 +11,7 @@ namespace WorkOrderBlender
     public string DefaultRoot { get; set; }
     public string DefaultOutput { get; set; }
     public string SdfFileName { get; set; }
+    public string WorkOrderName { get; set; }
 
     [Serializable]
     public sealed class ColumnWidthEntry
@@ -31,11 +32,36 @@ namespace WorkOrderBlender
 
     public List<ColumnOrderEntry> ColumnOrders { get; set; } = new List<ColumnOrderEntry>();
 
+    [Serializable]
+    public sealed class ColumnVisibilityEntry
+    {
+      public string TableName { get; set; }
+      public string ColumnName { get; set; }
+      public bool IsVisible { get; set; }
+    }
+
+    public List<ColumnVisibilityEntry> ColumnVisibilities { get; set; } = new List<ColumnVisibilityEntry>();
+
+    [Serializable]
+    public sealed class SpecialColumnDef
+    {
+      public string TableName { get; set; }
+      public string ColumnName { get; set; }
+      public string TargetTableName { get; set; }
+      public string LocalKeyColumn { get; set; }
+      public string TargetKeyColumn { get; set; }
+      public string TargetValueColumn { get; set; }
+    }
+
+    public List<SpecialColumnDef> SpecialColumns { get; set; } = new List<SpecialColumnDef>();
+
     // Seed defaults when loading config if none present
     private void EnsureDefaultMetricsLayout()
     {
       if (ColumnOrders == null) ColumnOrders = new List<ColumnOrderEntry>();
       if (ColumnWidths == null) ColumnWidths = new List<ColumnWidthEntry>();
+      if (ColumnVisibilities == null) ColumnVisibilities = new List<ColumnVisibilityEntry>();
+      if (SpecialColumns == null) SpecialColumns = new List<SpecialColumnDef>();
 
       // Only add if missing to avoid overwriting user's preferences
       bool HasOrder(string table) => ColumnOrders.Exists(e => string.Equals(e.TableName, table, StringComparison.OrdinalIgnoreCase));
@@ -107,6 +133,38 @@ namespace WorkOrderBlender
       AddWidth("Parts", "MaterialName", 171);
     }
 
+    public List<SpecialColumnDef> GetSpecialColumnsForTable(string tableName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName)) return new List<SpecialColumnDef>();
+      return SpecialColumns.FindAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    public void UpsertSpecialColumn(SpecialColumnDef def)
+    {
+      if (def == null) return;
+      if (string.IsNullOrWhiteSpace(def.TableName) || string.IsNullOrWhiteSpace(def.ColumnName)) return;
+      var existing = SpecialColumns.Find(e => string.Equals(e.TableName, def.TableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, def.ColumnName, StringComparison.OrdinalIgnoreCase));
+      if (existing == null)
+      {
+        SpecialColumns.Add(def);
+      }
+      else
+      {
+        existing.TargetTableName = def.TargetTableName;
+        existing.LocalKeyColumn = def.LocalKeyColumn;
+        existing.TargetKeyColumn = def.TargetKeyColumn;
+        existing.TargetValueColumn = def.TargetValueColumn;
+      }
+    }
+
+    public void RemoveSpecialColumn(string tableName, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      SpecialColumns.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+    }
+
     public int? TryGetColumnWidth(string tableName, string columnName)
     {
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
@@ -154,10 +212,35 @@ namespace WorkOrderBlender
       }
     }
 
+    public bool? TryGetColumnVisibility(string tableName, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
+      var entry = ColumnVisibilities.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      return entry?.IsVisible;
+    }
+
+    public void SetColumnVisibility(string tableName, string columnName, bool isVisible)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      var entry = ColumnVisibilities.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry == null)
+      {
+        entry = new ColumnVisibilityEntry { TableName = tableName, ColumnName = columnName, IsVisible = isVisible };
+        ColumnVisibilities.Add(entry);
+      }
+      else
+      {
+        entry.IsVisible = isVisible;
+      }
+    }
+
     private static string GetConfigDirectory()
     {
-      var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "WorkOrderBlender");
-      return dir;
+      // Use the directory where the executable is located
+      var exeDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+      return exeDir ?? Environment.CurrentDirectory;
     }
 
     private static string GetConfigPath()

@@ -76,8 +76,8 @@ namespace WorkOrderBlender
         if (string.IsNullOrWhiteSpace(userConfig.SdfFileName)) userConfig.SdfFileName = SdfFileName;
       }
 
-      // Show only the output directory; file name is fixed as MicrovellumWorkOrder.sdf
-      txtOutput.Text = (userConfig.DefaultOutput ?? DefaultOutput);
+      // Show work order name field
+      txtOutput.Text = userConfig.WorkOrderName ?? string.Empty;
       // Virtualize the big list for performance
       this.listWorkOrders.VirtualMode = true;
       this.listWorkOrders.RetrieveVirtualItem += listWorkOrders_RetrieveVirtualItem;
@@ -132,8 +132,8 @@ namespace WorkOrderBlender
         cfg.DefaultRoot = DefaultRoot;
         try
         {
-          var outDir = (txtOutput.Text ?? string.Empty).Trim();
-          if (!string.IsNullOrEmpty(outDir)) cfg.DefaultOutput = outDir;
+          var workOrderName = (txtOutput.Text ?? string.Empty).Trim();
+          if (!string.IsNullOrEmpty(workOrderName)) cfg.WorkOrderName = workOrderName;
         }
         catch { }
         // File name is fixed; do not update cfg.SdfFileName here
@@ -153,7 +153,6 @@ namespace WorkOrderBlender
       }
       var wo = filteredWorkOrders[idx];
       var item = new ListViewItem(GetDisplayPath(wo.DirectoryPath));
-      item.SubItems.Add(wo.SdfExists ? "Yes" : "No");
       item.Tag = wo.SdfPath;
       item.StateImageIndex = checkedDirs.Contains(wo.DirectoryPath) ? 1 : 0; // 1=checked, 0=unchecked
       e.Item = item;
@@ -327,28 +326,7 @@ namespace WorkOrderBlender
       _ = UpdateConsolidatedBreakdownAsync();
     }
 
-    private void btnChooseOutput_Click(object sender, EventArgs e)
-    {
-      using (var fbd = new FolderBrowserDialog())
-      {
-        fbd.Description = "Choose output folder";
-        fbd.SelectedPath = (txtOutput.Text ?? string.Empty).Trim();
-        if (fbd.ShowDialog(this) == DialogResult.OK)
-        {
-          txtOutput.Text = fbd.SelectedPath;
-          try
-          {
-            var cfg = UserConfig.LoadOrDefault();
-            cfg.DefaultOutput = fbd.SelectedPath;
-            // Always fix the output file name
-            cfg.SdfFileName = SdfFileName;
-            cfg.Save();
-            userConfig = cfg;
-          }
-          catch { }
-        }
-      }
-    }
+
 
     private void btnConsolidate_Click(object sender, EventArgs e)
     {
@@ -363,18 +341,65 @@ namespace WorkOrderBlender
         return;
       }
 
-      string outDir = txtOutput.Text.Trim();
-      if (string.IsNullOrEmpty(outDir))
+      string workOrderName = txtOutput.Text.Trim();
+      if (string.IsNullOrEmpty(workOrderName))
       {
-        MessageBox.Show("Choose an output folder.");
+        MessageBox.Show("Please enter a work order name.");
         return;
       }
-      string destPath = Path.Combine(outDir, SdfFileName);
+
+      // Validate work order name for file system safety
+      if (workOrderName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+      {
+        MessageBox.Show("Work order name contains invalid characters. Please use only letters, numbers, spaces, and basic punctuation.");
+        return;
+      }
+
+      // Create subfolder in DefaultRoot based on work order name
+      string workOrderDir = Path.Combine(userConfig.DefaultRoot ?? DefaultRoot, workOrderName);
+      string destPath = Path.Combine(workOrderDir, SdfFileName);
+
+      // Create the work order directory if it doesn't exist
+      try
+      {
+        Directory.CreateDirectory(workOrderDir);
+      }
+      catch (Exception ex)
+      {
+        MessageBox.Show($"Failed to create work order directory: {ex.Message}");
+        return;
+      }
+
+      // Check if destination file already exists and prompt user
+      if (File.Exists(destPath))
+      {
+        var result = MessageBox.Show(
+          $"The file '{SdfFileName}' already exists in work order '{workOrderName}'.\n\nDo you want to replace it?",
+          "File Exists",
+          MessageBoxButtons.YesNo,
+          MessageBoxIcon.Question,
+          MessageBoxDefaultButton.Button2);
+
+        if (result != DialogResult.Yes)
+        {
+          return; // User chose not to replace
+        }
+      }
+
+      // Save the work order name to user config
+      try
+      {
+        var cfg = UserConfig.LoadOrDefault();
+        cfg.WorkOrderName = workOrderName;
+        cfg.Save();
+        userConfig = cfg;
+      }
+      catch { }
 
       try
       {
         RunConsolidation(selected.Select(s => (s.Directory, s.SdfPath)).ToList(), destPath);
-        MessageBox.Show("Consolidation complete.");
+        MessageBox.Show($"Consolidation complete. File created at:\n{destPath}");
       }
       catch (Exception ex)
       {
@@ -383,7 +408,7 @@ namespace WorkOrderBlender
       }
     }
 
-        private void UpdatePreviewChangesButton()
+    private void UpdatePreviewChangesButton()
     {
       try
       {
@@ -475,14 +500,13 @@ namespace WorkOrderBlender
       {
         Dock = DockStyle.Fill,
         ColumnCount = 4,
-        RowCount = 4,
+        RowCount = 3,
         Padding = new Padding(10)
       };
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       dlg.Controls.Add(table);
@@ -502,23 +526,11 @@ namespace WorkOrderBlender
         }
       };
 
-      var lblOut = new Label { Text = "Default Output Folder:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var txtOutLocal = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400, Text = (userConfig?.DefaultOutput ?? DefaultOutput) };
-      var btnBrowseOut = new Button { Text = "Browse...", AutoSize = true };
-      btnBrowseOut.Click += (s, e) =>
-      {
-        using (var fbd = new FolderBrowserDialog())
-        {
-          fbd.SelectedPath = txtOutLocal.Text;
-          if (fbd.ShowDialog(dlg) == DialogResult.OK)
-          {
-            txtOutLocal.Text = fbd.SelectedPath;
-          }
-        }
-      };
+      // Output is now based on work order name + DefaultRoot, so no need for separate output folder setting
 
       var lblSdf = new Label { Text = ".sdf File Name:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var txtSdfLocal = new TextBox {
+      var txtSdfLocal = new TextBox
+      {
         Anchor = AnchorStyles.Left | AnchorStyles.Right,
         Width = 400,
         Text = GetSdfFileName(),
@@ -529,16 +541,13 @@ namespace WorkOrderBlender
       table.Controls.Add(txtRootLocal, 1, 0);
       table.Controls.Add(btnBrowseRoot, 2, 0);
 
-      table.Controls.Add(lblOut, 0, 1);
-      table.Controls.Add(txtOutLocal, 1, 1);
-      table.Controls.Add(btnBrowseOut, 2, 1);
-
-      table.Controls.Add(lblSdf, 0, 2);
-      table.Controls.Add(txtSdfLocal, 1, 2);
+      table.Controls.Add(lblSdf, 0, 1);
+      table.Controls.Add(txtSdfLocal, 1, 1);
 
       // Add Check Updates button
       // var lblUpdates = new Label { Text = "Application:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var btnCheckUpdates = new Button {
+      var btnCheckUpdates = new Button
+      {
         Text = "Check for Updates",
         AutoSize = true,
         Anchor = AnchorStyles.Left
@@ -576,12 +585,14 @@ namespace WorkOrderBlender
       panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // OK+Cancel
       panelButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
-      var btnOk = new Button {
+      var btnOk = new Button
+      {
         Text = "OK",
         DialogResult = DialogResult.OK,
         AutoSize = true
       };
-      var btnCancel = new Button {
+      var btnCancel = new Button
+      {
         Text = "Cancel",
         DialogResult = DialogResult.Cancel,
         AutoSize = true
@@ -611,12 +622,10 @@ namespace WorkOrderBlender
         {
           if (userConfig == null) userConfig = new UserConfig();
           userConfig.DefaultRoot = (txtRootLocal.Text ?? string.Empty).Trim();
-          userConfig.DefaultOutput = (txtOutLocal.Text ?? string.Empty).Trim();
           userConfig.SdfFileName = (txtSdfLocal.Text ?? string.Empty).Trim();
           userConfig.Save();
 
-
-          txtOutput.Text = Path.Combine(userConfig.DefaultOutput, GetSdfFileName());
+          // txtOutput now shows work order name, not output folder
         }
         catch (Exception ex)
         {
@@ -902,31 +911,31 @@ namespace WorkOrderBlender
 
     // removed btnOpenDetails handler (per-row Action buttons used instead)
 
-        private void OpenMetricDialog(MetricTag tag)
+    private void OpenMetricDialog(MetricTag tag)
+    {
+      try
+      {
+        // Always show metrics from selected work orders (source SDFs), not the output file
+        var srcPaths = filteredWorkOrders
+            .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
+            .Select(wo => wo.SdfPath)
+            .ToList();
+        if (srcPaths.Count == 0)
         {
-            try
-            {
-                // Always show metrics from selected work orders (source SDFs), not the output file
-                var srcPaths = filteredWorkOrders
-                    .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
-                    .Select(wo => wo.SdfPath)
-                    .ToList();
-                if (srcPaths.Count == 0)
-                {
-                    MessageBox.Show("No selected work orders.");
-                    return;
-                }
-                using (var dlg = new MetricsDialog(tag.Label, tag.Table, srcPaths, allowEditingInMemory: false))
-                {
-                    dlg.ShowDialog(this);
-                }
-            }
-            catch (Exception ex)
-            {
-                Program.Log("OpenMetricDialog error", ex);
-                MessageBox.Show("Failed to open metrics: " + ex.Message);
-            }
+          MessageBox.Show("No selected work orders.");
+          return;
         }
+        using (var dlg = new MetricsDialog(tag.Label, tag.Table, srcPaths, allowEditingInMemory: false))
+        {
+          dlg.ShowDialog(this);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("OpenMetricDialog error", ex);
+        MessageBox.Show("Failed to open metrics: " + ex.Message);
+      }
+    }
 
     private sealed class MetricTag
     {

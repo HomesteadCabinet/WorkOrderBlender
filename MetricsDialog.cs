@@ -37,6 +37,14 @@ namespace WorkOrderBlender
     private bool canPersistEdits;
     private bool isInitializing;
 
+    // Special (linked/display-only) columns support
+    private List<UserConfig.SpecialColumnDef> specialColumnDefs;
+    private readonly Dictionary<string, Dictionary<string, object>> specialLookupCacheByColumn = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> specialColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    // Cache of schema columns for breakdown tables to support dialogs without live DB context
+    private readonly Dictionary<string, List<string>> breakdownSchemaColumns = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
     // Consolidated-mode constructor
     public MetricsDialog(string dialogLabel, string tableName, string consolidatedDatabasePath)
     {
@@ -81,6 +89,7 @@ namespace WorkOrderBlender
       layoutTop.Controls.Add(lblSearch, 0, 0);
       layoutTop.Controls.Add(txtSearch, 1, 0);
       layoutTop.Controls.Add(lblStatus, 2, 0);
+      lblStatus.MaximumSize = new Size(500, 0);
 
       grid = new DataGridView
       {
@@ -124,19 +133,26 @@ namespace WorkOrderBlender
       grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
       grid.CellEndEdit += Grid_CellEndEdit;
       grid.DataBindingComplete += Grid_DataBindingComplete;
+      grid.SortCompare += Grid_SortCompare;
       grid.ColumnAdded += Grid_ColumnAdded;
       grid.ColumnWidthChanged += Grid_ColumnWidthChanged;
       grid.MouseDown += Grid_MouseDown;
       grid.MouseUp += Grid_MouseUp;
       grid.MouseClick += Grid_MouseClick;
       grid.DoubleClick += Grid_DoubleClick; // Add double-click handler
+      grid.CellFormatting += Grid_CellFormatting;
+      grid.DataError += (s, e) => { e.ThrowException = false; };
       grid.Sorted += (s, e) => { ApplyPersistedColumnWidths(); ApplyPersistedColumnOrder(); };
       grid.SizeChanged += (s, e) => ApplyPersistedColumnWidths();
       grid.ColumnDisplayIndexChanged += Grid_ColumnDisplayIndexChanged;
       grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
+      grid.KeyDown += Grid_KeyDown;
 
       // Initialize grid state based on edit mode
       InitializeGridEditState();
+
+      // Build schema cache for breakdown tables if possible
+      try { BuildBreakdownSchemaColumnsCache(); } catch { }
     }
 
     // Pre-consolidation constructor: loads from multiple source SDFs into memory
@@ -224,8 +240,12 @@ namespace WorkOrderBlender
 
           var binding = new BindingSource { DataSource = dataTable };
           grid.DataSource = binding;
+          LoadSpecialColumnDefinitions();
+          BuildSpecialLookupCaches();
+          RebuildSpecialColumns();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
+          ApplyPersistedColumnVisibilities();
 
           // Prepare manual commands for DB persistence using LinkID as PK (only if not already set to read-only)
           if (canPersistEdits != false) // Don't override if already set to false due to read-only
@@ -338,8 +358,12 @@ namespace WorkOrderBlender
 
           var binding = new BindingSource { DataSource = dataTable };
           grid.DataSource = binding;
+          LoadSpecialColumnDefinitions();
+          BuildSpecialLookupCaches();
+          RebuildSpecialColumns();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
+          ApplyPersistedColumnVisibilities();
           // Mark all initially loaded rows as unchanged so only user edits are tracked
           dataTable.AcceptChanges();
           canPersistEdits = true; // persist to in-memory store only
@@ -359,6 +383,98 @@ namespace WorkOrderBlender
       finally
       {
         isInitializing = false;
+      }
+    }
+
+    private void BuildBreakdownSchemaColumnsCache()
+    {
+      var tables = new[] { "Products", "Parts", "Subassemblies", "Sheets" };
+
+      // Prefer consolidated connection
+      if (connection != null)
+      {
+        try
+        {
+          using (var cmd = new SqlCeCommand("SELECT TABLE_NAME, COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS", connection))
+          using (var rdr = cmd.ExecuteReader())
+          {
+            while (rdr.Read())
+            {
+              var t = rdr.GetString(0);
+              if (!tables.Contains(t, StringComparer.OrdinalIgnoreCase)) continue;
+              var c = rdr.GetString(1);
+              if (!breakdownSchemaColumns.TryGetValue(t, out var list))
+              {
+                list = new List<string>();
+                breakdownSchemaColumns[t] = list;
+              }
+              if (!list.Contains(c)) list.Add(c);
+            }
+          }
+        }
+        catch { }
+      }
+
+      // Fallback: attempt from first available source SDF
+      if (breakdownSchemaColumns.Count == 0 && sourceSdfPaths != null)
+      {
+        foreach (var path in sourceSdfPaths)
+        {
+          if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
+          string tmp = null;
+          try
+          {
+            using (var conn = SqlCeUtils.OpenWithFallback(path, out tmp))
+            {
+              foreach (var t in tables)
+              {
+                try
+                {
+                  using (var cmd = new SqlCeCommand($"SELECT * FROM [" + t + "]", conn))
+                  using (var reader = cmd.ExecuteReader(CommandBehavior.SchemaOnly))
+                  {
+                    var schema = reader.GetSchemaTable();
+                    if (schema == null) continue;
+                    if (!breakdownSchemaColumns.TryGetValue(t, out var list))
+                    {
+                      list = new List<string>();
+                      breakdownSchemaColumns[t] = list;
+                    }
+                    foreach (DataRow r in schema.Rows)
+                    {
+                      var colName = r["ColumnName"].ToString();
+                      if (!list.Contains(colName)) list.Add(colName);
+                    }
+                  }
+                }
+                catch { }
+              }
+            }
+          }
+          catch { }
+          finally
+          {
+            if (!string.IsNullOrEmpty(tmp)) { try { File.Delete(tmp); } catch { } }
+          }
+          if (breakdownSchemaColumns.Count > 0) break; // we have something
+        }
+      }
+
+      // Last fallback: defaults from user config order
+      if (breakdownSchemaColumns.Count == 0)
+      {
+        var cfg = UserConfig.LoadOrDefault();
+        foreach (var t in tables)
+        {
+          var cols = cfg.TryGetColumnOrder(t);
+          if (cols != null && cols.Count > 0) breakdownSchemaColumns[t] = cols;
+        }
+      }
+
+      // Sort columns for consistency
+      foreach (var kv in breakdownSchemaColumns.ToList())
+      {
+        kv.Value.Sort(StringComparer.OrdinalIgnoreCase);
       }
     }
 
@@ -462,6 +578,9 @@ namespace WorkOrderBlender
         // Persist the specific changed cell after editing completes
         if (!isInitializing && isEditMode && e.RowIndex >= 0 && e.ColumnIndex >= 0)
         {
+          // Ignore display-only special columns
+          var colName = grid.Columns[e.ColumnIndex]?.Name;
+          if (!string.IsNullOrEmpty(colName) && specialColumnNames.Contains(colName)) return;
           TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex, true);
         }
       }
@@ -473,6 +592,9 @@ namespace WorkOrderBlender
       if (isInitializing || !isEditMode) return;
       if (e.RowIndex >= 0 && e.ColumnIndex >= 0)
       {
+        // Ignore display-only special columns
+        var colName = grid.Columns[e.ColumnIndex]?.Name;
+        if (!string.IsNullOrEmpty(colName) && specialColumnNames.Contains(colName)) return;
         try { TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex, false); }
         catch (Exception ex) { Program.Log("CellValueChanged save failed", ex); MessageBox.Show("Save failed: " + ex.Message); }
       }
@@ -671,6 +793,53 @@ namespace WorkOrderBlender
       }
     }
 
+    private void Grid_KeyDown(object sender, KeyEventArgs e)
+    {
+      // Handle Delete key to clear cell values when in edit mode
+      if (e.KeyCode == Keys.Delete && isEditMode && !grid.ReadOnly)
+      {
+        try
+        {
+          // Check if we have a current cell selected
+          if (grid.CurrentCell != null && grid.CurrentCell.RowIndex >= 0 && grid.CurrentCell.ColumnIndex >= 0)
+          {
+            var currentCell = grid.CurrentCell;
+            var column = grid.Columns[currentCell.ColumnIndex];
+            var columnName = column.DataPropertyName ?? column.Name;
+
+            // Skip special columns and LinkID columns as they shouldn't be cleared
+            if (specialColumnNames.Contains(columnName)) return;
+
+            var linkCol = FindLinkIdColumn(dataTable.Columns);
+            if (linkCol != null && string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) return;
+
+            // If currently in edit mode for this cell, end the edit first
+            if (grid.IsCurrentCellInEditMode)
+            {
+              grid.EndEdit();
+            }
+
+            // Clear the cell value
+            currentCell.Value = DBNull.Value;
+
+            // Trigger the save logic
+            TrySaveSingleCellChange(currentCell.RowIndex, currentCell.ColumnIndex, true);
+
+            // Mark the event as handled
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+
+            lblStatus.Text = $"Cleared value in column '{columnName}'";
+          }
+        }
+        catch (Exception ex)
+        {
+          Program.Log("Error clearing cell value", ex);
+          lblStatus.Text = "Error clearing cell value";
+        }
+      }
+    }
+
     private void Grid_MouseClick(object sender, MouseEventArgs e)
     {
       // Prevent left-click from jumping focus during edit
@@ -682,9 +851,14 @@ namespace WorkOrderBlender
 
     private void Grid_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
     {
-      if (e.Button != MouseButtons.Right || e.ColumnIndex < 0) return;
-      var headerPoint = grid.PointToClient(Cursor.Position);
-      ShowHeaderContextMenu(e.ColumnIndex, headerPoint);
+      if (e.ColumnIndex < 0) return;
+
+      if (e.Button == MouseButtons.Right)
+      {
+        var headerPoint = grid.PointToClient(Cursor.Position);
+        ShowHeaderContextMenu(e.ColumnIndex, headerPoint);
+      }
+      // Left click uses native sorting automatically; no custom handler needed for special columns
     }
 
     private void ShowHeaderContextMenu(int columnIndex, System.Drawing.Point clientLocation)
@@ -714,6 +888,53 @@ namespace WorkOrderBlender
           }
         };
         menu.Items.Add(moveToIndex);
+
+        // Hide/Show columns
+        menu.Items.Add(new ToolStripSeparator());
+        var hideColumn = new ToolStripMenuItem("Hide Column");
+        hideColumn.Click += (s, e) =>
+        {
+          col.Visible = false;
+          SaveColumnVisibility(col.Name, false);
+        };
+        menu.Items.Add(hideColumn);
+
+        var showColumnsMenu = new ToolStripMenuItem("Show Columns");
+        var hasHiddenColumns = false;
+        foreach (DataGridViewColumn gridCol in grid.Columns)
+        {
+          if (!gridCol.Visible)
+          {
+            hasHiddenColumns = true;
+            var showCol = new ToolStripMenuItem(gridCol.HeaderText ?? gridCol.Name);
+            showCol.Click += (s, e) =>
+            {
+              gridCol.Visible = true;
+              SaveColumnVisibility(gridCol.Name, true);
+            };
+            showColumnsMenu.DropDownItems.Add(showCol);
+          }
+        }
+        showColumnsMenu.Enabled = hasHiddenColumns;
+        menu.Items.Add(showColumnsMenu);
+
+        var showAllColumns = new ToolStripMenuItem("Show All Columns");
+        showAllColumns.Click += (s, e) =>
+        {
+          foreach (DataGridViewColumn gridCol in grid.Columns)
+          {
+            gridCol.Visible = true;
+            SaveColumnVisibility(gridCol.Name, true);
+          }
+        };
+        showAllColumns.Enabled = hasHiddenColumns;
+        menu.Items.Add(showAllColumns);
+
+        // Manage special columns from header context
+        menu.Items.Add(new ToolStripSeparator());
+        var manageSpecial = new ToolStripMenuItem("Special Columns...");
+        manageSpecial.Click += (s, e) => ManageSpecialColumns();
+        menu.Items.Add(manageSpecial);
 
         menu.Show(grid, clientLocation);
       }
@@ -760,6 +981,37 @@ namespace WorkOrderBlender
       catch { }
       return null;
     }
+
+    private void SaveColumnVisibility(string columnName, bool isVisible)
+    {
+      try
+      {
+        if (isInitializing) return; // don't save during initial setup
+        var cfg = UserConfig.LoadOrDefault();
+        cfg.SetColumnVisibility(tableName, columnName, isVisible);
+        cfg.Save();
+      }
+      catch { }
+    }
+
+    private void ApplyPersistedColumnVisibilities()
+    {
+      try
+      {
+        var cfg = UserConfig.LoadOrDefault();
+        foreach (DataGridViewColumn col in grid.Columns)
+        {
+          var visibility = cfg.TryGetColumnVisibility(tableName, col.Name);
+          if (visibility.HasValue)
+          {
+            col.Visible = visibility.Value;
+          }
+        }
+      }
+      catch { }
+    }
+
+    // Removed heavy custom sorting for special columns; relying on native sorting for performance
 
     // removed unused IsStreamColumn
 
@@ -966,8 +1218,15 @@ namespace WorkOrderBlender
     private void Grid_DataBindingComplete(object sender, DataGridViewBindingCompleteEventArgs e)
     {
       // Apply defaults from config (order and widths)
+      RebuildSpecialColumns();
       ApplyPersistedColumnOrder();
       ApplyPersistedColumnWidths();
+    }
+
+    private void Grid_SortCompare(object sender, DataGridViewSortCompareEventArgs e)
+    {
+      // Special columns now use actual DataTable columns, so native sorting handles them automatically
+      // This handler can be used for other custom sorting needs in the future
     }
 
     private void Grid_ColumnAdded(object sender, DataGridViewColumnEventArgs e)
@@ -978,6 +1237,13 @@ namespace WorkOrderBlender
       if (!string.IsNullOrEmpty(e.Column.DataPropertyName))
       {
         e.Column.Name = e.Column.DataPropertyName;
+      }
+      // Ensure special columns are marked read-only and styled
+      if (!string.IsNullOrEmpty(e.Column.Name) && specialColumnNames.Contains(e.Column.Name))
+      {
+        e.Column.ReadOnly = true;
+        e.Column.DefaultCellStyle.BackColor = Color.Beige;
+        e.Column.DefaultCellStyle.ForeColor = Color.DarkSlateGray;
       }
       // Apply persisted width if available (by DataPropertyName when present)
       var cfg = UserConfig.LoadOrDefault();
@@ -1030,6 +1296,12 @@ namespace WorkOrderBlender
       {
         var cfg = UserConfig.LoadOrDefault();
         var order = cfg.TryGetColumnOrder(tableName);
+        // Append any special columns not explicitly ordered to the end in stable order
+        if (order == null) order = new List<string>();
+        foreach (var sc in specialColumnNames)
+        {
+          if (!order.Any(n => string.Equals(n, sc, StringComparison.OrdinalIgnoreCase))) order.Add(sc);
+        }
         if (order == null || order.Count == 0) return;
         isApplyingLayout = true;
         int idx = 0;
@@ -1063,6 +1335,195 @@ namespace WorkOrderBlender
         cfg.Save();
       }
       catch { }
+    }
+
+    private void LoadSpecialColumnDefinitions()
+    {
+      try
+      {
+        var cfg = UserConfig.LoadOrDefault();
+        specialColumnDefs = cfg.GetSpecialColumnsForTable(tableName) ?? new List<UserConfig.SpecialColumnDef>();
+        specialColumnNames.Clear();
+        foreach (var def in specialColumnDefs)
+        {
+          if (!string.IsNullOrWhiteSpace(def.ColumnName)) specialColumnNames.Add(def.ColumnName);
+        }
+      }
+      catch { specialColumnDefs = new List<UserConfig.SpecialColumnDef>(); specialColumnNames.Clear(); }
+    }
+
+    private void BuildSpecialLookupCaches()
+    {
+      specialLookupCacheByColumn.Clear();
+      if (specialColumnDefs == null || specialColumnDefs.Count == 0) return;
+
+      foreach (var def in specialColumnDefs)
+      {
+        if (string.IsNullOrWhiteSpace(def.TargetTableName) || string.IsNullOrWhiteSpace(def.LocalKeyColumn) ||
+            string.IsNullOrWhiteSpace(def.TargetKeyColumn) || string.IsNullOrWhiteSpace(def.TargetValueColumn)) continue;
+
+        try
+        {
+          var lookup = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+          string targetKeyCol = def.TargetKeyColumn.Replace("]", "]]");
+          string targetValCol = def.TargetValueColumn.Replace("]", "]]");
+          string targetTable = def.TargetTableName.Replace("]", "]]");
+          string sql = "SELECT [" + targetKeyCol + "], [" + targetValCol + "] FROM [" + targetTable + "]";
+
+          if (showFromConsolidated && connection != null)
+          {
+            // Use consolidated database connection
+            using (var cmd = new SqlCeCommand(sql, connection))
+            using (var rdr = cmd.ExecuteReader())
+            {
+              while (rdr.Read())
+              {
+                var keyObj = rdr.IsDBNull(0) ? null : rdr.GetValue(0);
+                var valObj = rdr.IsDBNull(1) ? null : rdr.GetValue(1);
+                var key = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+                if (key == null) continue;
+                if (!lookup.ContainsKey(key)) lookup[key] = valObj;
+              }
+            }
+          }
+          else if (sourceSdfPaths != null && sourceSdfPaths.Count > 0)
+          {
+            // Use source SDF files
+            var tempFiles = new List<string>();
+            try
+            {
+              foreach (var path in sourceSdfPaths)
+              {
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
+                string tempCopyPath;
+                using (var conn = SqlCeUtils.OpenWithFallback(path, out tempCopyPath))
+                {
+                  if (!string.IsNullOrEmpty(tempCopyPath)) tempFiles.Add(tempCopyPath);
+                  try
+                  {
+                    using (var cmd = new SqlCeCommand(sql, conn))
+                    using (var rdr = cmd.ExecuteReader())
+                    {
+                      while (rdr.Read())
+                      {
+                        var keyObj = rdr.IsDBNull(0) ? null : rdr.GetValue(0);
+                        var valObj = rdr.IsDBNull(1) ? null : rdr.GetValue(1);
+                        var key = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+                        if (key == null) continue;
+                        if (!lookup.ContainsKey(key)) lookup[key] = valObj;
+                      }
+                    }
+                  }
+                  catch { }
+                }
+              }
+            }
+            finally
+            {
+              // Clean up temporary files
+              foreach (var tempFile in tempFiles.Distinct())
+              {
+                try { File.Delete(tempFile); } catch { }
+              }
+            }
+          }
+
+          specialLookupCacheByColumn[def.ColumnName] = lookup;
+        }
+        catch (Exception ex)
+        {
+          Program.Log("BuildSpecialLookupCaches failed for column " + def.ColumnName, ex);
+        }
+      }
+    }
+
+    private void RebuildSpecialColumns()
+    {
+      try
+      {
+        if (dataTable == null) return;
+        if (specialColumnDefs == null || specialColumnDefs.Count == 0) return;
+
+        // Add actual columns to DataTable and populate them with lookup values for proper sorting
+        foreach (var def in specialColumnDefs)
+        {
+          if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
+
+          // Add column to DataTable if it doesn't exist
+          if (!dataTable.Columns.Contains(def.ColumnName))
+          {
+            dataTable.Columns.Add(def.ColumnName, typeof(string));
+          }
+
+          // Populate the column with lookup values
+          if (specialLookupCacheByColumn.TryGetValue(def.ColumnName, out var lookup))
+          {
+            foreach (DataRow row in dataTable.Rows)
+            {
+              try
+              {
+                object localKeyVal = null;
+                if (dataTable.Columns.Contains(def.LocalKeyColumn))
+                  localKeyVal = row[def.LocalKeyColumn];
+                var localKey = localKeyVal == null || localKeyVal == DBNull.Value ? null : Convert.ToString(localKeyVal);
+
+                string displayValue = "";
+                if (!string.IsNullOrEmpty(localKey) && lookup.TryGetValue(localKey, out var valueObj))
+                {
+                  displayValue = valueObj == null || valueObj == DBNull.Value ? "" : Convert.ToString(valueObj);
+                }
+                row[def.ColumnName] = displayValue ?? "";
+              }
+              catch { row[def.ColumnName] = ""; }
+            }
+          }
+        }
+
+        // Ensure special columns in the grid have the right styling
+        foreach (var def in specialColumnDefs)
+        {
+          if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
+          if (grid.Columns.Contains(def.ColumnName))
+          {
+            var col = grid.Columns[def.ColumnName];
+            col.ReadOnly = true;
+            col.DefaultCellStyle.BackColor = Color.Beige;
+            col.DefaultCellStyle.ForeColor = Color.DarkSlateGray;
+          }
+        }
+      }
+      catch { }
+    }
+
+    private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+    {
+      // Special columns now use actual DataTable columns, so no custom formatting needed
+      // This handler can be used for other formatting needs in the future
+    }
+
+    private void ManageSpecialColumns()
+    {
+      try
+      {
+        using (var dlg = new SpecialColumnsDialog(tableName, connection, showFromConsolidated, breakdownSchemaColumns))
+        {
+          if (dlg.ShowDialog(this) == DialogResult.OK)
+          {
+            // Reload definitions and caches, and rebuild columns
+            LoadSpecialColumnDefinitions();
+            BuildSpecialLookupCaches();
+            RebuildSpecialColumns();
+            ApplyPersistedColumnOrder();
+            ApplyPersistedColumnWidths();
+            ApplyPersistedColumnVisibilities();
+            grid.Refresh();
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("ManageSpecialColumns failed", ex);
+      }
     }
   }
 }
