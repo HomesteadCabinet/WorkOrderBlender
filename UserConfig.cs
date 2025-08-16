@@ -43,7 +43,7 @@ namespace WorkOrderBlender
     public List<ColumnVisibilityEntry> ColumnVisibilities { get; set; } = new List<ColumnVisibilityEntry>();
 
     [Serializable]
-    public sealed class SpecialColumnDef
+    public sealed class VirtualColumnDef
     {
       public string TableName { get; set; }
       public string ColumnName { get; set; }
@@ -53,7 +53,10 @@ namespace WorkOrderBlender
       public string TargetValueColumn { get; set; }
     }
 
-    public List<SpecialColumnDef> SpecialColumns { get; set; } = new List<SpecialColumnDef>();
+    // Keep XML element name as "VirtualColumns" for backward compatibility with existing settings files
+    [XmlArray("VirtualColumns")]
+    [XmlArrayItem("VirtualColumnDef")]
+    public List<VirtualColumnDef> VirtualColumns { get; set; } = new List<VirtualColumnDef>();
 
     // Seed defaults when loading config if none present
     private void EnsureDefaultMetricsLayout()
@@ -61,7 +64,7 @@ namespace WorkOrderBlender
       if (ColumnOrders == null) ColumnOrders = new List<ColumnOrderEntry>();
       if (ColumnWidths == null) ColumnWidths = new List<ColumnWidthEntry>();
       if (ColumnVisibilities == null) ColumnVisibilities = new List<ColumnVisibilityEntry>();
-      if (SpecialColumns == null) SpecialColumns = new List<SpecialColumnDef>();
+      if (VirtualColumns == null) VirtualColumns = new List<VirtualColumnDef>();
 
       // Only add if missing to avoid overwriting user's preferences
       bool HasOrder(string table) => ColumnOrders.Exists(e => string.Equals(e.TableName, table, StringComparison.OrdinalIgnoreCase));
@@ -133,21 +136,21 @@ namespace WorkOrderBlender
       AddWidth("Parts", "MaterialName", 171);
     }
 
-    public List<SpecialColumnDef> GetSpecialColumnsForTable(string tableName)
+    public List<VirtualColumnDef> GetVirtualColumnsForTable(string tableName)
     {
-      if (string.IsNullOrWhiteSpace(tableName)) return new List<SpecialColumnDef>();
-      return SpecialColumns.FindAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+      if (string.IsNullOrWhiteSpace(tableName)) return new List<VirtualColumnDef>();
+      return VirtualColumns.FindAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
     }
 
-    public void UpsertSpecialColumn(SpecialColumnDef def)
+    public void UpsertVirtualColumn(VirtualColumnDef def)
     {
       if (def == null) return;
       if (string.IsNullOrWhiteSpace(def.TableName) || string.IsNullOrWhiteSpace(def.ColumnName)) return;
-      var existing = SpecialColumns.Find(e => string.Equals(e.TableName, def.TableName, StringComparison.OrdinalIgnoreCase)
+      var existing = VirtualColumns.Find(e => string.Equals(e.TableName, def.TableName, StringComparison.OrdinalIgnoreCase)
         && string.Equals(e.ColumnName, def.ColumnName, StringComparison.OrdinalIgnoreCase));
       if (existing == null)
       {
-        SpecialColumns.Add(def);
+        VirtualColumns.Add(def);
       }
       else
       {
@@ -158,10 +161,10 @@ namespace WorkOrderBlender
       }
     }
 
-    public void RemoveSpecialColumn(string tableName, string columnName)
+    public void RemoveVirtualColumn(string tableName, string columnName)
     {
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
-      SpecialColumns.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+      VirtualColumns.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
         && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
     }
 

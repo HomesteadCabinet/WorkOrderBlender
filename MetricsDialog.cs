@@ -37,10 +37,10 @@ namespace WorkOrderBlender
     private bool canPersistEdits;
     private bool isInitializing;
 
-    // Special (linked/display-only) columns support
-    private List<UserConfig.SpecialColumnDef> specialColumnDefs;
-    private readonly Dictionary<string, Dictionary<string, object>> specialLookupCacheByColumn = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> specialColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    // Virtual (linked/display-only) columns support
+    private List<UserConfig.VirtualColumnDef> virtualColumnDefs;
+    private readonly Dictionary<string, Dictionary<string, object>> virtualLookupCacheByColumn = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> virtualColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     // Cache of schema columns for breakdown tables to support dialogs without live DB context
     private readonly Dictionary<string, List<string>> breakdownSchemaColumns = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
@@ -227,6 +227,40 @@ namespace WorkOrderBlender
           adapter.MissingSchemaAction = MissingSchemaAction.AddWithKey;
           dataTable = new DataTable(tableName);
           adapter.FillSchema(dataTable, SchemaType.Source);
+
+          // Log and fix any duplicate columns that might exist in the schema
+          var columnNames = dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+          var duplicates = columnNames.GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+          if (duplicates.Count > 0)
+          {
+            Program.Log($"Warning: Duplicate columns detected in schema for table {tableName}: {string.Join(", ", duplicates)}");
+
+            // Remove duplicate columns, keeping only the first occurrence
+            var columnsToRemove = new List<DataColumn>();
+            var seenColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (DataColumn col in dataTable.Columns)
+            {
+              if (seenColumns.Contains(col.ColumnName))
+              {
+                columnsToRemove.Add(col);
+              }
+              else
+              {
+                seenColumns.Add(col.ColumnName);
+              }
+            }
+
+            foreach (var col in columnsToRemove)
+            {
+              Program.Log($"Removing duplicate column: {col.ColumnName}");
+              dataTable.Columns.Remove(col);
+            }
+          }
           // Ensure LinkID is treated as key when DB metadata doesn't mark PK
           if ((dataTable.PrimaryKey == null || dataTable.PrimaryKey.Length == 0))
           {
@@ -240,9 +274,9 @@ namespace WorkOrderBlender
 
           var binding = new BindingSource { DataSource = dataTable };
           grid.DataSource = binding;
-          LoadSpecialColumnDefinitions();
-          BuildSpecialLookupCaches();
-          RebuildSpecialColumns();
+          LoadVirtualColumnDefinitions();
+          BuildVirtualLookupCaches();
+          RebuildVirtualColumns();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
           ApplyPersistedColumnVisibilities();
@@ -358,9 +392,9 @@ namespace WorkOrderBlender
 
           var binding = new BindingSource { DataSource = dataTable };
           grid.DataSource = binding;
-          LoadSpecialColumnDefinitions();
-          BuildSpecialLookupCaches();
-          RebuildSpecialColumns();
+          LoadVirtualColumnDefinitions();
+          BuildVirtualLookupCaches();
+          RebuildVirtualColumns();
           ApplyPersistedColumnOrder();
           ApplyPersistedColumnWidths();
           ApplyPersistedColumnVisibilities();
@@ -580,7 +614,7 @@ namespace WorkOrderBlender
         {
           // Ignore display-only special columns
           var colName = grid.Columns[e.ColumnIndex]?.Name;
-          if (!string.IsNullOrEmpty(colName) && specialColumnNames.Contains(colName)) return;
+          if (!string.IsNullOrEmpty(colName) && virtualColumnNames.Contains(colName)) return;
           TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex, true);
         }
       }
@@ -594,7 +628,7 @@ namespace WorkOrderBlender
       {
         // Ignore display-only special columns
         var colName = grid.Columns[e.ColumnIndex]?.Name;
-        if (!string.IsNullOrEmpty(colName) && specialColumnNames.Contains(colName)) return;
+        if (!string.IsNullOrEmpty(colName) && virtualColumnNames.Contains(colName)) return;
         try { TrySaveSingleCellChange(e.RowIndex, e.ColumnIndex, false); }
         catch (Exception ex) { Program.Log("CellValueChanged save failed", ex); MessageBox.Show("Save failed: " + ex.Message); }
       }
@@ -945,7 +979,7 @@ namespace WorkOrderBlender
             var columnName = column.DataPropertyName ?? column.Name;
 
             // Skip special columns and LinkID columns
-            if (specialColumnNames.Contains(columnName)) continue;
+            if (virtualColumnNames.Contains(columnName)) continue;
             if (linkCol != null && string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
 
             cell.Value = DBNull.Value;
@@ -962,7 +996,7 @@ namespace WorkOrderBlender
         var columnName = column.DataPropertyName ?? column.Name;
 
         // Skip special columns and LinkID columns
-        if (!specialColumnNames.Contains(columnName) &&
+        if (!virtualColumnNames.Contains(columnName) &&
             (linkCol == null || !string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)))
         {
           currentCell.Value = DBNull.Value;
@@ -1009,7 +1043,7 @@ namespace WorkOrderBlender
             var columnName = column.DataPropertyName ?? column.Name;
 
             // Skip special columns and LinkID columns
-            if (specialColumnNames.Contains(columnName)) continue;
+            if (virtualColumnNames.Contains(columnName)) continue;
             if (linkCol != null && string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)) continue;
 
             cells.Add(cell);
@@ -1023,7 +1057,7 @@ namespace WorkOrderBlender
         var columnName = column.DataPropertyName ?? column.Name;
 
         // Only add if it's not a special or LinkID column
-        if (!specialColumnNames.Contains(columnName) &&
+        if (!virtualColumnNames.Contains(columnName) &&
             (linkCol == null || !string.Equals(columnName, linkCol.ColumnName, StringComparison.OrdinalIgnoreCase)))
         {
           cells.Add(currentCell);
@@ -1075,36 +1109,27 @@ namespace WorkOrderBlender
       return result;
     }
 
-    private int ApplyPasteData(List<DataGridViewCell> targetCells, List<List<string>> pasteData)
+        private int ApplyPasteData(List<DataGridViewCell> targetCells, List<List<string>> pasteData)
     {
       if (targetCells.Count == 0 || pasteData.Count == 0) return 0;
 
       var pastedCount = 0;
-      var dataIndex = 0;
-      var colIndex = 0;
+
+      // Get the first value from clipboard data to paste to all selected cells
+      var valueToApply = pasteData[0].Count > 0 ? pasteData[0][0] : string.Empty;
 
       foreach (var targetCell in targetCells)
       {
-        if (dataIndex >= pasteData.Count) break;
-        if (colIndex >= pasteData[dataIndex].Count)
-        {
-          dataIndex++;
-          colIndex = 0;
-          if (dataIndex >= pasteData.Count) break;
-        }
-
         try
         {
-          var newValue = pasteData[dataIndex][colIndex];
-
-          // Handle empty strings as null
-          if (string.IsNullOrEmpty(newValue))
+          // Apply the same value to all selected cells
+          if (string.IsNullOrEmpty(valueToApply))
           {
             targetCell.Value = DBNull.Value;
           }
           else
           {
-            targetCell.Value = newValue;
+            targetCell.Value = valueToApply;
           }
 
           TrySaveSingleCellChange(targetCell.RowIndex, targetCell.ColumnIndex, true);
@@ -1114,8 +1139,6 @@ namespace WorkOrderBlender
         {
           Program.Log($"Error pasting to cell [{targetCell.RowIndex}, {targetCell.ColumnIndex}]", ex);
         }
-
-        colIndex++;
       }
 
       return pastedCount;
@@ -1211,11 +1234,11 @@ namespace WorkOrderBlender
         showAllColumns.Enabled = hasHiddenColumns;
         menu.Items.Add(showAllColumns);
 
-        // Manage special columns from header context
+        // Manage virtual columns from header context
         menu.Items.Add(new ToolStripSeparator());
-        var manageSpecial = new ToolStripMenuItem("Special Columns...");
-        manageSpecial.Click += (s, e) => ManageSpecialColumns();
-        menu.Items.Add(manageSpecial);
+        var manageVirtual = new ToolStripMenuItem("Virtual Columns...");
+        manageVirtual.Click += (s, e) => ManageVirtualColumns();
+        menu.Items.Add(manageVirtual);
 
         menu.Show(grid, clientLocation);
       }
@@ -1443,6 +1466,17 @@ namespace WorkOrderBlender
     {
       try
       {
+        // Log column information for debugging
+        var allColumnNames = dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+        var duplicateColumns = allColumnNames.GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+          .Where(g => g.Count() > 1)
+          .Select(g => g.Key)
+          .ToList();
+
+        if (duplicateColumns.Count > 0)
+        {
+          Program.Log($"Warning: Found duplicate column names in table {tableName}: {string.Join(", ", duplicateColumns)}");
+        }
         // Determine a key column for updates/deletes
         string keyCol = preferredKeyColumn;
         if (string.IsNullOrWhiteSpace(keyCol) || !dataTable.Columns.Contains(keyCol))
@@ -1452,17 +1486,23 @@ namespace WorkOrderBlender
           keyCol = col.ColumnName;
         }
 
-        // Build UPDATE SET clauses for all non-key columns
-        var setCols = dataTable.Columns.Cast<DataColumn>()
+        // Build UPDATE SET clauses for all non-key columns (ensure no duplicates)
+        var uniqueColumns = dataTable.Columns.Cast<DataColumn>()
           .Where(c => !string.Equals(c.ColumnName, keyCol, StringComparison.OrdinalIgnoreCase))
+          .GroupBy(c => c.ColumnName, StringComparer.OrdinalIgnoreCase)
+          .Select(g => g.First()) // Take first occurrence of any duplicate column names
+          .ToList();
+
+        var setCols = uniqueColumns
           .Select(c => "[" + c.ColumnName.Replace("]", "]]") + "]=@" + c.ColumnName)
           .ToList();
         var updateSql = "UPDATE [" + tableName + "] SET " + string.Join(", ", setCols) +
                         " WHERE [" + keyCol.Replace("]", "]]") + "]=@__pk";
         var upd = new SqlCeCommand(updateSql, conn);
-        foreach (DataColumn c in dataTable.Columns)
+
+        // Add parameters only for unique columns to avoid "column ID occurred more than once" error
+        foreach (DataColumn c in uniqueColumns)
         {
-          if (string.Equals(c.ColumnName, keyCol, StringComparison.OrdinalIgnoreCase)) continue;
           var param = new SqlCeParameter("@" + c.ColumnName, DBNull.Value)
           {
             SourceColumn = c.ColumnName,
@@ -1499,7 +1539,7 @@ namespace WorkOrderBlender
     private void Grid_DataBindingComplete(object sender, DataGridViewBindingCompleteEventArgs e)
     {
       // Apply defaults from config (order and widths)
-      RebuildSpecialColumns();
+      RebuildVirtualColumns();
       ApplyPersistedColumnOrder();
       ApplyPersistedColumnWidths();
     }
@@ -1520,7 +1560,7 @@ namespace WorkOrderBlender
         e.Column.Name = e.Column.DataPropertyName;
       }
       // Ensure special columns are marked read-only and styled
-      if (!string.IsNullOrEmpty(e.Column.Name) && specialColumnNames.Contains(e.Column.Name))
+      if (!string.IsNullOrEmpty(e.Column.Name) && virtualColumnNames.Contains(e.Column.Name))
       {
         e.Column.ReadOnly = true;
         e.Column.DefaultCellStyle.BackColor = Color.Beige;
@@ -1579,7 +1619,7 @@ namespace WorkOrderBlender
         var order = cfg.TryGetColumnOrder(tableName);
         // Append any special columns not explicitly ordered to the end in stable order
         if (order == null) order = new List<string>();
-        foreach (var sc in specialColumnNames)
+        foreach (var sc in virtualColumnNames)
         {
           if (!order.Any(n => string.Equals(n, sc, StringComparison.OrdinalIgnoreCase))) order.Add(sc);
         }
@@ -1618,27 +1658,27 @@ namespace WorkOrderBlender
       catch { }
     }
 
-    private void LoadSpecialColumnDefinitions()
+    private void LoadVirtualColumnDefinitions()
     {
       try
       {
         var cfg = UserConfig.LoadOrDefault();
-        specialColumnDefs = cfg.GetSpecialColumnsForTable(tableName) ?? new List<UserConfig.SpecialColumnDef>();
-        specialColumnNames.Clear();
-        foreach (var def in specialColumnDefs)
+        virtualColumnDefs = cfg.GetVirtualColumnsForTable(tableName) ?? new List<UserConfig.VirtualColumnDef>();
+        virtualColumnNames.Clear();
+        foreach (var def in virtualColumnDefs)
         {
-          if (!string.IsNullOrWhiteSpace(def.ColumnName)) specialColumnNames.Add(def.ColumnName);
+          if (!string.IsNullOrWhiteSpace(def.ColumnName)) virtualColumnNames.Add(def.ColumnName);
         }
       }
-      catch { specialColumnDefs = new List<UserConfig.SpecialColumnDef>(); specialColumnNames.Clear(); }
+      catch { virtualColumnDefs = new List<UserConfig.VirtualColumnDef>(); virtualColumnNames.Clear(); }
     }
 
-    private void BuildSpecialLookupCaches()
+    private void BuildVirtualLookupCaches()
     {
-      specialLookupCacheByColumn.Clear();
-      if (specialColumnDefs == null || specialColumnDefs.Count == 0) return;
+      virtualLookupCacheByColumn.Clear();
+      if (virtualColumnDefs == null || virtualColumnDefs.Count == 0) return;
 
-      foreach (var def in specialColumnDefs)
+      foreach (var def in virtualColumnDefs)
       {
         if (string.IsNullOrWhiteSpace(def.TargetTableName) || string.IsNullOrWhiteSpace(def.LocalKeyColumn) ||
             string.IsNullOrWhiteSpace(def.TargetKeyColumn) || string.IsNullOrWhiteSpace(def.TargetValueColumn)) continue;
@@ -1709,35 +1749,38 @@ namespace WorkOrderBlender
             }
           }
 
-          specialLookupCacheByColumn[def.ColumnName] = lookup;
+          virtualLookupCacheByColumn[def.ColumnName] = lookup;
         }
         catch (Exception ex)
         {
-          Program.Log("BuildSpecialLookupCaches failed for column " + def.ColumnName, ex);
+          Program.Log("BuildVirtualLookupCaches failed for column " + def.ColumnName, ex);
         }
       }
     }
 
-    private void RebuildSpecialColumns()
+    private void RebuildVirtualColumns()
     {
       try
       {
         if (dataTable == null) return;
-        if (specialColumnDefs == null || specialColumnDefs.Count == 0) return;
+        if (virtualColumnDefs == null || virtualColumnDefs.Count == 0) return;
 
         // Add actual columns to DataTable and populate them with lookup values for proper sorting
-        foreach (var def in specialColumnDefs)
+        foreach (var def in virtualColumnDefs)
         {
           if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
 
-          // Add column to DataTable if it doesn't exist
-          if (!dataTable.Columns.Contains(def.ColumnName))
+          // Check if column exists with case-insensitive comparison to avoid duplicates
+          var existingColumn = dataTable.Columns.Cast<DataColumn>()
+            .FirstOrDefault(c => string.Equals(c.ColumnName, def.ColumnName, StringComparison.OrdinalIgnoreCase));
+
+          if (existingColumn == null)
           {
             dataTable.Columns.Add(def.ColumnName, typeof(string));
           }
 
           // Populate the column with lookup values
-          if (specialLookupCacheByColumn.TryGetValue(def.ColumnName, out var lookup))
+          if (virtualLookupCacheByColumn.TryGetValue(def.ColumnName, out var lookup))
           {
             foreach (DataRow row in dataTable.Rows)
             {
@@ -1761,7 +1804,7 @@ namespace WorkOrderBlender
         }
 
         // Ensure special columns in the grid have the right styling
-        foreach (var def in specialColumnDefs)
+        foreach (var def in virtualColumnDefs)
         {
           if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
           if (grid.Columns.Contains(def.ColumnName))
@@ -1782,18 +1825,18 @@ namespace WorkOrderBlender
       // This handler can be used for other formatting needs in the future
     }
 
-    private void ManageSpecialColumns()
+    private void ManageVirtualColumns()
     {
       try
       {
-        using (var dlg = new SpecialColumnsDialog(tableName, connection, showFromConsolidated, breakdownSchemaColumns))
+        using (var dlg = new VirtualColumnsDialog(tableName, connection, showFromConsolidated, breakdownSchemaColumns))
         {
           if (dlg.ShowDialog(this) == DialogResult.OK)
           {
             // Reload definitions and caches, and rebuild columns
-            LoadSpecialColumnDefinitions();
-            BuildSpecialLookupCaches();
-            RebuildSpecialColumns();
+            LoadVirtualColumnDefinitions();
+            BuildVirtualLookupCaches();
+            RebuildVirtualColumns();
             ApplyPersistedColumnOrder();
             ApplyPersistedColumnWidths();
             ApplyPersistedColumnVisibilities();
@@ -1803,7 +1846,7 @@ namespace WorkOrderBlender
       }
       catch (Exception ex)
       {
-        Program.Log("ManageSpecialColumns failed", ex);
+        Program.Log("ManageVirtualColumns failed", ex);
       }
     }
   }

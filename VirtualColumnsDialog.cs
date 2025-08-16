@@ -9,7 +9,7 @@ using System.Windows.Forms;
 
 namespace WorkOrderBlender
 {
-  public sealed class SpecialColumnsDialog : Form
+  public sealed class VirtualColumnsDialog : Form
   {
     private readonly string tableName;
     private readonly SqlCeConnection connection; // may be null
@@ -22,15 +22,15 @@ namespace WorkOrderBlender
     private readonly Button btnOk;
     private readonly Button btnCancel;
 
-    private readonly BindingList<UserConfig.SpecialColumnDef> defs;
+    private readonly BindingList<UserConfig.VirtualColumnDef> defs;
     private readonly Dictionary<string, List<string>> columnsByTable = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
-    public SpecialColumnsDialog(string tableName, SqlCeConnection connection, bool showFromConsolidated)
+    public VirtualColumnsDialog(string tableName, SqlCeConnection connection, bool showFromConsolidated)
       : this(tableName, connection, showFromConsolidated, null)
     {
     }
 
-    public SpecialColumnsDialog(string tableName, SqlCeConnection connection, bool showFromConsolidated, Dictionary<string, List<string>> preloadedColumns)
+    public VirtualColumnsDialog(string tableName, SqlCeConnection connection, bool showFromConsolidated, Dictionary<string, List<string>> preloadedColumns)
     {
       this.tableName = tableName;
       this.connection = connection;
@@ -44,7 +44,7 @@ namespace WorkOrderBlender
       Width = 800;
       Height = 420;
 
-      defs = new BindingList<UserConfig.SpecialColumnDef>(UserConfig.LoadOrDefault().GetSpecialColumnsForTable(tableName));
+      defs = new BindingList<UserConfig.VirtualColumnDef>(UserConfig.LoadOrDefault().GetVirtualColumnsForTable(tableName));
 
       // Merge any preloaded columns into local map
       if (preloadedColumns != null)
@@ -86,11 +86,11 @@ namespace WorkOrderBlender
       };
       layout.Controls.Add(grid, 0, 0);
 
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Column Name", DataPropertyName = nameof(UserConfig.SpecialColumnDef.ColumnName), Name = nameof(UserConfig.SpecialColumnDef.ColumnName), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Local Key Column", DataPropertyName = nameof(UserConfig.SpecialColumnDef.LocalKeyColumn), Name = nameof(UserConfig.SpecialColumnDef.LocalKeyColumn), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Table", DataPropertyName = nameof(UserConfig.SpecialColumnDef.TargetTableName), Name = nameof(UserConfig.SpecialColumnDef.TargetTableName), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Key Column", DataPropertyName = nameof(UserConfig.SpecialColumnDef.TargetKeyColumn), Name = nameof(UserConfig.SpecialColumnDef.TargetKeyColumn), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Value Column", DataPropertyName = nameof(UserConfig.SpecialColumnDef.TargetValueColumn), Name = nameof(UserConfig.SpecialColumnDef.TargetValueColumn), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Column Name", DataPropertyName = nameof(UserConfig.VirtualColumnDef.ColumnName), Name = nameof(UserConfig.VirtualColumnDef.ColumnName), Width = 150 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Local Key Column", DataPropertyName = nameof(UserConfig.VirtualColumnDef.LocalKeyColumn), Name = nameof(UserConfig.VirtualColumnDef.LocalKeyColumn), Width = 150 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Table", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetTableName), Name = nameof(UserConfig.VirtualColumnDef.TargetTableName), Width = 150 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Key Column", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetKeyColumn), Name = nameof(UserConfig.VirtualColumnDef.TargetKeyColumn), Width = 150 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Value Column", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetValueColumn), Name = nameof(UserConfig.VirtualColumnDef.TargetValueColumn), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
       grid.DataSource = defs;
 
       var panelButtons = new FlowLayoutPanel
@@ -142,7 +142,7 @@ namespace WorkOrderBlender
 
     private void AddEntry()
     {
-      var def = new UserConfig.SpecialColumnDef
+      var def = new UserConfig.VirtualColumnDef
       {
         TableName = tableName,
         ColumnName = "",
@@ -161,7 +161,7 @@ namespace WorkOrderBlender
     {
       var current = GetSelected();
       if (current == null) return;
-      var copy = new UserConfig.SpecialColumnDef
+      var copy = new UserConfig.VirtualColumnDef
       {
         TableName = current.TableName,
         ColumnName = current.ColumnName,
@@ -188,15 +188,15 @@ namespace WorkOrderBlender
       defs.Remove(current);
     }
 
-    private UserConfig.SpecialColumnDef GetSelected()
+    private UserConfig.VirtualColumnDef GetSelected()
     {
-      if (grid.CurrentRow?.DataBoundItem is UserConfig.SpecialColumnDef d) return d;
+      if (grid.CurrentRow?.DataBoundItem is UserConfig.VirtualColumnDef d) return d;
       return null;
     }
 
-    private bool EditEntry(UserConfig.SpecialColumnDef def)
+    private bool EditEntry(UserConfig.VirtualColumnDef def)
     {
-      using (var dlg = new EditSpecialColumnDialog(def, columnsByTable, hasDatabaseContext))
+      using (var dlg = new EditVirtualColumnDialog(def, columnsByTable, hasDatabaseContext))
       {
         return dlg.ShowDialog(this) == DialogResult.OK;
       }
@@ -206,13 +206,13 @@ namespace WorkOrderBlender
     {
       var cfg = UserConfig.LoadOrDefault();
       // Remove all for this table, then add the current list
-      cfg.SpecialColumns.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+      cfg.VirtualColumns.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
       foreach (var d in defs)
       {
         // Basic validation
         if (string.IsNullOrWhiteSpace(d.ColumnName)) continue;
         d.TableName = tableName;
-        cfg.UpsertSpecialColumn(d);
+        cfg.UpsertVirtualColumn(d);
       }
       cfg.Save();
       DialogResult = DialogResult.OK;
@@ -220,7 +220,7 @@ namespace WorkOrderBlender
     }
   }
 
-  internal sealed class EditSpecialColumnDialog : Form
+  internal sealed class EditVirtualColumnDialog : Form
   {
     private readonly TextBox txtColumnName;
     private readonly ComboBox cboLocalKey;
@@ -231,15 +231,15 @@ namespace WorkOrderBlender
     private readonly Button btnCancel;
     private readonly Dictionary<string, List<string>> columnsByTable;
     private readonly bool hasDb;
-    private readonly UserConfig.SpecialColumnDef def;
+    private readonly UserConfig.VirtualColumnDef def;
 
-    public EditSpecialColumnDialog(UserConfig.SpecialColumnDef def, Dictionary<string, List<string>> columnsByTable, bool hasDb)
+    public EditVirtualColumnDialog(UserConfig.VirtualColumnDef def, Dictionary<string, List<string>> columnsByTable, bool hasDb)
     {
       this.def = def;
       this.columnsByTable = columnsByTable ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
       this.hasDb = hasDb;
 
-      Text = "Edit Special Column";
+      Text = "Edit Virtual Column";
       StartPosition = FormStartPosition.CenterParent;
       FormBorderStyle = FormBorderStyle.FixedDialog;
       MinimizeBox = false;

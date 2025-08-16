@@ -1008,6 +1008,24 @@ namespace WorkOrderBlender
 
     // removed legacy prefixed consolidation path
 
+    private static HashSet<string> GetVirtualColumnsForTable(string tableName)
+    {
+      try
+      {
+        var userConfig = UserConfig.LoadOrDefault();
+        var virtualColumns = userConfig.GetVirtualColumnsForTable(tableName);
+        return new HashSet<string>(
+          virtualColumns.Select(vc => vc.ColumnName).Where(name => !string.IsNullOrWhiteSpace(name)),
+          StringComparer.OrdinalIgnoreCase
+        );
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error loading virtual columns for table {tableName}", ex);
+        return new HashSet<string>();
+      }
+    }
+
     private static void CopyDatabaseCombined(string sourcePath, SqlCeConnection destConn, string sourceTag, string sourcePathDir)
     {
       string tempCopyPath;
@@ -1051,12 +1069,26 @@ namespace WorkOrderBlender
         var exists = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
         if (!exists)
         {
+                    // Get virtual columns to exclude from consolidation
+          var virtualColumns = GetVirtualColumnsForTable(tableName);
+          if (virtualColumns.Count > 0)
+          {
+            Program.Log($"Excluding {virtualColumns.Count} virtual columns from table {tableName}: {string.Join(", ", virtualColumns)}");
+          }
+
           // Create like source
           var cols = src.GetSchema("Columns", new[] { null, null, tableName, null });
           var columnDefs = new List<string>();
           foreach (DataRow col in cols.Rows)
           {
             string colName = col["COLUMN_NAME"].ToString();
+
+            // Skip virtual columns - they shouldn't be in the consolidated database
+            if (virtualColumns.Contains(colName))
+            {
+              continue;
+            }
+
             string dataType = col["DATA_TYPE"].ToString();
             int length = col.Table.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
             bool nullable = col.Table.Columns.Contains("IS_NULLABLE") && string.Equals(col["IS_NULLABLE"].ToString(), "YES", StringComparison.OrdinalIgnoreCase);
@@ -1074,8 +1106,11 @@ namespace WorkOrderBlender
         }
         else
         {
-          try
+                    try
           {
+            // Get virtual columns to exclude from consolidation
+            var virtualColumns = GetVirtualColumnsForTable(tableName);
+
             // Add columns if missing in dest (create superset schema)
             var srcCols = src.GetSchema("Columns", new[] { null, null, tableName, null });
             var destCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1091,6 +1126,10 @@ namespace WorkOrderBlender
             {
               string colName = col["COLUMN_NAME"].ToString();
               if (destCols.Contains(colName)) continue;
+
+              // Skip virtual columns - they shouldn't be in the consolidated database
+              if (virtualColumns.Contains(colName)) continue;
+
               string dataType = col["DATA_TYPE"].ToString();
               int length = srcCols.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
               string typeSql = MapType(dataType, length);
@@ -1170,13 +1209,29 @@ namespace WorkOrderBlender
 
     // removed legacy prefixed consolidation path
 
-    private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
+        private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
     {
+      // Get virtual columns to exclude from consolidation
+      var virtualColumns = GetVirtualColumnsForTable(tableName);
+
       using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", src))
       using (var reader = cmd.ExecuteReader())
       {
         var schema = reader.GetSchemaTable();
-        var colNames = schema.Rows.Cast<DataRow>().Select(r => r["ColumnName"].ToString()).ToList();
+        var allColNames = schema.Rows.Cast<DataRow>().Select(r => r["ColumnName"].ToString()).ToList();
+
+        // Filter out virtual columns from data copying
+        var colNames = allColNames.Where(name => !virtualColumns.Contains(name)).ToList();
+
+        if (virtualColumns.Count > 0)
+        {
+          var excludedFromData = allColNames.Where(name => virtualColumns.Contains(name)).ToList();
+          if (excludedFromData.Count > 0)
+          {
+            Program.Log($"Excluding {excludedFromData.Count} virtual columns from data copy for table {tableName}: {string.Join(", ", excludedFromData)}");
+          }
+        }
+
         var destColumns = new List<string>(colNames.Select(n => "[" + n + "]"));
         destColumns.Add("[SourceWorkOrder]");
         destColumns.Add("[SourcePath]");
@@ -1197,10 +1252,13 @@ namespace WorkOrderBlender
           {
             try
             {
+              // Map filtered column names to their original positions in the reader
               for (int i = 0; i < colNames.Count; i++)
               {
-                object value = reader.GetValue(i);
-                var p = insert.Parameters["@" + colNames[i]];
+                var colName = colNames[i];
+                var originalIndex = allColNames.IndexOf(colName);
+                object value = reader.GetValue(originalIndex);
+                var p = insert.Parameters["@" + colName];
                 p.Value = value is DBNull ? (object)DBNull.Value : value;
               }
               foreach (SqlCeParameter p in insert.Parameters)

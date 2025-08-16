@@ -415,22 +415,22 @@
       <IsVisible>false</IsVisible>
     </ColumnVisibilityEntry>
   </ColumnVisibilities>
-  <SpecialColumns>
-    <SpecialColumnDef>
+  <VirtualColumns>
+    <VirtualColumnDef>
       <TableName>Parts</TableName>
       <ColumnName>#</ColumnName>
       <TargetTableName>Products</TargetTableName>
       <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
       <TargetKeyColumn>LinkID</TargetKeyColumn>
       <TargetValueColumn>ItemNumber</TargetValueColumn>
-    </SpecialColumnDef>
-    <SpecialColumnDef>
+    </VirtualColumnDef>
+    <VirtualColumnDef>
       <TableName>Subassemblies</TableName>
       <ColumnName>#</ColumnName>
       <TargetTableName>Products</TargetTableName>
       <LocalKeyColumn>LinkIDParentProduct</LocalKeyColumn>
       <TargetKeyColumn>LinkID</TargetKeyColumn>
       <TargetValueColumn>ItemNumber</TargetValueColumn>
-    </SpecialColumnDef>
-  </SpecialColumns>
+    </VirtualColumnDef>
+  </VirtualColumns>
 </UserConfig>
