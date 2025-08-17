@@ -47,10 +47,23 @@ namespace WorkOrderBlender
     {
       public string TableName { get; set; }
       public string ColumnName { get; set; }
+
+      // Lookup column properties (for display-only virtual columns)
       public string TargetTableName { get; set; }
       public string LocalKeyColumn { get; set; }
       public string TargetKeyColumn { get; set; }
       public string TargetValueColumn { get; set; }
+
+      // Action column properties (for interactive virtual columns)
+      public string ColumnType { get; set; } = "Lookup"; // "Lookup" or "Action"
+      public string ActionType { get; set; } // "3DViewer", "WebLink", "Export", etc.
+      public string ButtonText { get; set; } // Text to display on button
+      public string ButtonIcon { get; set; } // Optional icon for button
+
+      // Helper properties
+      public bool IsActionColumn => string.Equals(ColumnType, "Action", StringComparison.OrdinalIgnoreCase);
+      public bool IsLookupColumn => string.Equals(ColumnType, "Lookup", StringComparison.OrdinalIgnoreCase);
+      public bool IsBuiltInColumn => string.Equals(ColumnType, "BuiltIn", StringComparison.OrdinalIgnoreCase);
     }
 
     // Keep XML element name as "VirtualColumns" for backward compatibility with existing settings files
@@ -62,6 +75,9 @@ namespace WorkOrderBlender
     private void EnsureDefaultMetricsLayout()
     {
       if (ColumnOrders == null) ColumnOrders = new List<ColumnOrderEntry>();
+
+      // Ensure built-in source file virtual column exists for all breakdown tables
+      EnsureBuiltInSourceFileColumn();
       if (ColumnWidths == null) ColumnWidths = new List<ColumnWidthEntry>();
       if (ColumnVisibilities == null) ColumnVisibilities = new List<ColumnVisibilityEntry>();
       if (VirtualColumns == null) VirtualColumns = new List<VirtualColumnDef>();
@@ -134,6 +150,73 @@ namespace WorkOrderBlender
       AddWidth("Parts", "Code", 55);
       AddWidth("Parts", "Name", 374);
       AddWidth("Parts", "MaterialName", 171);
+
+      // Set default width for source file column
+      AddWidth("Products", "_SourceFile", 120);
+      AddWidth("Parts", "_SourceFile", 120);
+      AddWidth("Subassemblies", "_SourceFile", 120);
+      AddWidth("Sheets", "_SourceFile", 120);
+    }
+
+    private void EnsureBuiltInSourceFileColumn()
+    {
+      var breakdownTables = new[] { "Products", "Parts", "Subassemblies", "Sheets" };
+
+      foreach (var tableName in breakdownTables)
+      {
+        // Check if source file virtual column already exists for this table
+        var existing = VirtualColumns.Find(vc =>
+          string.Equals(vc.TableName, tableName, StringComparison.OrdinalIgnoreCase) &&
+          string.Equals(vc.ColumnName, "_SourceFile", StringComparison.OrdinalIgnoreCase));
+
+        if (existing == null)
+        {
+          // Add built-in source file virtual column
+          var sourceFileColumn = new VirtualColumnDef
+          {
+            TableName = tableName,
+            ColumnName = "_SourceFile",
+            ColumnType = "BuiltIn", // Special type for built-in columns
+            ButtonText = "Work Order",
+            ActionType = "SourceFile"
+          };
+
+          VirtualColumns.Add(sourceFileColumn);
+
+          // Ensure it appears as the first column in the order
+          EnsureSourceFileColumnFirst(tableName);
+        }
+      }
+    }
+
+    private void EnsureSourceFileColumnFirst(string tableName)
+    {
+      var orderEntry = ColumnOrders.Find(co => string.Equals(co.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+
+      if (orderEntry != null && orderEntry.Columns != null)
+      {
+        // Remove _SourceFile if it exists elsewhere in the list
+        orderEntry.Columns.RemoveAll(col => string.Equals(col, "_SourceFile", StringComparison.OrdinalIgnoreCase));
+
+        // Insert at the beginning
+        orderEntry.Columns.Insert(0, "_SourceFile");
+      }
+      else
+      {
+        // Create new order entry with _SourceFile as first column
+        if (orderEntry == null)
+        {
+          orderEntry = new ColumnOrderEntry { TableName = tableName, Columns = new List<string>() };
+          ColumnOrders.Add(orderEntry);
+        }
+
+        if (orderEntry.Columns == null)
+        {
+          orderEntry.Columns = new List<string>();
+        }
+
+        orderEntry.Columns.Insert(0, "_SourceFile");
+      }
     }
 
     public List<VirtualColumnDef> GetVirtualColumnsForTable(string tableName)
@@ -154,10 +237,15 @@ namespace WorkOrderBlender
       }
       else
       {
+        // Update all properties for both lookup and action columns
+        existing.ColumnType = def.ColumnType;
         existing.TargetTableName = def.TargetTableName;
         existing.LocalKeyColumn = def.LocalKeyColumn;
         existing.TargetKeyColumn = def.TargetKeyColumn;
         existing.TargetValueColumn = def.TargetValueColumn;
+        existing.ActionType = def.ActionType;
+        existing.ButtonText = def.ButtonText;
+        existing.ButtonIcon = def.ButtonIcon;
       }
     }
 
@@ -322,74 +410,175 @@ namespace WorkOrderBlender
       return Path.Combine(GetConfigDirectory(), "settings.xml");
     }
 
+    // Static cached instance to avoid repeated loading
+    private static UserConfig cachedInstance;
+    private static readonly object cacheLock = new object();
+
     public static UserConfig Load(string fallbackRoot, string fallbackOutput, string fallbackSdf)
     {
-      try
+      lock (cacheLock)
       {
-        var path = GetConfigPath();
-        if (File.Exists(path))
+        if (cachedInstance != null)
         {
-          var ser = new XmlSerializer(typeof(UserConfig));
-          using (var fs = File.OpenRead(path))
+          return cachedInstance;
+        }
+
+        lock (configFileLock)
+        {
+          try
           {
-            var cfg = (UserConfig)ser.Deserialize(fs);
-            // Fill in any missing values with fallbacks
-            cfg.DefaultRoot = string.IsNullOrWhiteSpace(cfg.DefaultRoot) ? fallbackRoot : cfg.DefaultRoot;
-            cfg.DefaultOutput = string.IsNullOrWhiteSpace(cfg.DefaultOutput) ? fallbackOutput : cfg.DefaultOutput;
-            cfg.SdfFileName = string.IsNullOrWhiteSpace(cfg.SdfFileName) ? fallbackSdf : cfg.SdfFileName;
-            cfg.EnsureDefaultMetricsLayout();
-            return cfg;
+            var path = GetConfigPath();
+            if (File.Exists(path))
+            {
+              var ser = new XmlSerializer(typeof(UserConfig));
+              using (var fs = File.OpenRead(path))
+              {
+                var cfg = (UserConfig)ser.Deserialize(fs);
+                // Fill in any missing values with fallbacks
+                cfg.DefaultRoot = string.IsNullOrWhiteSpace(cfg.DefaultRoot) ? fallbackRoot : cfg.DefaultRoot;
+                cfg.DefaultOutput = string.IsNullOrWhiteSpace(cfg.DefaultOutput) ? fallbackOutput : cfg.DefaultOutput;
+                cfg.SdfFileName = string.IsNullOrWhiteSpace(cfg.SdfFileName) ? fallbackSdf : cfg.SdfFileName;
+                cfg.EnsureDefaultMetricsLayout();
+                cachedInstance = cfg;
+                return cfg;
+              }
+            }
           }
+          catch { }
+
+          var newConfig = new UserConfig
+          {
+            DefaultRoot = fallbackRoot,
+            DefaultOutput = fallbackOutput,
+            SdfFileName = fallbackSdf,
+          };
+          cachedInstance = newConfig;
+          return newConfig;
         }
       }
-      catch { }
-
-      return new UserConfig
-      {
-        DefaultRoot = fallbackRoot,
-        DefaultOutput = fallbackOutput,
-        SdfFileName = fallbackSdf,
-      };
     }
 
-    public static UserConfig LoadOrDefault()
+      private static readonly object configFileLock = new object();
+
+  public static UserConfig LoadOrDefault()
+  {
+    lock (cacheLock)
     {
-      try
+      if (cachedInstance != null)
       {
-        var path = GetConfigPath();
-        if (File.Exists(path))
-        {
-          var ser = new XmlSerializer(typeof(UserConfig));
-          using (var fs = File.OpenRead(path))
-          {
-            var cfg = (UserConfig)ser.Deserialize(fs);
-            cfg.EnsureDefaultMetricsLayout();
-            return cfg;
-          }
-        }
+        return cachedInstance;
       }
-      catch { }
-      var created = new UserConfig();
-      created.EnsureDefaultMetricsLayout();
-      return created;
+
+      lock (configFileLock)
+      {
+        try
+        {
+          var path = GetConfigPath();
+          if (File.Exists(path))
+          {
+            // Check if file is empty or corrupted
+            var fileInfo = new FileInfo(path);
+            if (fileInfo.Length == 0)
+            {
+              Program.Log("Settings file is empty, recreating with defaults");
+              File.Delete(path);
+            }
+            else
+            {
+              try
+              {
+                var ser = new XmlSerializer(typeof(UserConfig));
+                using (var fs = File.OpenRead(path))
+                {
+                  var cfg = (UserConfig)ser.Deserialize(fs);
+                  cfg.EnsureDefaultMetricsLayout();
+                  cachedInstance = cfg;
+                  return cfg;
+                }
+              }
+              catch (Exception xmlEx)
+              {
+                Program.Log("XML parsing failed, recreating corrupted settings.xml", xmlEx);
+                try
+                {
+                  File.Delete(path);
+                }
+                catch { }
+              }
+            }
+          }
+
+          // Create default settings file if it doesn't exist or was corrupted
+          Program.Log("Creating default settings.xml");
+          var defaultConfig = new UserConfig();
+          defaultConfig.EnsureDefaultMetricsLayout();
+          defaultConfig.Save(); // Create the file with defaults
+          return defaultConfig;
+        }
+        catch (Exception ex)
+        {
+          Program.Log("Error loading UserConfig", ex);
+        }
+        var created = new UserConfig();
+        created.EnsureDefaultMetricsLayout();
+        cachedInstance = created;
+        return created;
+      }
     }
+  }
+
+  // Method to clear the cached instance (useful for testing or when config changes externally)
+  public static void ClearCache()
+  {
+    lock (cacheLock)
+    {
+      cachedInstance = null;
+    }
+  }
 
     public void Save()
     {
-      try
+      lock (configFileLock)
       {
-        var dir = GetConfigDirectory();
-        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-        var path = GetConfigPath();
-        var ser = new XmlSerializer(typeof(UserConfig));
-        using (var fs = File.Create(path))
+        try
         {
-          ser.Serialize(fs, this);
+          var dir = GetConfigDirectory();
+          if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+          var path = GetConfigPath();
+          var ser = new XmlSerializer(typeof(UserConfig));
+
+          // Use a temporary file to prevent corruption during write
+          var tempPath = path + ".tmp";
+          using (var fs = File.Create(tempPath))
+          {
+            ser.Serialize(fs, this);
+          }
+
+          // Atomic move to replace the original file
+          if (File.Exists(path))
+          {
+            File.Delete(path);
+          }
+          File.Move(tempPath, path);
+
+          // Clear cache after saving to ensure fresh data on next load
+          lock (cacheLock)
+          {
+            cachedInstance = null;
+          }
         }
-      }
       catch (Exception ex)
       {
         Program.Log("Saving UserConfig failed", ex);
+        // Clean up temp file if it exists
+        try
+        {
+          var tempPath = GetConfigPath() + ".tmp";
+          if (File.Exists(tempPath))
+            File.Delete(tempPath);
+        }
+        catch { }
+      }
       }
     }
   }

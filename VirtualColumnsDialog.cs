@@ -36,7 +36,7 @@ namespace WorkOrderBlender
       this.connection = connection;
       this.hasDatabaseContext = showFromConsolidated && connection != null && connection.State == ConnectionState.Open;
 
-      Text = "Special Columns for " + tableName;
+      Text = "Virtual Columns for " + tableName;
       StartPosition = FormStartPosition.CenterParent;
       FormBorderStyle = FormBorderStyle.Sizable;
       MinimizeBox = false;
@@ -86,11 +86,14 @@ namespace WorkOrderBlender
       };
       layout.Controls.Add(grid, 0, 0);
 
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Column Name", DataPropertyName = nameof(UserConfig.VirtualColumnDef.ColumnName), Name = nameof(UserConfig.VirtualColumnDef.ColumnName), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Local Key Column", DataPropertyName = nameof(UserConfig.VirtualColumnDef.LocalKeyColumn), Name = nameof(UserConfig.VirtualColumnDef.LocalKeyColumn), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Table", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetTableName), Name = nameof(UserConfig.VirtualColumnDef.TargetTableName), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Key Column", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetKeyColumn), Name = nameof(UserConfig.VirtualColumnDef.TargetKeyColumn), Width = 150 });
-      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Value Column", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetValueColumn), Name = nameof(UserConfig.VirtualColumnDef.TargetValueColumn), AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Column Name", DataPropertyName = nameof(UserConfig.VirtualColumnDef.ColumnName), Name = nameof(UserConfig.VirtualColumnDef.ColumnName), Width = 120 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Type", DataPropertyName = nameof(UserConfig.VirtualColumnDef.ColumnType), Name = nameof(UserConfig.VirtualColumnDef.ColumnType), Width = 80 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Action Type", DataPropertyName = nameof(UserConfig.VirtualColumnDef.ActionType), Name = nameof(UserConfig.VirtualColumnDef.ActionType), Width = 100 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Target Table", DataPropertyName = nameof(UserConfig.VirtualColumnDef.TargetTableName), Name = nameof(UserConfig.VirtualColumnDef.TargetTableName), Width = 120 });
+      grid.Columns.Add(new DataGridViewTextBoxColumn { HeaderText = "Configuration", DataPropertyName = "ConfigurationSummary", Name = "ConfigurationSummary", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
+
+      // Add virtual ConfigurationSummary property to show relevant info based on column type
+      grid.CellFormatting += Grid_CellFormatting;
       grid.DataSource = defs;
 
       var panelButtons = new FlowLayoutPanel
@@ -117,6 +120,36 @@ namespace WorkOrderBlender
       btnOk.Click += (s, e) => SaveAndClose();
 
       try { if (hasDatabaseContext) LoadSchema(); } catch { }
+    }
+
+    private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
+    {
+      if (e.ColumnIndex == grid.Columns["ConfigurationSummary"].Index && e.RowIndex >= 0)
+      {
+        if (grid.Rows[e.RowIndex].DataBoundItem is UserConfig.VirtualColumnDef def)
+        {
+          if (def.IsActionColumn)
+          {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(def.ButtonText)) parts.Add($"Button: '{def.ButtonText}'");
+            if (!string.IsNullOrEmpty(def.LocalKeyColumn)) parts.Add($"Key: {def.LocalKeyColumn}");
+            e.Value = parts.Count > 0 ? string.Join(", ", parts) : "Action column";
+          }
+          else if (def.IsLookupColumn)
+          {
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(def.LocalKeyColumn)) parts.Add($"Local: {def.LocalKeyColumn}");
+            if (!string.IsNullOrEmpty(def.TargetKeyColumn)) parts.Add($"Target: {def.TargetKeyColumn}");
+            if (!string.IsNullOrEmpty(def.TargetValueColumn)) parts.Add($"Value: {def.TargetValueColumn}");
+            e.Value = parts.Count > 0 ? string.Join(" → ", parts) : "Lookup column";
+          }
+          else
+          {
+            e.Value = "Unknown type";
+          }
+          e.FormattingApplied = true;
+        }
+      }
     }
 
     private void LoadSchema()
@@ -146,10 +179,14 @@ namespace WorkOrderBlender
       {
         TableName = tableName,
         ColumnName = "",
+        ColumnType = "Lookup", // Default to lookup
         LocalKeyColumn = "",
         TargetTableName = "",
         TargetKeyColumn = "",
         TargetValueColumn = "",
+        ActionType = "",
+        ButtonText = "",
+        ButtonIcon = ""
       };
       if (EditEntry(def))
       {
@@ -165,18 +202,26 @@ namespace WorkOrderBlender
       {
         TableName = current.TableName,
         ColumnName = current.ColumnName,
+        ColumnType = current.ColumnType,
         LocalKeyColumn = current.LocalKeyColumn,
         TargetTableName = current.TargetTableName,
         TargetKeyColumn = current.TargetKeyColumn,
         TargetValueColumn = current.TargetValueColumn,
+        ActionType = current.ActionType,
+        ButtonText = current.ButtonText,
+        ButtonIcon = current.ButtonIcon
       };
       if (EditEntry(copy))
       {
         current.ColumnName = copy.ColumnName;
+        current.ColumnType = copy.ColumnType;
         current.LocalKeyColumn = copy.LocalKeyColumn;
         current.TargetTableName = copy.TargetTableName;
         current.TargetKeyColumn = copy.TargetKeyColumn;
         current.TargetValueColumn = copy.TargetValueColumn;
+        current.ActionType = copy.ActionType;
+        current.ButtonText = copy.ButtonText;
+        current.ButtonIcon = copy.ButtonIcon;
         grid.Refresh();
       }
     }
@@ -223,10 +268,21 @@ namespace WorkOrderBlender
   internal sealed class EditVirtualColumnDialog : Form
   {
     private readonly TextBox txtColumnName;
-    private readonly ComboBox cboLocalKey;
-    private readonly ComboBox cboTargetTable;
-    private readonly ComboBox cboTargetKey;
-    private readonly ComboBox cboTargetValue;
+    private readonly ComboBox cboColumnType;
+
+    // Lookup column controls
+    private ComboBox cboLocalKey;
+    private ComboBox cboTargetTable;
+    private ComboBox cboTargetKey;
+    private ComboBox cboTargetValue;
+    private readonly Panel pnlLookupFields;
+
+    // Action column controls
+    private ComboBox cboActionType;
+    private TextBox txtButtonText;
+    private ComboBox cboActionLocalKey;
+    private readonly Panel pnlActionFields;
+
     private readonly Button btnOk;
     private readonly Button btnCancel;
     private readonly Dictionary<string, List<string>> columnsByTable;
@@ -245,60 +301,71 @@ namespace WorkOrderBlender
       MinimizeBox = false;
       MaximizeBox = false;
       Width = 520;
-      Height = 280;
+      Height = 380;
 
-      var table = new TableLayoutPanel
+      var mainTable = new TableLayoutPanel
       {
         Dock = DockStyle.Fill,
         ColumnCount = 2,
-        RowCount = 6,
+        RowCount = 4,
         Padding = new Padding(8),
       };
-      table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-      for (int i = 0; i < 5; i++) table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      Controls.Add(table);
+      mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+      mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+      mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Column name
+      mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Column type
+      mainTable.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // Dynamic content panel
+      mainTable.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Buttons
+      Controls.Add(mainTable);
 
-      table.Controls.Add(new Label { Text = "Column name:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+      // Column name
+      mainTable.Controls.Add(new Label { Text = "Column name:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
       txtColumnName = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right };
-      table.Controls.Add(txtColumnName, 1, 0);
+      mainTable.Controls.Add(txtColumnName, 1, 0);
 
-      table.Controls.Add(new Label { Text = "Local key column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
-      cboLocalKey = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-      table.Controls.Add(cboLocalKey, 1, 1);
+      // Column type
+      mainTable.Controls.Add(new Label { Text = "Column type:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+      cboColumnType = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboColumnType.Items.AddRange(new[] { "Lookup", "Action" });
+      cboColumnType.SelectedIndexChanged += CboColumnType_SelectedIndexChanged;
+      mainTable.Controls.Add(cboColumnType, 1, 1);
 
-      table.Controls.Add(new Label { Text = "Target table:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
-      cboTargetTable = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-      table.Controls.Add(cboTargetTable, 1, 2);
+      // Create panels for different column types
+      var contentPanel = new Panel { Dock = DockStyle.Fill };
+      mainTable.Controls.Add(contentPanel, 0, 2);
+      mainTable.SetColumnSpan(contentPanel, 2);
 
-      table.Controls.Add(new Label { Text = "Target key column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
-      cboTargetKey = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-      table.Controls.Add(cboTargetKey, 1, 3);
+      // Lookup fields panel
+      pnlLookupFields = CreateLookupPanel();
+      contentPanel.Controls.Add(pnlLookupFields);
 
-      table.Controls.Add(new Label { Text = "Target value column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 4);
-      cboTargetValue = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-      table.Controls.Add(cboTargetValue, 1, 4);
+      // Action fields panel
+      pnlActionFields = CreateActionPanel();
+      contentPanel.Controls.Add(pnlActionFields);
 
-      // Improve UX with autocomplete on all dropdowns
-      cboLocalKey.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-      cboLocalKey.AutoCompleteSource = AutoCompleteSource.ListItems;
-      cboTargetTable.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-      cboTargetTable.AutoCompleteSource = AutoCompleteSource.ListItems;
-      cboTargetKey.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-      cboTargetKey.AutoCompleteSource = AutoCompleteSource.ListItems;
-      cboTargetValue.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
-      cboTargetValue.AutoCompleteSource = AutoCompleteSource.ListItems;
-
+      // Button panel
       var panelButtons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, AutoSize = true };
       btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 90 };
       btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
       panelButtons.Controls.AddRange(new Control[] { btnOk, btnCancel });
-      table.Controls.Add(panelButtons, 0, 5);
-      table.SetColumnSpan(panelButtons, 2);
+      mainTable.Controls.Add(panelButtons, 0, 3);
+      mainTable.SetColumnSpan(panelButtons, 2);
 
-      // Data
+      // Initialize data
+      InitializeData();
+
+      AcceptButton = btnOk;
+      CancelButton = btnCancel;
+    }
+
+    private void InitializeData()
+    {
       txtColumnName.Text = def.ColumnName ?? string.Empty;
+      cboColumnType.Text = def.ColumnType ?? "Lookup";
+
+      // Initialize action fields
+      cboActionType.Text = def.ActionType ?? "";
+      txtButtonText.Text = def.ButtonText ?? "";
 
       // Always populate target table choices from breakdown metrics
       cboTargetTable.Items.Clear();
@@ -326,10 +393,14 @@ namespace WorkOrderBlender
       }
 
       // Local key options: from current table (schema or fallback), only LinkID*
+      var localKeyColumns = GetColumnsForTable(def.TableName).Where(c => c.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)).ToList();
+
       cboLocalKey.Items.Clear();
-      foreach (var c in GetColumnsForTable(def.TableName))
+      cboActionLocalKey.Items.Clear();
+      foreach (var c in localKeyColumns)
       {
-        if (c.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)) cboLocalKey.Items.Add(c);
+        cboLocalKey.Items.Add(c);
+        cboActionLocalKey.Items.Add(c);
       }
 
       // Helper to fill target columns (works with or without DB)
@@ -359,34 +430,188 @@ namespace WorkOrderBlender
       cboTargetTable.SelectedIndexChanged += (s, e) => FillTargetColumns(cboTargetTable.Text);
       cboTargetTable.TextChanged += (s, e) => FillTargetColumns(cboTargetTable.Text);
 
+      // Wire up action type selection events
+      cboActionType.SelectedIndexChanged += (s, e) => SetDefaultButtonText();
+
       // Initial population
       FillTargetColumns(cboTargetTable.Text);
 
+      // Load existing values
       cboLocalKey.Text = def.LocalKeyColumn ?? string.Empty;
+      cboActionLocalKey.Text = def.LocalKeyColumn ?? string.Empty;
       cboTargetKey.Text = def.TargetKeyColumn ?? string.Empty;
       cboTargetValue.Text = def.TargetValueColumn ?? string.Empty;
+
+      // Set initial panel visibility
+      CboColumnType_SelectedIndexChanged(cboColumnType, EventArgs.Empty);
 
       btnOk.Click += (s, e) =>
       {
         if (!ValidateInputs()) { DialogResult = DialogResult.None; return; }
         def.ColumnName = (txtColumnName.Text ?? string.Empty).Trim();
-        def.LocalKeyColumn = (cboLocalKey.Text ?? string.Empty).Trim();
-        def.TargetTableName = (cboTargetTable.Text ?? string.Empty).Trim();
-        def.TargetKeyColumn = (cboTargetKey.Text ?? string.Empty).Trim();
-        def.TargetValueColumn = (cboTargetValue.Text ?? string.Empty).Trim();
+        def.ColumnType = (cboColumnType.Text ?? string.Empty).Trim();
+
+        if (def.IsActionColumn)
+        {
+          def.ActionType = (cboActionType.Text ?? string.Empty).Trim();
+          def.ButtonText = (txtButtonText.Text ?? string.Empty).Trim();
+          def.LocalKeyColumn = (cboActionLocalKey.Text ?? string.Empty).Trim();
+          // Clear lookup-specific fields for action columns
+          def.TargetTableName = "";
+          def.TargetKeyColumn = "";
+          def.TargetValueColumn = "";
+        }
+        else
+        {
+          def.LocalKeyColumn = (cboLocalKey.Text ?? string.Empty).Trim();
+          def.TargetTableName = (cboTargetTable.Text ?? string.Empty).Trim();
+          def.TargetKeyColumn = (cboTargetKey.Text ?? string.Empty).Trim();
+          def.TargetValueColumn = (cboTargetValue.Text ?? string.Empty).Trim();
+          // Clear action-specific fields for lookup columns
+          def.ActionType = "";
+          def.ButtonText = "";
+        }
       };
     }
 
     private bool ValidateInputs()
     {
       if (string.IsNullOrWhiteSpace(txtColumnName.Text)) { MessageBox.Show("Column name is required."); return false; }
-      if (string.IsNullOrWhiteSpace(cboLocalKey.Text)) { MessageBox.Show("Local key column is required."); return false; }
-      if (!cboLocalKey.Text.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)) { MessageBox.Show("Local key column must start with 'LinkID'."); return false; }
-      if (string.IsNullOrWhiteSpace(cboTargetTable.Text)) { MessageBox.Show("Target table is required."); return false; }
-      if (string.IsNullOrWhiteSpace(cboTargetKey.Text)) { MessageBox.Show("Target key column is required."); return false; }
-      if (!cboTargetKey.Text.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)) { MessageBox.Show("Target key column must start with 'LinkID'."); return false; }
-      if (string.IsNullOrWhiteSpace(cboTargetValue.Text)) { MessageBox.Show("Target value column is required."); return false; }
+
+      var isAction = cboColumnType.Text == "Action";
+
+      if (isAction)
+      {
+        // Validate action column
+        if (string.IsNullOrWhiteSpace(cboActionType.Text)) { MessageBox.Show("Action type is required."); return false; }
+        if (string.IsNullOrWhiteSpace(txtButtonText.Text)) { MessageBox.Show("Button text is required."); return false; }
+        if (string.IsNullOrWhiteSpace(cboActionLocalKey.Text)) { MessageBox.Show("Key column is required."); return false; }
+        if (!cboActionLocalKey.Text.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)) { MessageBox.Show("Key column must start with 'LinkID'."); return false; }
+      }
+      else
+      {
+        // Validate lookup column
+        if (string.IsNullOrWhiteSpace(cboLocalKey.Text)) { MessageBox.Show("Local key column is required."); return false; }
+        if (!cboLocalKey.Text.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)) { MessageBox.Show("Local key column must start with 'LinkID'."); return false; }
+        if (string.IsNullOrWhiteSpace(cboTargetTable.Text)) { MessageBox.Show("Target table is required."); return false; }
+        if (string.IsNullOrWhiteSpace(cboTargetKey.Text)) { MessageBox.Show("Target key column is required."); return false; }
+        if (!cboTargetKey.Text.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase)) { MessageBox.Show("Target key column must start with 'LinkID'."); return false; }
+        if (string.IsNullOrWhiteSpace(cboTargetValue.Text)) { MessageBox.Show("Target value column is required."); return false; }
+      }
+
       return true;
+    }
+
+    private Panel CreateLookupPanel()
+    {
+      var panel = new Panel { Dock = DockStyle.Fill, Visible = false };
+
+      var table = new TableLayoutPanel
+      {
+        Dock = DockStyle.Fill,
+        ColumnCount = 2,
+        RowCount = 4,
+        Padding = new Padding(4),
+      };
+      table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+      table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+      for (int i = 0; i < 4; i++) table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      panel.Controls.Add(table);
+
+      table.Controls.Add(new Label { Text = "Local key column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+      cboLocalKey = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboLocalKey.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+      cboLocalKey.AutoCompleteSource = AutoCompleteSource.ListItems;
+      table.Controls.Add(cboLocalKey, 1, 0);
+
+      table.Controls.Add(new Label { Text = "Target table:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+      cboTargetTable = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboTargetTable.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+      cboTargetTable.AutoCompleteSource = AutoCompleteSource.ListItems;
+      table.Controls.Add(cboTargetTable, 1, 1);
+
+      table.Controls.Add(new Label { Text = "Target key column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+      cboTargetKey = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboTargetKey.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+      cboTargetKey.AutoCompleteSource = AutoCompleteSource.ListItems;
+      table.Controls.Add(cboTargetKey, 1, 2);
+
+      table.Controls.Add(new Label { Text = "Target value column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 3);
+      cboTargetValue = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboTargetValue.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+      cboTargetValue.AutoCompleteSource = AutoCompleteSource.ListItems;
+      table.Controls.Add(cboTargetValue, 1, 3);
+
+      return panel;
+    }
+
+    private Panel CreateActionPanel()
+    {
+      var panel = new Panel { Dock = DockStyle.Fill, Visible = false };
+
+      var table = new TableLayoutPanel
+      {
+        Dock = DockStyle.Fill,
+        ColumnCount = 2,
+        RowCount = 3,
+        Padding = new Padding(4),
+      };
+      table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+      table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+      for (int i = 0; i < 3; i++) table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      panel.Controls.Add(table);
+
+      table.Controls.Add(new Label { Text = "Action type:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
+      cboActionType = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboActionType.Items.AddRange(new[] { "3DViewer", "WebLink", "Export", "Custom" });
+      table.Controls.Add(cboActionType, 1, 0);
+
+      table.Controls.Add(new Label { Text = "Button text:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
+      txtButtonText = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      table.Controls.Add(txtButtonText, 1, 1);
+
+      table.Controls.Add(new Label { Text = "Key column:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 2);
+      cboActionLocalKey = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Anchor = AnchorStyles.Left | AnchorStyles.Right };
+      cboActionLocalKey.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+      cboActionLocalKey.AutoCompleteSource = AutoCompleteSource.ListItems;
+      table.Controls.Add(cboActionLocalKey, 1, 2);
+
+      return panel;
+    }
+
+    private void CboColumnType_SelectedIndexChanged(object sender, EventArgs e)
+    {
+      var isAction = cboColumnType.SelectedItem?.ToString() == "Action";
+      pnlLookupFields.Visible = !isAction;
+      pnlActionFields.Visible = isAction;
+
+      // Set helpful defaults for button text based on action type
+      if (isAction && cboActionType.SelectedItem != null)
+      {
+        SetDefaultButtonText();
+      }
+    }
+
+    private void SetDefaultButtonText()
+    {
+      if (string.IsNullOrEmpty(txtButtonText.Text))
+      {
+        switch (cboActionType.SelectedItem?.ToString())
+        {
+          case "3DViewer":
+            txtButtonText.Text = "🎯 3D View";
+            break;
+          case "WebLink":
+            txtButtonText.Text = "🔗 Link";
+            break;
+          case "Export":
+            txtButtonText.Text = "💾 Export";
+            break;
+          default:
+            txtButtonText.Text = "▶ Action";
+            break;
+        }
+      }
     }
   }
 }

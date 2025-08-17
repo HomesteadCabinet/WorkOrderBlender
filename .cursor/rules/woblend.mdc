@@ -1,0 +1,15 @@
+---
+alwaysApply: true
+---
+Use native .NET Framework 4.8 components and libraries as much as possible.
+
+Never allow modification of the source databases, only ever use the databases for reading. Schema strictly follows resources/wo_schema.xml.
+
+Project is called WorkOrderBlender.
+
+The project is a Windows Forms application written in C# using .NET Framework 4.8.
+
+DEBUG Logging is enabled.
+Use single line comments for code often, not just for me but for you to best understand.
+
+Methods or functions with shared functionality should be in a utility library.

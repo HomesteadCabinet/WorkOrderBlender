@@ -27,27 +27,29 @@ namespace WorkOrderBlender
       this.progress = new System.Windows.Forms.ProgressBar();
       this.labelSearch = new System.Windows.Forms.Label();
       this.txtSearch = new System.Windows.Forms.TextBox();
-      this.splitMain = new System.Windows.Forms.SplitContainer();
-      this.breakdownList = new System.Windows.Forms.ListView();
-      this.colMetric = new System.Windows.Forms.ColumnHeader();
-      this.colValue = new System.Windows.Forms.ColumnHeader();
-      this.colAction = new System.Windows.Forms.ColumnHeader();
+      this.mainLayoutTable = new System.Windows.Forms.TableLayoutPanel();
+      this.cmbTableSelector = new System.Windows.Forms.ComboBox();
+      this.actionsLayout = new System.Windows.Forms.TableLayoutPanel();
+      this.lblTableSelector = new System.Windows.Forms.Label();
       this.panelSearchLeft = new System.Windows.Forms.Panel();
       this.btnSelectAll = new System.Windows.Forms.Button();
-      this.panelMetricsTop = new System.Windows.Forms.Panel();
+      this.metricsGrid = new System.Windows.Forms.DataGridView();
+      this.panelLoading = new System.Windows.Forms.Panel();
+      this.progressLoading = new System.Windows.Forms.ProgressBar();
+      this.lblLoading = new System.Windows.Forms.Label();
+      this.panelTableSelector = new System.Windows.Forms.Panel();
       this.btnPreviewChanges = new System.Windows.Forms.Button();
       this.tableWorkOrder = new System.Windows.Forms.TableLayoutPanel();
-      ((System.ComponentModel.ISupportInitialize)(this.splitMain)).BeginInit();
-      this.splitMain.Panel1.SuspendLayout();
-      this.splitMain.Panel2.SuspendLayout();
-      this.splitMain.SuspendLayout();
+      ((System.ComponentModel.ISupportInitialize)(this.metricsGrid)).BeginInit();
+      this.mainLayoutTable.SuspendLayout();
+      this.actionsLayout.SuspendLayout();
       this.SuspendLayout();
 
       //
       // colDir
       //
       this.colDir.Text = "Directory";
-      this.colDir.Width = 400;
+      this.colDir.Width = 320;
       //
       // listWorkOrders
       //
@@ -58,9 +60,7 @@ namespace WorkOrderBlender
       });
       this.listWorkOrders.FullRowSelect = true;
       this.listWorkOrders.HideSelection = false;
-      this.listWorkOrders.Location = new System.Drawing.Point(0, 0);
       this.listWorkOrders.Name = "listWorkOrders";
-      this.listWorkOrders.Size = new System.Drawing.Size(220, 292);
       this.listWorkOrders.TabIndex = 3;
       this.listWorkOrders.UseCompatibleStateImageBehavior = false;
       this.listWorkOrders.View = System.Windows.Forms.View.Details;
@@ -68,24 +68,24 @@ namespace WorkOrderBlender
       //
       // btnPreviewChanges
       //
-      this.btnPreviewChanges.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-      this.btnPreviewChanges.Location = new System.Drawing.Point(524, 415);
+      this.btnPreviewChanges.Dock = System.Windows.Forms.DockStyle.Fill;
       this.btnPreviewChanges.Name = "btnPreviewChanges";
       this.btnPreviewChanges.Size = new System.Drawing.Size(130, 23);
       this.btnPreviewChanges.TabIndex = 4;
       this.btnPreviewChanges.Text = "Preview Changes";
       this.btnPreviewChanges.UseVisualStyleBackColor = true;
+      this.btnPreviewChanges.Margin = new System.Windows.Forms.Padding(3, 0, 3, 0);
       this.btnPreviewChanges.Click += new System.EventHandler(this.btnPreviewChanges_Click);
       //
       // btnConsolidate
       //
-      this.btnConsolidate.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-      this.btnConsolidate.Location = new System.Drawing.Point(660, 415);
+      this.btnConsolidate.Dock = System.Windows.Forms.DockStyle.Fill;
       this.btnConsolidate.Name = "btnConsolidate";
       this.btnConsolidate.Size = new System.Drawing.Size(75, 23);
       this.btnConsolidate.TabIndex = 5;
       this.btnConsolidate.Text = "Run";
       this.btnConsolidate.UseVisualStyleBackColor = true;
+      this.btnConsolidate.Margin = new System.Windows.Forms.Padding(3, 0, 0, 0);
       this.btnConsolidate.Click += new System.EventHandler(this.btnConsolidate_Click);
       //
       // txtOutput
@@ -128,7 +128,7 @@ namespace WorkOrderBlender
       this.tableWorkOrder.Name = "tableWorkOrder";
       this.tableWorkOrder.RowCount = 1;
       this.tableWorkOrder.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.AutoSize));
-      this.tableWorkOrder.Size = new System.Drawing.Size(700, 30);
+      this.tableWorkOrder.Size = new System.Drawing.Size(1150, 30);
       this.tableWorkOrder.TabIndex = 8;
       this.tableWorkOrder.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left)
       | System.Windows.Forms.AnchorStyles.Right)));
@@ -137,13 +137,11 @@ namespace WorkOrderBlender
       //
       // progress
       //
-      this.progress.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)
-      | System.Windows.Forms.AnchorStyles.Right)));
-      this.progress.Location = new System.Drawing.Point(15, 415);
+      this.progress.Dock = System.Windows.Forms.DockStyle.Fill;
       this.progress.Name = "progress";
-      this.progress.Size = new System.Drawing.Size(500, 23);
       this.progress.Style = System.Windows.Forms.ProgressBarStyle.Continuous;
       this.progress.TabIndex = 8;
+      this.progress.Margin = new System.Windows.Forms.Padding(0, 0, 3, 0);
       //
       // (removed legacy chkSelectAll)
 
@@ -170,66 +168,104 @@ namespace WorkOrderBlender
       this.txtSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.txtSearch.TextChanged += new System.EventHandler(this.txtSearch_TextChanged);
 
-      // splitMain
+            // mainLayoutTable - 2x2 grid layout
       //
-      this.splitMain.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+      this.mainLayoutTable.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
       | System.Windows.Forms.AnchorStyles.Left)
       | System.Windows.Forms.AnchorStyles.Right)));
-      this.splitMain.Location = new System.Drawing.Point(15, 50);
-      this.splitMain.Name = "splitMain";
-      // Panel1
-      this.splitMain.Panel1.Controls.Add(this.listWorkOrders);
-      this.splitMain.Panel1.Controls.Add(this.panelSearchLeft);
-      // Panel2
-      this.splitMain.Panel2.Controls.Add(this.breakdownList);
-      this.splitMain.Panel2.Controls.Add(this.panelMetricsTop);
-      this.splitMain.Size = new System.Drawing.Size(718, 349);
-      this.splitMain.SplitterDistance = 420;
-      this.splitMain.TabIndex = 12;
+      this.mainLayoutTable.Location = new System.Drawing.Point(15, 50);
+      this.mainLayoutTable.Name = "mainLayoutTable";
+      this.mainLayoutTable.ColumnCount = 2;
+      this.mainLayoutTable.RowCount = 2;
+      this.mainLayoutTable.Size = new System.Drawing.Size(1170, 540);
+      this.mainLayoutTable.TabIndex = 12;
 
-      // breakdownList
-      //
-      this.breakdownList.Dock = System.Windows.Forms.DockStyle.Fill;
-      this.breakdownList.FullRowSelect = true;
-      this.breakdownList.HideSelection = false;
-      this.breakdownList.Location = new System.Drawing.Point(0, 32);
-      this.breakdownList.Name = "breakdownList";
-      this.breakdownList.Size = new System.Drawing.Size(229, 287);
-      this.breakdownList.TabIndex = 13;
-      this.breakdownList.UseCompatibleStateImageBehavior = false;
-      this.breakdownList.View = System.Windows.Forms.View.Details;
-      this.breakdownList.Columns.AddRange(new System.Windows.Forms.ColumnHeader[] {
-        this.colMetric,
-        this.colValue,
-        this.colAction
-      });
-      this.breakdownList.OwnerDraw = true;
-      this.breakdownList.DrawColumnHeader += new System.Windows.Forms.DrawListViewColumnHeaderEventHandler(this.breakdownList_DrawColumnHeader);
-      this.breakdownList.DrawItem += new System.Windows.Forms.DrawListViewItemEventHandler(this.breakdownList_DrawItem);
-      this.breakdownList.DrawSubItem += new System.Windows.Forms.DrawListViewSubItemEventHandler(this.breakdownList_DrawSubItem);
-      this.breakdownList.MouseClick += new System.Windows.Forms.MouseEventHandler(this.breakdownList_MouseClick);
-      this.breakdownList.MouseMove += new System.Windows.Forms.MouseEventHandler(this.breakdownList_MouseMove);
+      // Column styles: Left panel 30%, Right panel 70%
+      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 30F));
+      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 70F));
 
-      // colMetric
+      // Row styles: Top row fills space, Bottom row 26px for actions
+      this.mainLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+      this.mainLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 26F));
+
+      // First create panelTableSelector before adding to layout
+      this.panelTableSelector = new System.Windows.Forms.Panel();
+      this.panelTableSelector.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.panelTableSelector.Name = "panelTableSelector";
+      this.panelTableSelector.TabIndex = 15;
+      this.panelTableSelector.Padding = new System.Windows.Forms.Padding(8, 8, 8, 8);
+      this.panelTableSelector.BackColor = System.Drawing.SystemColors.Control;
+      this.panelTableSelector.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
+
+      // leftLayoutTable - Top left cell (0,0)
+      this.leftLayoutTable = new System.Windows.Forms.TableLayoutPanel();
+      this.leftLayoutTable.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.leftLayoutTable.ColumnCount = 1;
+      this.leftLayoutTable.RowCount = 3;
+      this.leftLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+      this.leftLayoutTable.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Single;
+      // Set minimum height for the search panel row
+      this.leftLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 35)); // Search panel min height
+      this.leftLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F)); // Work orders list fills remaining height
+      this.leftLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 45)); // Table selector
+
+      this.leftLayoutTable.Controls.Add(this.panelSearchLeft, 0, 0);
+      this.leftLayoutTable.Controls.Add(this.listWorkOrders, 0, 1);
+      this.leftLayoutTable.Controls.Add(this.panelTableSelector, 0, 2);
+
+      // rightLayoutTable - Top right cell (1,0)
+      this.rightLayoutTable = new System.Windows.Forms.TableLayoutPanel();
+      this.rightLayoutTable.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.rightLayoutTable.ColumnCount = 1;
+      this.rightLayoutTable.RowCount = 1;
+      this.rightLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+      this.rightLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F)); // Metrics grid fills entire area
+
+      this.rightLayoutTable.Controls.Add(this.metricsGrid, 0, 0);
+
+      // Add layouts to main table
+      this.mainLayoutTable.Controls.Add(this.leftLayoutTable, 0, 0);
+      this.mainLayoutTable.Controls.Add(this.rightLayoutTable, 1, 0);
+      this.mainLayoutTable.Controls.Add(this.actionsLayout, 0, 1);
+      this.mainLayoutTable.SetColumnSpan(this.actionsLayout, 2); // Span both columns
+
+
+      // cmbTableSelector
       //
-      this.colMetric.Text = "Metric";
-      this.colMetric.Width = 130;
-      // colValue
+      this.cmbTableSelector.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.cmbTableSelector.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+      this.cmbTableSelector.Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.cmbTableSelector.Name = "cmbTableSelector";
+      this.cmbTableSelector.TabIndex = 1;
+      this.cmbTableSelector.FlatStyle = System.Windows.Forms.FlatStyle.System;
+      this.cmbTableSelector.BackColor = System.Drawing.Color.White;
+      this.cmbTableSelector.ForeColor = System.Drawing.Color.FromArgb(30, 30, 30);
+      this.cmbTableSelector.Margin = new System.Windows.Forms.Padding(2, 2, 2, 2);
+      this.cmbTableSelector.SelectedIndexChanged += new System.EventHandler(this.cmbTableSelector_SelectedIndexChanged);
+      this.panelTableSelector.Controls.Add(this.cmbTableSelector);
+
+      // metricsGrid
       //
-      this.colValue.Text = "Value";
-      this.colValue.Width = 80;
-      // colAction
-      //
-      this.colAction.Text = "Action";
-      this.colAction.Width = 80;
+      this.metricsGrid.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.metricsGrid.AllowUserToAddRows = false;
+      this.metricsGrid.AllowUserToDeleteRows = false;
+      this.metricsGrid.AutoSizeColumnsMode = System.Windows.Forms.DataGridViewAutoSizeColumnsMode.None;
+      this.metricsGrid.BackgroundColor = System.Drawing.SystemColors.Window;
+      this.metricsGrid.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
+      this.metricsGrid.Location = new System.Drawing.Point(0, 0);
+      this.metricsGrid.Name = "metricsGrid";
+      this.metricsGrid.RowHeadersWidth = 25;
+      this.metricsGrid.RowTemplate.Height = 24;
+      this.metricsGrid.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
+      this.metricsGrid.Size = new System.Drawing.Size(364, 317);
+      this.metricsGrid.TabIndex = 13;
 
       // panelSearchLeft
       //
-      this.panelSearchLeft.Dock = System.Windows.Forms.DockStyle.Top;
-      this.panelSearchLeft.Height = 32;
-      this.panelSearchLeft.Location = new System.Drawing.Point(0, 0);
+      this.panelSearchLeft.Dock = System.Windows.Forms.DockStyle.Fill;
       this.panelSearchLeft.Name = "panelSearchLeft";
       this.panelSearchLeft.TabIndex = 14;
+      this.panelSearchLeft.MinimumSize = new System.Drawing.Size(0, 32);
       // build a table layout to avoid overlap
       var tableSearch = new System.Windows.Forms.TableLayoutPanel();
       tableSearch.ColumnCount = 3;
@@ -260,32 +296,84 @@ namespace WorkOrderBlender
       this.btnSelectAll.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       tableSearch.Controls.Add(this.btnSelectAll, 2, 0);
 
-      // panelMetricsTop
+      // panelMetricsTop removed - using rightLayoutTable structure instead
+
+      // panelLoading
       //
-      this.panelMetricsTop.Dock = System.Windows.Forms.DockStyle.Top;
-      this.panelMetricsTop.Height = 32;
-      this.panelMetricsTop.Location = new System.Drawing.Point(0, 0);
-      this.panelMetricsTop.Name = "panelMetricsTop";
-      this.panelMetricsTop.TabIndex = 16;
-      this.panelMetricsTop.Visible = false;
+      this.panelLoading.BackColor = System.Drawing.SystemColors.Control;
+      this.panelLoading.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.panelLoading.Name = "panelLoading";
+      this.panelLoading.TabIndex = 17;
+      this.panelLoading.Visible = false;
+
+            // progressLoading
+      //
+      this.progressLoading.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.progressLoading.Name = "progressLoading";
+      this.progressLoading.Style = System.Windows.Forms.ProgressBarStyle.Marquee;
+      this.progressLoading.MarqueeAnimationSpeed = 30;
+      this.progressLoading.TabIndex = 0;
+      this.progressLoading.Margin = new System.Windows.Forms.Padding(20, 1, 100, 1);
+
+      // Create layout for loading panel
+      var loadingLayout = new System.Windows.Forms.TableLayoutPanel();
+      loadingLayout.Dock = System.Windows.Forms.DockStyle.Fill;
+      loadingLayout.ColumnCount = 2;
+      loadingLayout.RowCount = 1;
+      loadingLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
+      loadingLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+      loadingLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+      loadingLayout.Margin = new System.Windows.Forms.Padding(10, 2, 10, 2);
+
+      // lblLoading
+      //
+      this.lblLoading.AutoSize = true;
+      this.lblLoading.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.lblLoading.Name = "lblLoading";
+      this.lblLoading.Text = "Loading data...";
+      this.lblLoading.Anchor = System.Windows.Forms.AnchorStyles.Left;
+      this.lblLoading.Margin = new System.Windows.Forms.Padding(0, 0, 10, 0);
+
+      loadingLayout.Controls.Add(this.lblLoading, 0, 0);
+      loadingLayout.Controls.Add(this.progressLoading, 1, 0);
+      this.panelLoading.Controls.Add(loadingLayout);
+
+      // actionsLayout - Bottom row spanning both columns (0,1) and (1,1)
+      //
+      this.actionsLayout.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.actionsLayout.ColumnCount = 3;
+      this.actionsLayout.RowCount = 1;
+      this.actionsLayout.Name = "actionsLayout";
+      this.actionsLayout.TabIndex = 17;
+
+      // Column styles: Progress bar fills, buttons auto-size
+      this.actionsLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F)); // Progress bar
+      this.actionsLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize)); // Preview button
+      this.actionsLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize)); // Run button
+
+      this.actionsLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+
+      // Add controls to actionsLayout
+      this.actionsLayout.Controls.Add(this.progress, 0, 0);
+      this.actionsLayout.Controls.Add(this.btnPreviewChanges, 1, 0);
+      this.actionsLayout.Controls.Add(this.btnConsolidate, 2, 0);
+      this.actionsLayout.Controls.Add(this.panelLoading, 0, 0);
+      this.actionsLayout.SetColumnSpan(this.panelLoading, 3); // Span all 3 columns
+
       //
       // MainForm
       //
       this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
       this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-      this.ClientSize = new System.Drawing.Size(750, 450);
-      this.Controls.Add(this.splitMain);
-      this.Controls.Add(this.progress);
+      this.ClientSize = new System.Drawing.Size(1200, 600);
+      this.Controls.Add(this.mainLayoutTable);
       this.Controls.Add(this.tableWorkOrder);
-      this.Controls.Add(this.btnPreviewChanges);
-      this.Controls.Add(this.btnConsolidate);
-      this.MinimumSize = new System.Drawing.Size(750, 450);
+      this.MinimumSize = new System.Drawing.Size(1000, 500);
       this.Name = "MainForm";
       this.Text = "Work Order Blender";
-      this.splitMain.Panel1.ResumeLayout(false);
-      this.splitMain.Panel2.ResumeLayout(false);
-      ((System.ComponentModel.ISupportInitialize)(this.splitMain)).EndInit();
-      this.splitMain.ResumeLayout(false);
+      this.mainLayoutTable.ResumeLayout(false);
+      this.actionsLayout.ResumeLayout(false);
+      ((System.ComponentModel.ISupportInitialize)(this.metricsGrid)).EndInit();
       this.ResumeLayout(false);
       this.PerformLayout();
     }
@@ -301,14 +389,19 @@ namespace WorkOrderBlender
     private ProgressBar progress;
     private Label labelSearch;
     private TextBox txtSearch;
-    private SplitContainer splitMain;
-    private ListView breakdownList;
-    private ColumnHeader colMetric;
-    private ColumnHeader colValue;
-    private ColumnHeader colAction;
+    private TableLayoutPanel mainLayoutTable;
+    private TableLayoutPanel leftLayoutTable;
+    private TableLayoutPanel rightLayoutTable;
+    private ComboBox cmbTableSelector;
+    private TableLayoutPanel actionsLayout;
+    private Label lblTableSelector;
+    private Panel panelTableSelector;
+    private DataGridView metricsGrid;
     private Panel panelSearchLeft;
     private Button btnSelectAll;
-    private Panel panelMetricsTop;
+    private Panel panelLoading;
+    private ProgressBar progressLoading;
+    private Label lblLoading;
     private TableLayoutPanel tableWorkOrder;
     // removed legacy chkSelectAll field
   }

@@ -132,7 +132,8 @@ namespace WorkOrderBlender
       grid.CellValueChanged += Grid_CellValueChanged;
       grid.CurrentCellDirtyStateChanged += Grid_CurrentCellDirtyStateChanged;
       grid.CellEndEdit += Grid_CellEndEdit;
-      grid.DataBindingComplete += Grid_DataBindingComplete;
+              // Removed Grid_DataBindingComplete event handler to prevent performance issues
+        // Virtual columns are built during initialization, persisted settings applied during setup
       grid.SortCompare += Grid_SortCompare;
       grid.ColumnAdded += Grid_ColumnAdded;
       grid.ColumnWidthChanged += Grid_ColumnWidthChanged;
@@ -146,6 +147,7 @@ namespace WorkOrderBlender
       grid.SizeChanged += (s, e) => ApplyPersistedColumnWidths();
       grid.ColumnDisplayIndexChanged += Grid_ColumnDisplayIndexChanged;
       grid.ColumnHeaderMouseClick += Grid_ColumnHeaderMouseClick;
+      grid.CellClick += Grid_CellClick;
       grid.KeyDown += Grid_KeyDown;
 
       // Initialize grid state based on edit mode
@@ -180,6 +182,12 @@ namespace WorkOrderBlender
         grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
         gridBorderPanel.BackColor = SystemColors.Control;
       }
+    }
+
+    // Public method to initialize data without showing the form
+    public void InitializeData()
+    {
+      MetricsDialog_Load(this, EventArgs.Empty);
     }
 
     private void MetricsDialog_Load(object sender, EventArgs e)
@@ -223,7 +231,8 @@ namespace WorkOrderBlender
             }
           }
 
-          adapter = new SqlCeDataAdapter($"SELECT * FROM [" + tableName + "]", connection);
+          // Add built-in source file tracking column for consolidated database
+          adapter = new SqlCeDataAdapter($"SELECT *, '{GetWorkOrderName(databasePath)}' AS _SourceFile FROM [" + tableName + "]", connection);
           adapter.MissingSchemaAction = MissingSchemaAction.AddWithKey;
           dataTable = new DataTable(tableName);
           adapter.FillSchema(dataTable, SchemaType.Source);
@@ -273,7 +282,12 @@ namespace WorkOrderBlender
           adapter.Fill(dataTable);
 
           var binding = new BindingSource { DataSource = dataTable };
+
+          // Ensure AutoGenerateColumns is enabled so new DataTable columns create grid columns
+          grid.AutoGenerateColumns = true;
           grid.DataSource = binding;
+
+          Program.Log($"Set DataSource for consolidated table '{tableName}' with {dataTable.Columns.Count} columns");
           LoadVirtualColumnDefinitions();
           BuildVirtualLookupCaches();
           RebuildVirtualColumns();
@@ -336,6 +350,9 @@ namespace WorkOrderBlender
               return;
             }
 
+            // Add built-in source file tracking column first
+            dataTable.Columns.Add("_SourceFile", typeof(string));
+
             foreach (DataRow r in schema.Rows)
             {
               var colName = r["ColumnName"].ToString();
@@ -358,12 +375,21 @@ namespace WorkOrderBlender
                   using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", conn))
                   using (var reader = cmd.ExecuteReader())
                   {
-                    var values = new object[dataTable.Columns.Count];
+                    var values = new object[dataTable.Columns.Count - 1]; // -1 because we added _SourceFile column
                     while (reader.Read())
                     {
                       reader.GetValues(values);
                       var row = dataTable.NewRow();
-                      row.ItemArray = (object[])values.Clone();
+
+                      // Set the source file column first
+                      row["_SourceFile"] = GetWorkOrderName(path);
+
+                      // Set the rest of the values (skip the first column which is _SourceFile)
+                      for (int i = 0; i < values.Length; i++)
+                      {
+                        row[i + 1] = values[i]; // +1 to skip _SourceFile column
+                      }
+
                       // Apply pending overrides
                       var linkIdString = GetLinkIdString(row);
                       if (linkIdString != null && Program.Edits.TryGetRowOverrides(tableName, linkIdString, out var overrides))
@@ -391,7 +417,12 @@ namespace WorkOrderBlender
           }
 
           var binding = new BindingSource { DataSource = dataTable };
+
+          // Ensure AutoGenerateColumns is enabled so new DataTable columns create grid columns
+          grid.AutoGenerateColumns = true;
           grid.DataSource = binding;
+
+          Program.Log($"Set DataSource for table '{tableName}' with {dataTable.Columns.Count} columns");
           LoadVirtualColumnDefinitions();
           BuildVirtualLookupCaches();
           RebuildVirtualColumns();
@@ -509,6 +540,26 @@ namespace WorkOrderBlender
       foreach (var kv in breakdownSchemaColumns.ToList())
       {
         kv.Value.Sort(StringComparer.OrdinalIgnoreCase);
+      }
+    }
+
+    private string GetWorkOrderName(string sdfPath)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(sdfPath)) return "Unknown";
+
+        // Get the directory containing the .sdf file
+        string directory = System.IO.Path.GetDirectoryName(sdfPath);
+        if (string.IsNullOrWhiteSpace(directory)) return System.IO.Path.GetFileNameWithoutExtension(sdfPath);
+
+        // Get the work order name (directory name)
+        return System.IO.Path.GetFileName(directory);
+      }
+      catch
+      {
+        // Fallback to filename if there's any error
+        return System.IO.Path.GetFileNameWithoutExtension(sdfPath);
       }
     }
 
@@ -1109,7 +1160,7 @@ namespace WorkOrderBlender
       return result;
     }
 
-        private int ApplyPasteData(List<DataGridViewCell> targetCells, List<List<string>> pasteData)
+    private int ApplyPasteData(List<DataGridViewCell> targetCells, List<List<string>> pasteData)
     {
       if (targetCells.Count == 0 || pasteData.Count == 0) return 0;
 
@@ -1142,6 +1193,124 @@ namespace WorkOrderBlender
       }
 
       return pastedCount;
+    }
+
+    private void Grid_CellClick(object sender, DataGridViewCellEventArgs e)
+    {
+      if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+
+      var column = grid.Columns[e.ColumnIndex];
+      var columnName = column.DataPropertyName ?? column.Name;
+
+      // Check if this is an action column
+      var actionDef = virtualColumnDefs?.FirstOrDefault(def =>
+        string.Equals(def.ColumnName, columnName, StringComparison.OrdinalIgnoreCase) && def.IsActionColumn);
+
+      if (actionDef != null)
+      {
+        HandleActionColumnClick(actionDef, e.RowIndex);
+      }
+    }
+
+    private void HandleActionColumnClick(UserConfig.VirtualColumnDef actionDef, int rowIndex)
+    {
+      try
+      {
+        // Get the row data
+        var row = grid.Rows[rowIndex];
+        if (row?.DataBoundItem is DataRowView dataRowView)
+        {
+          var dataRow = dataRowView.Row;
+
+          // Get the key value for this action
+          object keyValue = null;
+          if (!string.IsNullOrEmpty(actionDef.LocalKeyColumn) && dataTable.Columns.Contains(actionDef.LocalKeyColumn))
+          {
+            keyValue = dataRow[actionDef.LocalKeyColumn];
+          }
+
+          // Execute the action based on type
+          switch (actionDef.ActionType?.ToLowerInvariant())
+          {
+            case "3dviewer":
+              Open3DViewer(keyValue);
+              break;
+            case "weblink":
+              OpenWebLink(keyValue);
+              break;
+            case "export":
+              ExportData(keyValue);
+              break;
+            default:
+              MessageBox.Show($"Action '{actionDef.ActionType}' is not yet implemented.", "Action Not Available", MessageBoxButtons.OK, MessageBoxIcon.Information);
+              break;
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error executing action {actionDef.ActionType}", ex);
+        MessageBox.Show($"Error executing action: {ex.Message}", "Action Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    private void Open3DViewer(object keyValue)
+    {
+      if (keyValue == null || keyValue == DBNull.Value)
+      {
+        MessageBox.Show("No valid ID found for 3D viewer.", "Cannot Open 3D Viewer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        return;
+      }
+
+      try
+      {
+        string dbPathToUse;
+
+        if (showFromConsolidated && !string.IsNullOrWhiteSpace(databasePath) && System.IO.File.Exists(databasePath))
+        {
+          // Use consolidated database path
+          dbPathToUse = databasePath;
+        }
+        else if (sourceSdfPaths != null && sourceSdfPaths.Count > 0)
+        {
+          // Use first available source SDF path
+          dbPathToUse = sourceSdfPaths.FirstOrDefault(path =>
+            !string.IsNullOrWhiteSpace(path) && System.IO.File.Exists(path));
+
+          if (string.IsNullOrWhiteSpace(dbPathToUse))
+          {
+            MessageBox.Show("No valid database file found for 3D viewer.", "Database Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+          }
+        }
+        else
+        {
+          MessageBox.Show("No database available for 3D viewer.", "Database Not Available", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        using (var viewer = new Product3DViewer(keyValue.ToString(), dbPathToUse, tableName))
+        {
+          viewer.ShowDialog(this);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error opening 3D viewer", ex);
+        MessageBox.Show($"Error opening 3D viewer: {ex.Message}", "3D Viewer Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    private void OpenWebLink(object keyValue)
+    {
+      // Placeholder for web link functionality
+      MessageBox.Show($"Web link action for ID: {keyValue}", "Web Link", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void ExportData(object keyValue)
+    {
+      // Placeholder for export functionality
+      MessageBox.Show($"Export action for ID: {keyValue}", "Export", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void Grid_MouseClick(object sender, MouseEventArgs e)
@@ -1309,6 +1478,15 @@ namespace WorkOrderBlender
           if (visibility.HasValue)
           {
             col.Visible = visibility.Value;
+          }
+          else
+          {
+            // For virtual columns without saved visibility, default to visible
+            if (virtualColumnNames.Contains(col.Name))
+            {
+              col.Visible = true;
+              Program.Log($"Defaulting virtual column '{col.Name}' to visible (no saved setting)");
+            }
           }
         }
       }
@@ -1536,13 +1714,8 @@ namespace WorkOrderBlender
 
     // Removed legacy ApplyPreferredColumnOrder; order now comes entirely from UserConfig
 
-    private void Grid_DataBindingComplete(object sender, DataGridViewBindingCompleteEventArgs e)
-    {
-      // Apply defaults from config (order and widths)
-      RebuildVirtualColumns();
-      ApplyPersistedColumnOrder();
-      ApplyPersistedColumnWidths();
-    }
+        // Removed Grid_DataBindingComplete event handler to prevent performance issues
+    // Virtual columns are built during initialization, persisted settings applied during setup
 
     private void Grid_SortCompare(object sender, DataGridViewSortCompareEventArgs e)
     {
@@ -1617,13 +1790,61 @@ namespace WorkOrderBlender
       {
         var cfg = UserConfig.LoadOrDefault();
         var order = cfg.TryGetColumnOrder(tableName);
-        // Append any special columns not explicitly ordered to the end in stable order
-        if (order == null) order = new List<string>();
-        foreach (var sc in virtualColumnNames)
+
+        // If no saved order exists, build a smart default order
+        if (order == null || order.Count == 0)
         {
-          if (!order.Any(n => string.Equals(n, sc, StringComparison.OrdinalIgnoreCase))) order.Add(sc);
+          order = new List<string>();
+
+          // Start with existing grid columns in their current order
+          var existingColumns = grid.Columns.Cast<DataGridViewColumn>()
+            .OrderBy(c => c.DisplayIndex)
+            .Where(c => !virtualColumnNames.Contains(c.Name)) // Exclude virtual columns
+            .Select(c => !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name)
+            .ToList();
+
+          // Find LinkID column position to insert virtual columns after it
+          var linkIdColumn = existingColumns.FirstOrDefault(name =>
+            name.Equals("LinkID", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase));
+
+          if (linkIdColumn != null)
+          {
+            var linkIdIndex = existingColumns.IndexOf(linkIdColumn);
+            // Insert virtual columns right after LinkID
+            order.AddRange(existingColumns.Take(linkIdIndex + 1));
+            order.AddRange(virtualColumnNames);
+            order.AddRange(existingColumns.Skip(linkIdIndex + 1));
+          }
+          else
+          {
+            // No LinkID found, add virtual columns at the beginning
+            order.AddRange(virtualColumnNames);
+            order.AddRange(existingColumns);
+          }
+
+          Program.Log($"Built default column order with virtual columns positioned after LinkID: {string.Join(", ", order)}");
         }
-        if (order == null || order.Count == 0) return;
+        else
+        {
+          // Add any new virtual columns not in the saved order to position 1 (after LinkID)
+          var newVirtualColumns = virtualColumnNames.Where(vc =>
+            !order.Any(n => string.Equals(n, vc, StringComparison.OrdinalIgnoreCase))).ToList();
+
+          if (newVirtualColumns.Any())
+          {
+            // Insert new virtual columns after position 0 (typically after LinkID)
+            var insertPosition = Math.Min(1, order.Count);
+            foreach (var newCol in newVirtualColumns)
+            {
+              order.Insert(insertPosition++, newCol);
+            }
+            Program.Log($"Inserted new virtual columns at position 1: {string.Join(", ", newVirtualColumns)}");
+          }
+        }
+
+        if (order.Count == 0) return;
+
         isApplyingLayout = true;
         int idx = 0;
         foreach (var name in order)
@@ -1637,8 +1858,13 @@ namespace WorkOrderBlender
           }
           if (col != null) col.DisplayIndex = idx++;
         }
+
+        Program.Log($"Applied column order: {string.Join(", ", order)}");
       }
-      catch { }
+      catch (Exception ex)
+      {
+        Program.Log("Error in ApplyPersistedColumnOrder", ex);
+      }
       finally { isApplyingLayout = false; }
     }
 
@@ -1665,12 +1891,24 @@ namespace WorkOrderBlender
         var cfg = UserConfig.LoadOrDefault();
         virtualColumnDefs = cfg.GetVirtualColumnsForTable(tableName) ?? new List<UserConfig.VirtualColumnDef>();
         virtualColumnNames.Clear();
+
+        Program.Log($"Loading virtual columns for table '{tableName}': found {virtualColumnDefs.Count} definitions");
+
         foreach (var def in virtualColumnDefs)
         {
-          if (!string.IsNullOrWhiteSpace(def.ColumnName)) virtualColumnNames.Add(def.ColumnName);
+          if (!string.IsNullOrWhiteSpace(def.ColumnName))
+          {
+            virtualColumnNames.Add(def.ColumnName);
+            Program.Log($"  Virtual column '{def.ColumnName}': Type={def.ColumnType}, IsAction={def.IsActionColumn}, ActionType={def.ActionType}, ButtonText={def.ButtonText}");
+          }
         }
       }
-      catch { virtualColumnDefs = new List<UserConfig.VirtualColumnDef>(); virtualColumnNames.Clear(); }
+      catch (Exception ex)
+      {
+        Program.Log("Error loading virtual column definitions", ex);
+        virtualColumnDefs = new List<UserConfig.VirtualColumnDef>();
+        virtualColumnNames.Clear();
+      }
     }
 
     private void BuildVirtualLookupCaches()
@@ -1758,65 +1996,245 @@ namespace WorkOrderBlender
       }
     }
 
+    private bool isRebuildingVirtualColumns = false;
+
     private void RebuildVirtualColumns()
     {
+      var newlyAddedColumns = new List<string>();
+      var columnsToSaveVisibility = new List<string>(); // Collect columns that need visibility saved
+
       try
       {
         if (dataTable == null) return;
         if (virtualColumnDefs == null || virtualColumnDefs.Count == 0) return;
+        if (isRebuildingVirtualColumns)
+        {
+          Program.Log("RebuildVirtualColumns: Skipping due to already rebuilding");
+          return; // Prevent recursive/repeated calls
+        }
 
-        // Add actual columns to DataTable and populate them with lookup values for proper sorting
+        Program.Log("RebuildVirtualColumns: Starting rebuild");
+        isRebuildingVirtualColumns = true;
+
+        // Add columns to DataTable and handle both lookup and action columns
         foreach (var def in virtualColumnDefs)
         {
           if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
+
+          Program.Log($"Processing virtual column '{def.ColumnName}' (Type: {def.ColumnType})");
+
+          // Check for potentially problematic column names
+          if (def.ColumnName.Length == 1)
+          {
+            Program.Log($"Warning: Single-character column name '{def.ColumnName}' may cause DataGridView issues. Consider using a longer name like 'Action_{def.ColumnName}' or 'Col_{def.ColumnName}'");
+          }
 
           // Check if column exists with case-insensitive comparison to avoid duplicates
           var existingColumn = dataTable.Columns.Cast<DataColumn>()
             .FirstOrDefault(c => string.Equals(c.ColumnName, def.ColumnName, StringComparison.OrdinalIgnoreCase));
 
-          if (existingColumn == null)
+          bool isNewColumn = existingColumn == null;
+          Program.Log($"Virtual column '{def.ColumnName}' isNewColumn: {isNewColumn}");
+
+          // Skip adding built-in columns to DataTable as they're already added during data loading
+          if (def.IsBuiltInColumn)
+          {
+            Program.Log($"Built-in column '{def.ColumnName}' already exists in DataTable, skipping add operation");
+          }
+          else if (isNewColumn)
           {
             dataTable.Columns.Add(def.ColumnName, typeof(string));
+            newlyAddedColumns.Add(def.ColumnName);
+            Program.Log($"Added new virtual column '{def.ColumnName}' to DataTable. DataTable now has {dataTable.Columns.Count} columns.");
+
+            // Log all DataTable column names for debugging
+            var tableColumns = dataTable.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+            Program.Log($"DataTable columns: {string.Join(", ", tableColumns)}");
+          }
+          else
+          {
+            Program.Log($"Virtual column '{def.ColumnName}' already exists in DataTable");
           }
 
-          // Populate the column with lookup values
-          if (virtualLookupCacheByColumn.TryGetValue(def.ColumnName, out var lookup))
+          if (def.IsLookupColumn)
           {
+            // Populate lookup columns with lookup values
+            PopulateLookupColumn(def);
+          }
+          else if (def.IsActionColumn)
+          {
+            // Action columns just need the button text as placeholder
             foreach (DataRow row in dataTable.Rows)
             {
-              try
-              {
-                object localKeyVal = null;
-                if (dataTable.Columns.Contains(def.LocalKeyColumn))
-                  localKeyVal = row[def.LocalKeyColumn];
-                var localKey = localKeyVal == null || localKeyVal == DBNull.Value ? null : Convert.ToString(localKeyVal);
-
-                string displayValue = "";
-                if (!string.IsNullOrEmpty(localKey) && lookup.TryGetValue(localKey, out var valueObj))
-                {
-                  displayValue = valueObj == null || valueObj == DBNull.Value ? "" : Convert.ToString(valueObj);
-                }
-                row[def.ColumnName] = displayValue ?? "";
-              }
-              catch { row[def.ColumnName] = ""; }
+              row[def.ColumnName] = def.ButtonText ?? "Action";
             }
+            Program.Log($"Populated action column '{def.ColumnName}' with button text '{def.ButtonText}'");
           }
         }
 
-        // Ensure special columns in the grid have the right styling
+        // Force grid to refresh and create columns for new DataTable columns
+        if (newlyAddedColumns.Count > 0)
+        {
+          Program.Log($"Forcing DataGridView to recognize {newlyAddedColumns.Count} new virtual columns");
+
+          // More aggressive approach: temporarily reset and restore the DataSource
+          var currentDataSource = grid.DataSource;
+          grid.DataSource = null;
+          grid.Refresh();
+          Application.DoEvents();
+          grid.DataSource = currentDataSource;
+          grid.Refresh();
+          grid.Update();
+          Application.DoEvents();
+
+          Program.Log($"Refreshed grid after adding {newlyAddedColumns.Count} new virtual columns");
+
+          // Log what columns the grid actually has after refresh
+          var gridColumns = grid.Columns.Cast<DataGridViewColumn>().Select(c => c.Name).ToList();
+          Program.Log($"DataGridView columns after refresh: {string.Join(", ", gridColumns)}");
+        }
+
+        // Style virtual columns in the grid and ensure visibility
         foreach (var def in virtualColumnDefs)
         {
           if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
-          if (grid.Columns.Contains(def.ColumnName))
+
+          // Wait a moment for the grid to create the column if it's new
+          DataGridViewColumn col = null;
+          if (newlyAddedColumns.Contains(def.ColumnName))
           {
-            var col = grid.Columns[def.ColumnName];
+            // For new columns, try a few times to find them in the grid
+            for (int attempt = 0; attempt < 3 && col == null; attempt++)
+            {
+              if (grid.Columns.Contains(def.ColumnName))
+              {
+                col = grid.Columns[def.ColumnName];
+                break;
+              }
+              System.Threading.Thread.Sleep(10); // Brief wait
+              grid.Refresh();
+            }
+          }
+          else
+          {
+            // For existing columns, single check
+            if (grid.Columns.Contains(def.ColumnName))
+            {
+              col = grid.Columns[def.ColumnName];
+            }
+          }
+
+          if (col != null)
+          {
             col.ReadOnly = true;
-            col.DefaultCellStyle.BackColor = Color.Beige;
-            col.DefaultCellStyle.ForeColor = Color.DarkSlateGray;
+
+            // Apply special styling for built-in columns
+            if (def.IsBuiltInColumn)
+            {
+              col.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(248, 248, 255); // Light blue background
+
+              // Fix null reference exception by checking if font exists and providing a default
+              if (col.DefaultCellStyle.Font != null)
+              {
+                col.DefaultCellStyle.Font = new System.Drawing.Font(col.DefaultCellStyle.Font, System.Drawing.FontStyle.Bold);
+              }
+              else
+              {
+                // Use a default font if none exists
+                col.DefaultCellStyle.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
+              }
+
+              col.HeaderText = def.ButtonText; // Use "Work Order" as header text
+              Program.Log($"Applied built-in column styling to '{def.ColumnName}'");
+            }
+
+            // Ensure new virtual columns are visible
+            if (newlyAddedColumns.Contains(def.ColumnName))
+            {
+              col.Visible = true;
+              Program.Log($"Made new virtual column '{def.ColumnName}' visible");
+
+              // Collect columns that need visibility saved instead of saving immediately
+              columnsToSaveVisibility.Add(def.ColumnName);
+
+              // Let ApplyPersistedColumnOrder handle positioning to preserve existing order
+              Program.Log($"New virtual column '{def.ColumnName}' will be positioned by ApplyPersistedColumnOrder()");
+            }
+
+            if (def.IsActionColumn)
+            {
+              // Style action columns differently - they'll be rendered as buttons
+              col.DefaultCellStyle.BackColor = Color.LightBlue;
+              col.DefaultCellStyle.ForeColor = Color.DarkBlue;
+              col.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+              Program.Log($"Applied action column styling to '{def.ColumnName}'");
+            }
+            else
+            {
+              // Style lookup columns
+              col.DefaultCellStyle.BackColor = Color.Beige;
+              col.DefaultCellStyle.ForeColor = Color.DarkSlateGray;
+            }
+          }
+          else
+          {
+            Program.Log($"Warning: Virtual column '{def.ColumnName}' not found in grid columns after refresh attempts");
           }
         }
       }
-      catch { }
+      catch (Exception ex)
+      {
+        Program.Log("Error in RebuildVirtualColumns", ex);
+      }
+      finally
+      {
+        // Batch save visibility settings for new columns to reduce file I/O
+        if (columnsToSaveVisibility.Count > 0)
+        {
+          try
+          {
+            var cfg = UserConfig.LoadOrDefault();
+            foreach (var columnName in columnsToSaveVisibility)
+            {
+              cfg.SetColumnVisibility(tableName, columnName, true);
+            }
+            cfg.Save();
+            Program.Log($"Batch saved visibility settings for {columnsToSaveVisibility.Count} new virtual columns");
+          }
+          catch (Exception ex)
+          {
+            Program.Log($"Failed to batch save visibility settings for new virtual columns", ex);
+          }
+        }
+
+        isRebuildingVirtualColumns = false;
+        Program.Log("RebuildVirtualColumns: Completed rebuild");
+      }
+    }
+
+    private void PopulateLookupColumn(UserConfig.VirtualColumnDef def)
+    {
+      if (virtualLookupCacheByColumn.TryGetValue(def.ColumnName, out var lookup))
+      {
+        foreach (DataRow row in dataTable.Rows)
+        {
+          try
+          {
+            object localKeyVal = null;
+            if (dataTable.Columns.Contains(def.LocalKeyColumn))
+              localKeyVal = row[def.LocalKeyColumn];
+            var localKey = localKeyVal == null || localKeyVal == DBNull.Value ? null : Convert.ToString(localKeyVal);
+
+            string displayValue = "";
+            if (!string.IsNullOrEmpty(localKey) && lookup.TryGetValue(localKey, out var valueObj))
+            {
+              displayValue = valueObj == null || valueObj == DBNull.Value ? "" : Convert.ToString(valueObj);
+            }
+            row[def.ColumnName] = displayValue ?? "";
+          }
+          catch { row[def.ColumnName] = ""; }
+        }
+      }
     }
 
     private void Grid_CellFormatting(object sender, DataGridViewCellFormattingEventArgs e)
@@ -1840,6 +2258,24 @@ namespace WorkOrderBlender
             ApplyPersistedColumnOrder();
             ApplyPersistedColumnWidths();
             ApplyPersistedColumnVisibilities();
+
+            // Save the updated column order to preserve any new virtual column positions
+            try
+            {
+              var currentOrder = grid.Columns.Cast<DataGridViewColumn>()
+                .OrderBy(c => c.DisplayIndex)
+                .Select(c => !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name)
+                .ToList();
+              var cfg = UserConfig.LoadOrDefault();
+              cfg.SetColumnOrder(tableName, currentOrder);
+              cfg.Save();
+              Program.Log($"Saved updated column order after virtual column changes: {string.Join(", ", currentOrder)}");
+            }
+            catch (Exception saveEx)
+            {
+              Program.Log("Failed to save updated column order after virtual column changes", saveEx);
+            }
+
             grid.Refresh();
           }
         }
