@@ -5,6 +5,7 @@ using System.Data.SqlServerCe;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -39,6 +40,7 @@ namespace WorkOrderBlender
     private List<string> currentSourcePaths = new List<string>();
     private bool isApplyingLayout = false;
     private bool gridEventsWired = false;
+    private bool isEditModeMainGrid = false; // tracks edit mode for metricsGrid
     private System.Windows.Forms.Timer orderPersistTimer;
     private DateTime lastOrderChangeUtc;
     // Virtual columns state
@@ -60,15 +62,15 @@ namespace WorkOrderBlender
       var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
       this.Text = $"Work Order Blender v{version.Major}.{version.Minor}.{version.Build}";
 
-      // Force the first column width of mainLayoutTable to 300px
-      if (mainLayoutTable.ColumnStyles.Count > 0)
-      {
-        mainLayoutTable.ColumnStyles[0].Width = 30;
-      }
-      else
-      {
-        mainLayoutTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
-      }
+      // // Force the first column width of mainLayoutTable to 300px
+      // if (mainLayoutTable.ColumnStyles.Count > 0)
+      // {
+      //   mainLayoutTable.ColumnStyles[0].Width = 30;
+      // }
+      // else
+      // {
+      //   mainLayoutTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
+      // }
 
       // Set the application icon
       try
@@ -129,7 +131,80 @@ namespace WorkOrderBlender
           MessageBox.Show("Error during initial scan: " + ex.Message);
         }
       };
+
+      // Apply saved window size and splitter distance after form is fully loaded and sized
+      this.Load += (s, e) =>
+      {
+        try
+        {
+          var cfg = UserConfig.LoadOrDefault();
+          // Apply window size if saved
+          try
+          {
+            if (cfg.MainWindowWidth > 0 && cfg.MainWindowHeight > 0)
+            {
+              // Clamp to at least minimum size
+              int w = Math.Max(this.MinimumSize.Width, cfg.MainWindowWidth);
+              int h = Math.Max(this.MinimumSize.Height, cfg.MainWindowHeight);
+              this.Size = new System.Drawing.Size(w, h);
+            }
+          }
+          catch { }
+          int desired = cfg.MainSplitterDistance > 0 ? cfg.MainSplitterDistance : 300;
+
+          // Wait for next tick to ensure layout is complete
+          this.BeginInvoke(new Action(() =>
+          {
+            try
+            {
+              // Clamp to valid range based on current size
+              int min = Math.Max(0, splitMain.Panel1MinSize);
+              int max = splitMain.Width - splitMain.Panel2MinSize - splitMain.SplitterWidth;
+              if (max < min) max = min; // guard for tiny width at startup
+              int clamped = Math.Min(Math.Max(desired, min), max);
+              if (clamped != splitMain.SplitterDistance) splitMain.SplitterDistance = clamped;
+            }
+            catch (Exception ex)
+            {
+              Program.Log("Error setting splitter distance", ex);
+            }
+          }));
+        }
+        catch (Exception ex)
+        {
+          Program.Log("Error loading splitter distance", ex);
+        }
+      };
       this.FormClosing += MainForm_FormClosing;
+
+      // Persist window size on resize end (avoid spamming saves during drag)
+      this.ResizeEnd += (s, e) =>
+      {
+        try
+        {
+          var cfg = UserConfig.LoadOrDefault();
+          cfg.MainWindowWidth = this.Width;
+          cfg.MainWindowHeight = this.Height;
+          cfg.Save();
+        }
+        catch { }
+      };
+
+      // Persist splitter distance when user adjusts it
+      try
+      {
+        this.splitMain.SplitterMoved += (s, e) =>
+        {
+          try
+          {
+            var cfg = UserConfig.LoadOrDefault();
+            cfg.MainSplitterDistance = Math.Max(splitMain.Panel1MinSize, splitMain.SplitterDistance);
+            cfg.Save();
+          }
+          catch { }
+        };
+      }
+      catch { }
 
       // Setup metrics grid refresh debounce
       metricsRefreshTimer = new System.Windows.Forms.Timer();
@@ -181,6 +256,14 @@ namespace WorkOrderBlender
         }
         catch { }
         // File name is fixed; do not update cfg.SdfFileName here
+        try
+        {
+          // Persist most recent window size and splitter distance on close
+          cfg.MainWindowWidth = this.Width;
+          cfg.MainWindowHeight = this.Height;
+          try { cfg.MainSplitterDistance = Math.Max(0, splitMain?.SplitterDistance ?? cfg.MainSplitterDistance); } catch { }
+        }
+        catch { }
         cfg.Save();
         userConfig = cfg;
       }
@@ -1090,10 +1173,21 @@ namespace WorkOrderBlender
         metricsGrid.MouseDown -= MetricsGrid_MouseDown;
         metricsGrid.MouseDown += MetricsGrid_MouseDown;
 
+        metricsGrid.CellDoubleClick -= MetricsGrid_CellDoubleClick;
         metricsGrid.CellDoubleClick += MetricsGrid_CellDoubleClick;
+        metricsGrid.KeyDown -= MetricsGrid_KeyDown;
         metricsGrid.KeyDown += MetricsGrid_KeyDown;
         // Virtual column action handling
+        metricsGrid.CellClick -= Grid_CellClick;
         metricsGrid.CellClick += Grid_CellClick;
+
+        // Edit-mode related events
+        metricsGrid.CellValueChanged -= MetricsGrid_CellValueChanged_Edit;
+        metricsGrid.CellValueChanged += MetricsGrid_CellValueChanged_Edit;
+        metricsGrid.CurrentCellDirtyStateChanged -= MetricsGrid_CurrentCellDirtyStateChanged_Edit;
+        metricsGrid.CurrentCellDirtyStateChanged += MetricsGrid_CurrentCellDirtyStateChanged_Edit;
+        metricsGrid.CellEndEdit -= MetricsGrid_CellEndEdit_Edit;
+        metricsGrid.CellEndEdit += MetricsGrid_CellEndEdit_Edit;
 
         // Debounced order persistence setup
         if (orderPersistTimer == null)
@@ -1149,7 +1243,6 @@ namespace WorkOrderBlender
         if (metricsGrid == null || string.IsNullOrWhiteSpace(currentSelectedTable)) return;
         if (isApplyingLayout)
         {
-          Program.Log("ColumnDisplayIndexChanged: skip due to isApplyingLayout");
           return;
         }
         // Debounce persistence to avoid cascades
@@ -1331,6 +1424,9 @@ namespace WorkOrderBlender
         // Enable user reordering and resizing
         metricsGrid.AllowUserToOrderColumns = true;
         metricsGrid.AllowUserToResizeColumns = true;
+
+        // Initialize edit mode visuals/state
+        ApplyMainGridEditState();
       }
       catch (Exception ex)
       {
@@ -1804,17 +1900,261 @@ namespace WorkOrderBlender
 
     private void MetricsGrid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
     {
-      // Handle MainForm-specific double-click behavior if needed
-      Program.Log($"MainForm: Cell double-clicked at [{e.RowIndex}, {e.ColumnIndex}]");
+      try
+      {
+        // Toggle edit mode
+        isEditModeMainGrid = !isEditModeMainGrid;
+        ApplyMainGridEditState();
+        Program.Log($"MainForm: Edit mode toggled to {isEditModeMainGrid}");
+      }
+      catch { }
     }
 
     private void MetricsGrid_KeyDown(object sender, KeyEventArgs e)
     {
-      // Handle MainForm-specific key events if needed
-      if (e.Control && e.KeyCode == Keys.C)
+      try
       {
-        Program.Log("MainForm: Copy command detected");
+        if (e.Control)
+        {
+          if (e.KeyCode == Keys.C)
+          {
+            CopySelectedCells_MainGrid();
+            e.Handled = true; return;
+          }
+          if (isEditModeMainGrid && !metricsGrid.ReadOnly)
+          {
+            if (e.KeyCode == Keys.X) { CutSelectedCells_MainGrid(); e.Handled = true; return; }
+            if (e.KeyCode == Keys.V) { PasteToSelectedCells_MainGrid(); e.Handled = true; return; }
+          }
+        }
+        if (e.KeyCode == Keys.Delete && isEditModeMainGrid && !metricsGrid.ReadOnly)
+        {
+          ClearSelectedCells_MainGrid();
+          e.Handled = true; e.SuppressKeyPress = true; return;
+        }
       }
+      catch { }
+    }
+
+    private void MetricsGrid_CurrentCellDirtyStateChanged_Edit(object sender, EventArgs e)
+    {
+      if (!isEditModeMainGrid || metricsGrid.ReadOnly) return;
+      // defer commit to CellEndEdit
+    }
+
+    private void MetricsGrid_CellEndEdit_Edit(object sender, DataGridViewCellEventArgs e)
+    {
+      try
+      {
+        if (!isEditModeMainGrid || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+        TrySaveSingleCellChange_MainGrid(e.RowIndex, e.ColumnIndex, true);
+      }
+      catch { }
+    }
+
+    private void MetricsGrid_CellValueChanged_Edit(object sender, DataGridViewCellEventArgs e)
+    {
+      if (!isEditModeMainGrid || e.RowIndex < 0 || e.ColumnIndex < 0) return;
+      try { TrySaveSingleCellChange_MainGrid(e.RowIndex, e.ColumnIndex, false); } catch { }
+    }
+
+    private void ApplyMainGridEditState()
+    {
+      try
+      {
+        metricsGrid.ReadOnly = !isEditModeMainGrid;
+        metricsGrid.EditMode = isEditModeMainGrid ? DataGridViewEditMode.EditOnKeystroke : DataGridViewEditMode.EditOnKeystrokeOrF2;
+        metricsGrid.SelectionMode = isEditModeMainGrid ? DataGridViewSelectionMode.CellSelect : DataGridViewSelectionMode.FullRowSelect;
+        // Toggle thick green border using wrapper panel if available
+        try
+        {
+          if (panelMetricsBorder != null)
+          {
+            panelMetricsBorder.Padding = isEditModeMainGrid ? new Padding(6) : new Padding(6);
+            panelMetricsBorder.BackColor = isEditModeMainGrid ? System.Drawing.Color.LimeGreen : System.Drawing.SystemColors.Control;
+          }
+        }
+        catch { }
+        metricsGrid.BorderStyle = BorderStyle.None;
+      }
+      catch { }
+    }
+
+    private void CopySelectedCells_MainGrid()
+    {
+      try
+      {
+        var cells = GetSelectedCellsForClipboard_MainGrid();
+        if (cells.Count == 0) return;
+        var text = ConvertCellsToClipboardText_MainGrid(cells);
+        Clipboard.SetText(text);
+      }
+      catch { }
+    }
+
+    private void CutSelectedCells_MainGrid()
+    {
+      try
+      {
+        var cells = GetSelectedCellsForClipboard_MainGrid();
+        if (cells.Count == 0) return;
+        var text = ConvertCellsToClipboardText_MainGrid(cells);
+        Clipboard.SetText(text);
+        ClearSelectedCells_MainGrid();
+      }
+      catch { }
+    }
+
+    private void PasteToSelectedCells_MainGrid()
+    {
+      try
+      {
+        if (!Clipboard.ContainsText()) return;
+        var pasteText = Clipboard.GetText();
+        var pasteData = ParseClipboardText_MainGrid(pasteText);
+        if (pasteData.Count == 0) return;
+        var targets = GetSelectedCellsForPaste_MainGrid();
+        if (targets.Count == 0) return;
+        foreach (var cell in targets)
+        {
+          var valueToApply = pasteData[0].Count > 0 ? pasteData[0][0] : string.Empty;
+          cell.Value = string.IsNullOrEmpty(valueToApply) ? (object)DBNull.Value : valueToApply;
+          TrySaveSingleCellChange_MainGrid(cell.RowIndex, cell.ColumnIndex, true);
+        }
+      }
+      catch { }
+    }
+
+    private void ClearSelectedCells_MainGrid()
+    {
+      try
+      {
+        if (metricsGrid.IsCurrentCellInEditMode) metricsGrid.EndEdit();
+        int cleared = 0;
+        foreach (DataGridViewCell cell in metricsGrid.SelectedCells)
+        {
+          if (cell.RowIndex < 0 || cell.ColumnIndex < 0) continue;
+          var col = metricsGrid.Columns[cell.ColumnIndex];
+          var colName = col.DataPropertyName ?? col.Name;
+          if (string.Equals(colName, "LinkID", StringComparison.OrdinalIgnoreCase)) continue;
+
+          cell.Value = DBNull.Value;
+          TrySaveSingleCellChange_MainGrid(cell.RowIndex, cell.ColumnIndex, true);
+          cleared++;
+        }
+        Program.Log($"MainForm: Cleared {cleared} cell(s)");
+      }
+      catch { }
+    }
+
+    private List<DataGridViewCell> GetSelectedCellsForClipboard_MainGrid()
+    {
+      var cells = new List<DataGridViewCell>();
+      if (metricsGrid.SelectionMode == DataGridViewSelectionMode.CellSelect && metricsGrid.SelectedCells.Count > 0)
+      {
+        foreach (DataGridViewCell c in metricsGrid.SelectedCells)
+        {
+          if (c.RowIndex >= 0 && c.ColumnIndex >= 0) cells.Add(c);
+        }
+      }
+      else if (metricsGrid.CurrentCell != null && metricsGrid.CurrentCell.RowIndex >= 0 && metricsGrid.CurrentCell.ColumnIndex >= 0)
+      {
+        cells.Add(metricsGrid.CurrentCell);
+      }
+      return cells.OrderBy(c => c.RowIndex).ThenBy(c => c.ColumnIndex).ToList();
+    }
+
+    private List<List<string>> ParseClipboardText_MainGrid(string text)
+    {
+      var result = new List<List<string>>();
+      if (string.IsNullOrEmpty(text)) return result;
+      var lines = text.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None);
+      foreach (var line in lines)
+      {
+        if (string.IsNullOrEmpty(line)) continue;
+        result.Add(line.Split('\t').ToList());
+      }
+      return result;
+    }
+
+    private List<DataGridViewCell> GetSelectedCellsForPaste_MainGrid()
+    {
+      var cells = new List<DataGridViewCell>();
+      if (metricsGrid.SelectionMode == DataGridViewSelectionMode.CellSelect && metricsGrid.SelectedCells.Count > 0)
+      {
+        foreach (DataGridViewCell c in metricsGrid.SelectedCells)
+        {
+          if (c.RowIndex >= 0 && c.ColumnIndex >= 0) cells.Add(c);
+        }
+      }
+      else if (metricsGrid.CurrentCell != null && metricsGrid.CurrentCell.RowIndex >= 0 && metricsGrid.CurrentCell.ColumnIndex >= 0)
+      {
+        cells.Add(metricsGrid.CurrentCell);
+      }
+      return cells.OrderBy(c => c.RowIndex).ThenBy(c => c.ColumnIndex).ToList();
+    }
+
+    private string ConvertCellsToClipboardText_MainGrid(List<DataGridViewCell> cells)
+    {
+      if (cells.Count == 0) return string.Empty;
+      var sb = new StringBuilder();
+      var groups = cells.GroupBy(c => c.RowIndex).OrderBy(g => g.Key);
+      foreach (var g in groups)
+      {
+        var rowCells = g.OrderBy(c => c.ColumnIndex).ToList();
+        var values = new List<string>();
+        foreach (var cell in rowCells)
+        {
+          var v = cell.Value?.ToString() ?? string.Empty;
+          v = v.Replace("\t", " ").Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ");
+          values.Add(v);
+        }
+        sb.AppendLine(string.Join("\t", values));
+      }
+      return sb.ToString();
+    }
+
+    private void TrySaveSingleCellChange_MainGrid(int rowIndex, int columnIndex, bool isEndEdit)
+    {
+      try
+      {
+        if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataTable data)
+        {
+          var row = metricsGrid.Rows[rowIndex];
+          if (row?.DataBoundItem is DataRowView drv)
+          {
+            var dataRow = drv.Row;
+            var column = metricsGrid.Columns[columnIndex];
+            var columnName = column.DataPropertyName ?? column.Name;
+            // Skip LinkID/ID key columns and virtual/action columns
+            if (string.Equals(columnName, "LinkID", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(columnName, "ID", StringComparison.OrdinalIgnoreCase) ||
+                (virtualColumnNames != null && virtualColumnNames.Contains(columnName)))
+              return;
+            var cellValue = row.Cells[columnIndex].Value;
+            var newValue = cellValue == DBNull.Value ? null : cellValue;
+            object orig = null;
+            if (dataRow.Table.Columns.Contains(columnName))
+            {
+              try { orig = dataRow.HasVersion(DataRowVersion.Original) ? dataRow[columnName, DataRowVersion.Original] : dataRow[columnName]; }
+              catch { orig = dataRow[columnName]; }
+            }
+            if (orig == DBNull.Value) orig = null;
+            if (!object.Equals(newValue, orig))
+            {
+              var key = (dataRow.Table.Columns.Contains("LinkID") ? dataRow["LinkID"] : (dataRow.Table.Columns.Contains("ID") ? dataRow["ID"] : null));
+              string linkKey = key == null || key == DBNull.Value ? null : Convert.ToString(key);
+              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+              {
+                Program.Edits.UpsertOverride(currentSelectedTable, linkKey, columnName, newValue);
+              }
+              // Mark row clean so subsequent edits diff against new baseline
+              try { dataRow.AcceptChanges(); } catch { }
+            }
+          }
+        }
+      }
+      catch { }
     }
 
     // Open virtual columns dialog implemented directly in MainForm
@@ -1901,6 +2241,8 @@ namespace WorkOrderBlender
         metricsGrid.ContextMenuStrip = contextMenu; // will be populated dynamically in MouseDown
 
         Program.Log("Added context menu to metrics grid");
+
+        // Add edit mode toggle in header context later when menu is built
       }
       catch (Exception ex)
       {
@@ -1993,12 +2335,47 @@ namespace WorkOrderBlender
             MessageBoxButtons.OK, MessageBoxIcon.Information);
           return;
         }
-        foreach (DataGridViewRow row in metricsGrid.SelectedRows)
+
+        // Collect rows to delete (selected, or current if none)
+        var rows = metricsGrid.SelectedRows.Cast<DataGridViewRow>().ToList();
+        if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
+        if (rows.Count == 0) { MessageBox.Show("No rows selected."); return; }
+
+        int deleted = 0;
+        foreach (var row in rows)
         {
-          if (!row.IsNewRow)
+          try
           {
-            metricsGrid.Rows.Remove(row);
+            if (row.IsNewRow) continue;
+            if (row?.DataBoundItem is DataRowView drv)
+            {
+              var dataRow = drv.Row;
+              // Determine key
+              object keyObj = null;
+              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
+              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+              {
+                Program.Edits.MarkDeleted(currentSelectedTable, linkKey);
+                deleted++;
+              }
+
+              // Remove from current view immediately
+              try { dataRow.Delete(); } catch { }
+            }
+            else
+            {
+              // Fallback: remove the grid row
+              metricsGrid.Rows.Remove(row);
+            }
           }
+          catch { }
+        }
+
+        // Refresh grid to reflect deletions
+        if (deleted > 0)
+        {
+          try { RefreshMetricsGrid(); } catch { }
         }
       }
       catch (Exception ex)
@@ -2522,6 +2899,21 @@ namespace WorkOrderBlender
       if (actionDef != null)
       {
         HandleActionColumnClick(actionDef, e.RowIndex);
+      }
+      else if (isEditModeMainGrid)
+      {
+        try
+        {
+          if (!metricsGrid.ReadOnly && metricsGrid.SelectionMode != DataGridViewSelectionMode.CellSelect)
+          {
+            metricsGrid.SelectionMode = DataGridViewSelectionMode.CellSelect;
+          }
+          if (!metricsGrid.IsCurrentCellInEditMode)
+          {
+            metricsGrid.BeginEdit(true);
+          }
+        }
+        catch { }
       }
     }
 

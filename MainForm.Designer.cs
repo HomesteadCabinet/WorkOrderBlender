@@ -28,12 +28,14 @@ namespace WorkOrderBlender
       this.labelSearch = new System.Windows.Forms.Label();
       this.txtSearch = new System.Windows.Forms.TextBox();
       this.mainLayoutTable = new System.Windows.Forms.TableLayoutPanel();
+      this.splitMain = new System.Windows.Forms.SplitContainer();
       this.cmbTableSelector = new System.Windows.Forms.ComboBox();
       this.actionsLayout = new System.Windows.Forms.TableLayoutPanel();
       this.lblTableSelector = new System.Windows.Forms.Label();
       this.panelSearchLeft = new System.Windows.Forms.Panel();
       this.btnSelectAll = new System.Windows.Forms.Button();
       this.metricsGrid = new System.Windows.Forms.DataGridView();
+      this.panelMetricsBorder = new System.Windows.Forms.Panel();
       this.panelLoading = new System.Windows.Forms.Panel();
       this.progressLoading = new System.Windows.Forms.ProgressBar();
       this.lblLoading = new System.Windows.Forms.Label();
@@ -180,9 +182,9 @@ namespace WorkOrderBlender
       this.mainLayoutTable.Size = new System.Drawing.Size(1170, 540);
       this.mainLayoutTable.TabIndex = 12;
 
-      // Column styles: Left panel 30%, Right panel 70%
-      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 30F));
-      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 70F));
+      // Column styles: Left panel fixed 200px, right panel fills remaining space
+      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 300F)); // Left panel fixed width
+      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));   // Right panel fills
 
       // Row styles: Top row fills space, Bottom row 26px for actions
       this.mainLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
@@ -197,7 +199,22 @@ namespace WorkOrderBlender
       this.panelTableSelector.BackColor = System.Drawing.SystemColors.Control;
       this.panelTableSelector.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
 
-      // leftLayoutTable - Top left cell (0,0)
+      // splitMain - resizable container for left/right panels
+      ((System.ComponentModel.ISupportInitialize)(this.splitMain)).BeginInit();
+      this.splitMain.Panel1.SuspendLayout();
+      this.splitMain.Panel2.SuspendLayout();
+      this.splitMain.SuspendLayout();
+      this.splitMain.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.splitMain.Name = "splitMain";
+      this.splitMain.TabIndex = 16;
+      this.splitMain.Orientation = System.Windows.Forms.Orientation.Vertical;
+      this.splitMain.SplitterWidth = 6;
+      this.splitMain.Panel1MinSize = 0;
+      this.splitMain.Panel2MinSize = 0;
+      this.splitMain.SplitterDistance = 0; // safe initial value; real value set at runtime
+      // Splitter distance will be applied at runtime after layout
+
+      // leftLayoutTable - placed into splitMain.Panel1
       this.leftLayoutTable = new System.Windows.Forms.TableLayoutPanel();
       this.leftLayoutTable.Dock = System.Windows.Forms.DockStyle.Fill;
       this.leftLayoutTable.ColumnCount = 1;
@@ -213,7 +230,7 @@ namespace WorkOrderBlender
       this.leftLayoutTable.Controls.Add(this.listWorkOrders, 0, 1);
       this.leftLayoutTable.Controls.Add(this.panelTableSelector, 0, 2);
 
-      // rightLayoutTable - Top right cell (1,0)
+      // rightLayoutTable - placed into splitMain.Panel2
       this.rightLayoutTable = new System.Windows.Forms.TableLayoutPanel();
       this.rightLayoutTable.Dock = System.Windows.Forms.DockStyle.Fill;
       this.rightLayoutTable.ColumnCount = 1;
@@ -221,11 +238,22 @@ namespace WorkOrderBlender
       this.rightLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
       this.rightLayoutTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F)); // Metrics grid fills entire area
 
-      this.rightLayoutTable.Controls.Add(this.metricsGrid, 0, 0);
+      // panelMetricsBorder wraps metricsGrid to show a thick border in edit mode
+      this.panelMetricsBorder.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.panelMetricsBorder.Padding = new System.Windows.Forms.Padding(6);
+      this.panelMetricsBorder.BackColor = System.Drawing.SystemColors.Control;
+      this.panelMetricsBorder.Name = "panelMetricsBorder";
+      this.panelMetricsBorder.TabIndex = 99;
+      this.panelMetricsBorder.Controls.Add(this.metricsGrid);
+      this.rightLayoutTable.Controls.Add(this.panelMetricsBorder, 0, 0);
 
-      // Add layouts to main table
-      this.mainLayoutTable.Controls.Add(this.leftLayoutTable, 0, 0);
-      this.mainLayoutTable.Controls.Add(this.rightLayoutTable, 1, 0);
+      // Add left/right layouts into splitMain
+      this.splitMain.Panel1.Controls.Add(this.leftLayoutTable);
+      this.splitMain.Panel2.Controls.Add(this.rightLayoutTable);
+
+      // Add splitMain to main table top row and span both columns
+      this.mainLayoutTable.Controls.Add(this.splitMain, 0, 0);
+      this.mainLayoutTable.SetColumnSpan(this.splitMain, 2);
       this.mainLayoutTable.Controls.Add(this.actionsLayout, 0, 1);
       this.mainLayoutTable.SetColumnSpan(this.actionsLayout, 2); // Span both columns
 
@@ -300,7 +328,8 @@ namespace WorkOrderBlender
 
       // panelLoading
       //
-      this.panelLoading.BackColor = System.Drawing.SystemColors.Control;
+      // Set a light green background for the loading panel
+      this.panelLoading.BackColor = System.Drawing.Color.FromArgb(20, 155, 20); // light green
       this.panelLoading.Dock = System.Windows.Forms.DockStyle.Fill;
       this.panelLoading.Name = "panelLoading";
       this.panelLoading.TabIndex = 17;
@@ -308,19 +337,18 @@ namespace WorkOrderBlender
 
             // progressLoading
       //
-      this.progressLoading.Dock = System.Windows.Forms.DockStyle.Fill;
+      // this.progressLoading.Dock = System.Windows.Forms.DockStyle.Fill;
       this.progressLoading.Name = "progressLoading";
       this.progressLoading.Style = System.Windows.Forms.ProgressBarStyle.Marquee;
       this.progressLoading.MarqueeAnimationSpeed = 30;
       this.progressLoading.TabIndex = 0;
       this.progressLoading.Margin = new System.Windows.Forms.Padding(20, 1, 100, 1);
 
-      // Create layout for loading panel
+      // Create layout for loading panel (message only)
       var loadingLayout = new System.Windows.Forms.TableLayoutPanel();
       loadingLayout.Dock = System.Windows.Forms.DockStyle.Fill;
-      loadingLayout.ColumnCount = 2;
+      loadingLayout.ColumnCount = 1;
       loadingLayout.RowCount = 1;
-      loadingLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize));
       loadingLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
       loadingLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
       loadingLayout.Margin = new System.Windows.Forms.Padding(10, 2, 10, 2);
@@ -335,7 +363,6 @@ namespace WorkOrderBlender
       this.lblLoading.Margin = new System.Windows.Forms.Padding(0, 0, 10, 0);
 
       loadingLayout.Controls.Add(this.lblLoading, 0, 0);
-      loadingLayout.Controls.Add(this.progressLoading, 1, 0);
       this.panelLoading.Controls.Add(loadingLayout);
 
       // actionsLayout - Bottom row spanning both columns (0,1) and (1,1)
@@ -372,6 +399,10 @@ namespace WorkOrderBlender
       this.Name = "MainForm";
       this.Text = "Work Order Blender";
       this.mainLayoutTable.ResumeLayout(false);
+      this.splitMain.Panel1.ResumeLayout(false);
+      this.splitMain.Panel2.ResumeLayout(false);
+      ((System.ComponentModel.ISupportInitialize)(this.splitMain)).EndInit();
+      this.splitMain.ResumeLayout(false);
       this.actionsLayout.ResumeLayout(false);
       ((System.ComponentModel.ISupportInitialize)(this.metricsGrid)).EndInit();
       this.ResumeLayout(false);
@@ -392,11 +423,13 @@ namespace WorkOrderBlender
     private TableLayoutPanel mainLayoutTable;
     private TableLayoutPanel leftLayoutTable;
     private TableLayoutPanel rightLayoutTable;
+    private SplitContainer splitMain;
     private ComboBox cmbTableSelector;
     private TableLayoutPanel actionsLayout;
     private Label lblTableSelector;
     private Panel panelTableSelector;
     private DataGridView metricsGrid;
+    private Panel panelMetricsBorder;
     private Panel panelSearchLeft;
     private Button btnSelectAll;
     private Panel panelLoading;

@@ -12,6 +12,9 @@ namespace WorkOrderBlender
     public string DefaultOutput { get; set; }
     public string SdfFileName { get; set; }
     public string WorkOrderName { get; set; }
+    public int MainSplitterDistance { get; set; } = 300; // persisted left panel width
+    public int MainWindowWidth { get; set; } = 0;  // 0 = not set
+    public int MainWindowHeight { get; set; } = 0; // 0 = not set
 
     [Serializable]
     public sealed class ColumnWidthEntry
