@@ -452,15 +452,19 @@ for /f ""tokens=1-3 delims=/ "" %%a in (""%date%"") do set TODAY=%%c-%%a-%%b
 for /f ""tokens=1-3 delims=:."" %%a in (""%time%"") do set NOW=%%a%%b%%c
 set ""BACKUP_SUB=%BACKUP_ROOT%\{versionStr}_%TODAY%_%NOW%""
 
-if not exist ""%BACKUP_ROOT%"" mkdir ""%BACKUP_ROOT%""
-if not exist ""%BACKUP_SUB%"" mkdir ""%BACKUP_SUB%""
-
-echo Backing up to: %BACKUP_SUB%
-robocopy ""%CURRENT_DIR%."" ""%BACKUP_SUB%."" /MIR /R:1 /W:1 /XD ""%BACKUP_ROOT%."" > ""%CURRENT_DIR%\wob_backup.log"" 2>&1
-echo Robocopy backup errorlevel: %errorlevel%
+echo Backing up current app to temp snapshot...
+set ""TEMP_BACKUP={tempDir}\backup_snapshot""
+if not exist ""%TEMP_BACKUP%"" mkdir ""%TEMP_BACKUP%""
+robocopy ""%CURRENT_DIR%."" ""%TEMP_BACKUP%."" /MIR /R:1 /W:1 /XJ /XD ""%BACKUP_ROOT%"" ""%BACKUP_SUB%"" ""backup"" > ""%CURRENT_DIR%\wob_backup_stage1.log"" 2>&1
+echo Robocopy temp backup errorlevel: %errorlevel%
 
 echo Installing update...
 robocopy ""{extractPath}."" ""%CURRENT_DIR%."" /MIR /R:1 /W:1 > ""%CURRENT_DIR%\wob_install.log"" 2>&1
+
+if not exist ""%BACKUP_ROOT%"" mkdir ""%BACKUP_ROOT%""
+if not exist ""%BACKUP_SUB%"" mkdir ""%BACKUP_SUB%""
+echo Saving backup snapshot into application backup folder...
+robocopy ""%TEMP_BACKUP%."" ""%BACKUP_SUB%."" /E /R:1 /W:1 /XJ /XD ""backup"" > ""%CURRENT_DIR%\wob_backup_stage2.log"" 2>&1
 
 echo Cleaning up...
 rmdir /s /q ""{tempDir}""
