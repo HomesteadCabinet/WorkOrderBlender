@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using AutoUpdaterDotNET;
 
@@ -22,6 +25,9 @@ namespace WorkOrderBlender
     [STAThread]
     private static void Main()
     {
+      // Ensure SQL CE native binaries and managed assemblies can be resolved from bundled lib/ folders
+      try { ConfigureSqlCeProbing(); } catch { }
+
       Application.EnableVisualStyles();
       Application.SetCompatibleTextRenderingDefault(false);
       Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -67,6 +73,74 @@ namespace WorkOrderBlender
         Log("Main crash", ex);
         MessageBox.Show("Startup error: " + ex.Message, "WorkOrderBlender", MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
+    }
+
+    // Configure probing for local SQL CE native and managed binaries to support portable (no-install) packaging
+    private static void ConfigureSqlCeProbing()
+    {
+      try
+      {
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        var arch = Environment.Is64BitProcess ? "amd64" : "x86";
+        var nativeDir = Path.Combine(baseDir, "lib", arch);
+        var managedDir = Path.Combine(baseDir, "lib");
+
+        // Add native directory to DLL search path and process PATH
+        TrySetDllDirectory(nativeDir);
+        TryPrependToProcessPath(nativeDir);
+
+        // Resolve System.Data.SqlServerCe.dll from local lib folder if not found
+        AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
+        {
+          try
+          {
+            if (e?.Name == null) return null;
+            if (e.Name.StartsWith("System.Data.SqlServerCe", StringComparison.OrdinalIgnoreCase))
+            {
+              var path = Path.Combine(managedDir, "System.Data.SqlServerCe.dll");
+              if (File.Exists(path)) return Assembly.LoadFrom(path);
+            }
+            if (e.Name.StartsWith("AutoUpdater.NET", StringComparison.OrdinalIgnoreCase))
+            {
+              var path = Path.Combine(managedDir, "AutoUpdater.NET.dll");
+              if (File.Exists(path)) return Assembly.LoadFrom(path);
+            }
+          }
+          catch { }
+          return null;
+        };
+      }
+      catch { }
+    }
+
+    [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool SetDllDirectory(string lpPathName);
+
+    private static void TrySetDllDirectory(string path)
+    {
+      try
+      {
+        if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path))
+        {
+          SetDllDirectory(path);
+        }
+      }
+      catch { }
+    }
+
+    private static void TryPrependToProcessPath(string path)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
+        var existing = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        var parts = existing.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
+        if (!parts.Any(p => string.Equals(p.Trim(), path, StringComparison.OrdinalIgnoreCase)))
+        {
+          Environment.SetEnvironmentVariable("PATH", path + ";" + existing, EnvironmentVariableTarget.Process);
+        }
+      }
+      catch { }
     }
 
         private static void ConfigureAutoUpdater()

@@ -1173,8 +1173,19 @@ namespace WorkOrderBlender
         metricsGrid.MouseDown -= MetricsGrid_MouseDown;
         metricsGrid.MouseDown += MetricsGrid_MouseDown;
 
-        metricsGrid.CellDoubleClick -= MetricsGrid_CellDoubleClick;
-        metricsGrid.CellDoubleClick += MetricsGrid_CellDoubleClick;
+        // Use DoubleClick on the grid (not just CellDoubleClick) so header/blank areas also toggle
+        metricsGrid.DoubleClick -= MetricsGrid_DoubleClick;
+        metricsGrid.DoubleClick += MetricsGrid_DoubleClick;
+        // Also hook the parent panel so double-clicking padding/border toggles too
+        try
+        {
+          if (panelMetricsBorder != null)
+          {
+            panelMetricsBorder.DoubleClick -= MetricsGrid_DoubleClick;
+            panelMetricsBorder.DoubleClick += MetricsGrid_DoubleClick;
+          }
+        }
+        catch { }
         metricsGrid.KeyDown -= MetricsGrid_KeyDown;
         metricsGrid.KeyDown += MetricsGrid_KeyDown;
         // Virtual column action handling
@@ -1898,11 +1909,11 @@ namespace WorkOrderBlender
       return name;
     }
 
-    private void MetricsGrid_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
+    private void MetricsGrid_DoubleClick(object sender, EventArgs e)
     {
       try
       {
-        // Toggle edit mode
+        // Toggle edit mode regardless of where the double-click occurred within the grid/panel
         isEditModeMainGrid = !isEditModeMainGrid;
         ApplyMainGridEditState();
         Program.Log($"MainForm: Edit mode toggled to {isEditModeMainGrid}");
