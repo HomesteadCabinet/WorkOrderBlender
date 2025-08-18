@@ -74,6 +74,10 @@ namespace WorkOrderBlender
     [XmlArrayItem("VirtualColumnDef")]
     public List<VirtualColumnDef> VirtualColumns { get; set; } = new List<VirtualColumnDef>();
 
+    // Update management
+    public string SkippedVersion { get; set; } = string.Empty;
+    public DateTime LastUpdateCheck { get; set; } = DateTime.MinValue;
+
     // Seed defaults when loading config if none present
     private void EnsureDefaultMetricsLayout()
     {
@@ -530,14 +534,33 @@ namespace WorkOrderBlender
     }
   }
 
-  // Method to clear the cached instance (useful for testing or when config changes externally)
-  public static void ClearCache()
-  {
-    lock (cacheLock)
+      // Method to clear the cached instance (useful for testing or when config changes externally)
+    public static void ClearCache()
     {
-      cachedInstance = null;
+      lock (cacheLock)
+      {
+        cachedInstance = null;
+      }
     }
-  }
+
+    // Update management methods
+    public void SetSkippedVersion(string version)
+    {
+      SkippedVersion = version ?? string.Empty;
+      LastUpdateCheck = DateTime.Now;
+    }
+
+    public bool IsVersionSkipped(string version)
+    {
+      return !string.IsNullOrEmpty(SkippedVersion) &&
+             string.Equals(SkippedVersion, version, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public bool ShouldCheckForUpdates()
+    {
+      // Check for updates at most once per day
+      return (DateTime.Now - LastUpdateCheck).TotalDays >= 1.0;
+    }
 
     public void Save()
     {

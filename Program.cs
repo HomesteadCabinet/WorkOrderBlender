@@ -58,7 +58,7 @@ namespace WorkOrderBlender
         }
       };
 
-            try
+      try
       {
         // Configure auto-updater
         ConfigureAutoUpdater();
@@ -143,7 +143,7 @@ namespace WorkOrderBlender
       catch { }
     }
 
-        private static void ConfigureAutoUpdater()
+    private static void ConfigureAutoUpdater()
     {
       // Configure AutoUpdater.NET
       AutoUpdater.UpdateMode = Mode.ForcedDownload;
@@ -164,58 +164,57 @@ namespace WorkOrderBlender
       AutoUpdater.ReportErrors = true;
     }
 
-        public static void CheckForUpdates(bool silent = false)
+    public static async void CheckForUpdates(bool silent = false)
     {
       try
       {
-        // URL to your update XML file on GitHub
-        // TODO: Uncomment when HomesteadCabinet/WorkOrderBlender repository is set up
-        string updateUrl = "https://raw.githubusercontent.com/HomesteadCabinet/WorkOrderBlender/main/update.xml";
-
-        // TEMPORARY: Using test URL to verify auto-updater functionality
-        // string updateUrl = "https://raw.githubusercontent.com/ravibpatel/AutoUpdater.NET/master/AutoUpdaterTest/update.xml";
-
-        // Configure AutoUpdater for this check
-        AutoUpdater.Synchronous = true; // Make it synchronous for better error handling
-
-        // Store the silent flag for use in event handlers
-        bool isSilentCheck = silent;
-
-        // Set up event handler for update check results
-        AutoUpdater.CheckForUpdateEvent += (args) =>
+        // Check if we should check for updates (rate limiting)
+        var config = UserConfig.LoadOrDefault();
+        if (!config.ShouldCheckForUpdates())
         {
-          try
-          {
-            if (args.IsUpdateAvailable)
-            {
-              // Update available - show the update dialog
-              AutoUpdater.ShowUpdateForm(args);
-            }
-            else if (!isSilentCheck)
-            {
-              // Manual check and no updates - inform user
-              MessageBox.Show("You are using the latest version.", "No Updates Available",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            // If silent and no updates, do nothing
-          }
-          catch (Exception ex)
-          {
-            Log("Error in CheckForUpdateEvent handler", ex);
-            if (!isSilentCheck)
-            {
-              MessageBox.Show("Error checking for updates: " + ex.Message, "Update Check Error",
-                MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-          }
-        };
+          Log("Skipping update check - checked recently");
+          return;
+        }
 
-        Log($"Checking for updates from: {updateUrl}");
-        AutoUpdater.Start(updateUrl);
+        Log("Checking for updates using portable update manager...");
+
+        // Use the new portable update manager
+        var updateInfo = await PortableUpdateManager.CheckForUpdatesAsync();
+
+        if (updateInfo?.IsUpdateAvailable == true)
+        {
+          // Check if this version was skipped
+          if (config.IsVersionSkipped(updateInfo.AvailableVersion))
+          {
+            Log($"Update {updateInfo.AvailableVersion} was skipped by user");
+            return;
+          }
+
+          // Show the portable update dialog
+          if (!silent)
+          {
+            Application.OpenForms[0]?.Invoke(new Action(() =>
+            {
+              using (var updateDialog = new PortableUpdateDialog(updateInfo))
+              {
+                updateDialog.ShowDialog();
+              }
+            }));
+          }
+        }
+        else if (!silent)
+        {
+          MessageBox.Show("You are using the latest version.", "No Updates Available",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        // Update last check time
+        config.LastUpdateCheck = DateTime.Now;
+        config.Save();
       }
       catch (Exception ex)
       {
-        Log("Auto-update check failed", ex);
+        Log("Portable update check failed", ex);
         if (!silent)
         {
           MessageBox.Show("Failed to check for updates: " + ex.Message + "\n\nPlease check your internet connection and try again.", "Update Check",

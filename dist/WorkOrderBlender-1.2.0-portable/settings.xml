@@ -1,9 +1,12 @@
 <?xml version="1.0"?>
 <UserConfig xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <DefaultRoot>M:\Homestead_Library\Work Orders</DefaultRoot>
+  <DefaultOutput>M:\Homestead_Library\Work Orders</DefaultOutput>
+  <SdfFileName>MicrovellumWorkOrder.sdf</SdfFileName>
+  <WorkOrderName />
   <MainSplitterDistance>300</MainSplitterDistance>
-  <MainWindowWidth>1216</MainWindowWidth>
-  <MainWindowHeight>639</MainWindowHeight>
+  <MainWindowWidth>0</MainWindowWidth>
+  <MainWindowHeight>0</MainWindowHeight>
   <ColumnWidths>
     <ColumnWidthEntry>
       <TableName>Products</TableName>
@@ -76,24 +79,21 @@
       <TableName>Products</TableName>
       <Columns>
         <string>_SourceFile</string>
+        <string>RoomName</string>
+        <string>Name</string>
+        <string>ProductSpecGroupName</string>
+        <string>Comments</string>
+        <string>Quantity</string>
+        <string>ItemNumber</string>
       </Columns>
     </ColumnOrderEntry>
     <ColumnOrderEntry>
       <TableName>Parts</TableName>
       <Columns>
         <string>_SourceFile</string>
-      </Columns>
-    </ColumnOrderEntry>
-    <ColumnOrderEntry>
-      <TableName>Subassemblies</TableName>
-      <Columns>
-        <string>_SourceFile</string>
-      </Columns>
-    </ColumnOrderEntry>
-    <ColumnOrderEntry>
-      <TableName>Sheets</TableName>
-      <Columns>
-        <string>_SourceFile</string>
+        <string>Code</string>
+        <string>Name</string>
+        <string>MaterialName</string>
       </Columns>
     </ColumnOrderEntry>
   </ColumnOrders>
@@ -129,5 +129,5 @@
     </VirtualColumnDef>
   </VirtualColumns>
   <SkippedVersion />
-  <LastUpdateCheck>0001-01-01T00:00:00</LastUpdateCheck>
+  <LastUpdateCheck>2025-08-17T22:09:30.4447339-07:00</LastUpdateCheck>
 </UserConfig>

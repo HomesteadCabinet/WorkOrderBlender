@@ -728,6 +728,25 @@ namespace WorkOrderBlender
       }
     }
 
+    private void CheckForUpdates_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        // Force update check regardless of rate limiting
+        var config = UserConfig.LoadOrDefault();
+        config.LastUpdateCheck = DateTime.MinValue; // Reset to allow immediate check
+        config.Save();
+
+        Program.CheckForUpdates(silent: false);
+      }
+      catch (Exception ex)
+      {
+        Program.Log("CheckForUpdates_Click error", ex);
+        MessageBox.Show("Failed to check for updates: " + ex.Message, "Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     private void txtSearch_TextChanged(object sender, EventArgs e)
     {
       // debounce to avoid filtering on every keystroke for thousands of items
