@@ -4,12 +4,10 @@ bin/Debug/net48/
 
 installer/WorkOrderBlender.wixpdb
 
-dist/WorkOrderBlender-1.2.0-portable/WorkOrderBlender.log
-
-dist/WorkOrderBlender-1.2.0-portable/WorkOrderBlender.pdb
+# Ignore everything in dist directory except .zip files
+dist/*
+!dist/*.zip
 
 bin/Release/
-
 bin/x64/
-
 obj/

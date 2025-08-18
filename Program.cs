@@ -72,7 +72,7 @@ namespace WorkOrderBlender
           Task.Run(async () =>
           {
             await Task.Delay(4000);
-            try { CheckForUpdates(silent: false); } catch { }
+            try { CheckForUpdates(silent: false, isStartupCheck: true); } catch { }
           });
         };
 
@@ -181,7 +181,7 @@ namespace WorkOrderBlender
       AutoUpdater.ReportErrors = true;
     }
 
-    public static async void CheckForUpdates(bool silent = false)
+    public static async void CheckForUpdates(bool silent = false, bool isStartupCheck = false)
     {
       try
       {
@@ -214,8 +214,9 @@ namespace WorkOrderBlender
             }));
           }
         }
-        else if (!silent)
+        else if (!silent && !isStartupCheck)
         {
+          // Only show "no updates available" message for manual checks, not startup checks
           MessageBox.Show("You are using the latest version.", "No Updates Available",
             MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

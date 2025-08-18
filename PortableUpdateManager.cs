@@ -368,12 +368,13 @@ namespace WorkOrderBlender
                     File.WriteAllText(scriptPath, updateScript);
 
                     // Launch update script and exit
-                    Process.Start(new ProcessStartInfo
+                    var psi = new ProcessStartInfo
                     {
                         FileName = scriptPath,
-                        UseShellExecute = true,
-                        Verb = "runas" // Run as admin if needed
-                    });
+                        UseShellExecute = true
+                        // Do not elevate; elevation can break access to mapped/UNC paths
+                    };
+                    Process.Start(psi);
 
                     return true;
                 }
@@ -434,7 +435,7 @@ namespace WorkOrderBlender
         {
             var currentDir = AppDomain.CurrentDomain.BaseDirectory;
             var exeName = "WorkOrderBlender.exe";
-
+            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0,0)).ToString();
             return $@"@echo off
 setlocal EnableExtensions
 
@@ -442,30 +443,31 @@ echo Updating WorkOrderBlender...
 echo.
 
 REM Wait for application to close
-timeout /t 2 /nobreak >nul
+timeout /t 3 /nobreak >nul
 
-REM Backup full current installation into versioned subfolder
-set CURRENT_DIR=""{currentDir}""
-set BACKUP_ROOT=""{currentDir}\backup""
+REM Prepare paths
+set ""CURRENT_DIR={currentDir}""
+set ""BACKUP_ROOT={currentDir}\backup""
 for /f ""tokens=1-3 delims=/ "" %%a in (""%date%"") do set TODAY=%%c-%%a-%%b
 for /f ""tokens=1-3 delims=:."" %%a in (""%time%"") do set NOW=%%a%%b%%c
-set BACKUP_SUB=""%BACKUP_ROOT%\{GetCurrentVersion()?.ToString() ?? "unknown"}_%TODAY%_%NOW%""
-if not exist %BACKUP_ROOT% mkdir %BACKUP_ROOT%
-if not exist %BACKUP_SUB% mkdir %BACKUP_SUB%
-REM Exclude backup folder itself to avoid recursion
-robocopy %CURRENT_DIR% %BACKUP_SUB% /MIR /XD %BACKUP_ROOT% >nul 2>&1
+set ""BACKUP_SUB=%BACKUP_ROOT%\{versionStr}_%TODAY%_%NOW%""
 
-REM Copy new files
+if not exist ""%BACKUP_ROOT%"" mkdir ""%BACKUP_ROOT%""
+if not exist ""%BACKUP_SUB%"" mkdir ""%BACKUP_SUB%""
+
+echo Backing up to: %BACKUP_SUB%
+robocopy ""%CURRENT_DIR%."" ""%BACKUP_SUB%."" /MIR /R:1 /W:1 /XD ""%BACKUP_ROOT%."" > ""%CURRENT_DIR%\wob_backup.log"" 2>&1
+echo Robocopy backup errorlevel: %errorlevel%
+
 echo Installing update...
-xcopy ""{extractPath}\*"" ""{currentDir}"" /E /I /Y >nul 2>&1
+robocopy ""{extractPath}."" ""%CURRENT_DIR%."" /MIR /R:1 /W:1 > ""%CURRENT_DIR%\wob_install.log"" 2>&1
 
-REM Clean up
 echo Cleaning up...
 rmdir /s /q ""{tempDir}""
 
 echo Update complete!
 echo Starting WorkOrderBlender...
-start "" ""{currentDir}\{exeName}""
+start "" ""%CURRENT_DIR%\{exeName}""
 endlocal
 exit
 ";
