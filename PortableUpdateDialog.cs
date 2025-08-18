@@ -87,43 +87,51 @@ namespace WorkOrderBlender
             };
 
             // Buttons panel
-            var buttonPanel = new Panel
+            var buttonPanel = new TableLayoutPanel
             {
                 Dock = DockStyle.Bottom,
                 Height = 60,
-                Padding = new Padding(10)
+                Padding = new Padding(10),
+                ColumnCount = 3,
+                RowCount = 1,
+                AutoSize = false
             };
+            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
+            buttonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.33f));
 
             var btnUpdate = new Button
             {
                 Text = "Update Now",
-                Size = new Size(100, 35),
+                Size = new Size(120, 35),
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 BackColor = Color.LightGreen,
                 FlatStyle = FlatStyle.Flat,
-                Location = new Point(buttonPanel.Width - 220, 12)
+                Anchor = AnchorStyles.Right
             };
             btnUpdate.Click += async (s, e) => await StartUpdate(progressBar, lblStatus, btnUpdate);
 
             var btnLater = new Button
             {
                 Text = "Remind Me Later",
-                Size = new Size(120, 35),
+                Size = new Size(140, 35),
                 Font = new Font("Segoe UI", 9),
-                Location = new Point(buttonPanel.Width - 110, 12)
+                Anchor = AnchorStyles.None
             };
             btnLater.Click += (s, e) => this.Close();
 
             var btnSkip = new Button
             {
                 Text = "Skip This Version",
-                Size = new Size(120, 35),
+                Size = new Size(140, 35),
                 Font = new Font("Segoe UI", 9),
-                Location = new Point(10, 12)
+                Anchor = AnchorStyles.Left
             };
             btnSkip.Click += (s, e) => SkipVersion();
 
-            buttonPanel.Controls.AddRange(new Control[] { btnUpdate, btnLater, btnSkip });
+            buttonPanel.Controls.Add(btnSkip, 0, 0);
+            buttonPanel.Controls.Add(btnLater, 1, 0);
+            buttonPanel.Controls.Add(btnUpdate, 2, 0);
 
             // Add controls to form
             this.Controls.AddRange(new Control[]

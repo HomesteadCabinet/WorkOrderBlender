@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using AutoUpdaterDotNET;
+using System.Threading.Tasks;
 
 namespace WorkOrderBlender
 {
@@ -63,10 +64,19 @@ namespace WorkOrderBlender
         // Configure auto-updater
         ConfigureAutoUpdater();
 
-        // Check for updates on startup (optional)
-        CheckForUpdates(silent: true);
+        // Create main form and defer update check until after UI is shown and idle
+        var mainForm = new MainForm();
+        mainForm.Shown += (s, e) =>
+        {
+          // Run after a short delay on a background thread to avoid UI stalls
+          Task.Run(async () =>
+          {
+            await Task.Delay(4000);
+            try { CheckForUpdates(silent: false); } catch { }
+          });
+        };
 
-        Application.Run(new MainForm());
+        Application.Run(mainForm);
       }
       catch (Exception ex)
       {
@@ -175,13 +185,8 @@ namespace WorkOrderBlender
     {
       try
       {
-        // Check if we should check for updates (rate limiting)
+        // Always check on startup (no rate limiting)
         var config = UserConfig.LoadOrDefault();
-        if (!config.ShouldCheckForUpdates())
-        {
-          Log("Skipping update check - checked recently");
-          return;
-        }
 
         Log("Checking for updates using portable update manager...");
 
