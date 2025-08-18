@@ -1,11 +1,15 @@
 
 bin/Debug/net48/
-obj/
 
-bin/
 
 installer/WorkOrderBlender.wixpdb
 
 dist/WorkOrderBlender-1.2.0-portable/WorkOrderBlender.log
 
 dist/WorkOrderBlender-1.2.0-portable/WorkOrderBlender.pdb
+
+bin/Release/
+
+bin/x64/
+
+obj/

@@ -89,6 +89,13 @@ namespace WorkOrderBlender
         TrySetDllDirectory(nativeDir);
         TryPrependToProcessPath(nativeDir);
 
+        // Prepend bundled Git paths if present for portable updates
+        var gitBase = Path.Combine(baseDir, "lib", "git");
+        TryPrependToProcessPath(Path.Combine(gitBase, "cmd"));
+        TryPrependToProcessPath(Path.Combine(gitBase, "bin"));
+        TryPrependToProcessPath(Path.Combine(gitBase, "usr", "bin"));
+        TryPrependToProcessPath(Path.Combine(gitBase, "mingw64", "bin"));
+
         // Resolve System.Data.SqlServerCe.dll from local lib folder if not found
         AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
         {
