@@ -89,9 +89,32 @@ namespace WorkOrderBlender
                     var deployKeyPath = DeployKeyManager.GetDeployKeyPath();
                     var sshConfigPath = DeployKeyManager.GetSshConfigPath();
 
+                    // Optional: log git/ssh versions for diagnostics
+                    try
+                    {
+                        var gitVersion = await RunGitCommandAsync(tempDir, "--version");
+                        Program.Log($"PortableUpdateManager: git --version => EC={gitVersion.ExitCode}, OUT='{gitVersion.Output}', ERR='{gitVersion.Error}'");
+                        try
+                        {
+                            var sshExePath = GetBundledSshPath();
+                            var sshInfo = new ProcessStartInfo { FileName = sshExePath, Arguments = "-V", UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true };
+                            using (var sshProc = new Process { StartInfo = sshInfo })
+                            {
+                                sshProc.Start();
+                                var sshOut = sshProc.StandardOutput.ReadToEnd();
+                                var sshErr = sshProc.StandardError.ReadToEnd();
+                                sshProc.WaitForExit();
+                                Program.Log($"PortableUpdateManager: ssh -V => EC={sshProc.ExitCode}, OUT='{sshOut}', ERR='{sshErr}'");
+                            }
+                        }
+                        catch { }
+                    }
+                    catch { }
+
                     // Clone the repository to get the latest update.xml
+                    // Use github.com directly and rely on -i key in GIT_SSH_COMMAND
                     var cloneResult = await RunGitCommandAsync(tempDir, "clone", "--depth", "1",
-                        "git@github.com-workorderblender:HomesteadCabinet/WorkOrderBlender.git", ".");
+                        "git@github.com:HomesteadCabinet/WorkOrderBlender.git", ".");
 
                     if (cloneResult.ExitCode != 0)
                     {
@@ -192,7 +215,7 @@ namespace WorkOrderBlender
             {
                 var startInfo = new ProcessStartInfo
                 {
-                    FileName = "git",
+                    FileName = GetGitExecutablePath(),
                     Arguments = string.Join(" ", args),
                     WorkingDirectory = workingDir,
                     UseShellExecute = false,
@@ -201,17 +224,28 @@ namespace WorkOrderBlender
                     CreateNoWindow = true
                 };
 
-                // Add environment variables
+                // Add environment variables for portable git/ssh
                 var deployKeyPath = DeployKeyManager.GetDeployKeyPath();
                 var sshConfigPath = DeployKeyManager.GetSshConfigPath();
-                foreach (var envVar in new Dictionary<string, string>
+                var sshExe = GetBundledSshPath();
+                var templatesDir = GetGitTemplatesPath();
+                var portableHome = EnsurePortableHome();
+
+                startInfo.EnvironmentVariables["GIT_SSH_COMMAND"] =
+                    $"\"{sshExe}\" -i \"{deployKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes";
+                startInfo.EnvironmentVariables["GIT_SSH_VARIANT"] = "ssh";
+                if (!string.IsNullOrEmpty(templatesDir))
                 {
-                    ["GIT_SSH_COMMAND"] = $"ssh -i \"{deployKeyPath}\" -F \"{sshConfigPath}\" -o StrictHostKeyChecking=no",
-                    ["GIT_SSH_VARIANT"] = "ssh"
-                })
-                {
-                    startInfo.EnvironmentVariables[envVar.Key] = envVar.Value;
+                    startInfo.EnvironmentVariables["GIT_TEMPLATE_DIR"] = templatesDir;
                 }
+                if (!string.IsNullOrEmpty(portableHome))
+                {
+                    startInfo.EnvironmentVariables["HOME"] = portableHome;
+                }
+                startInfo.EnvironmentVariables["GIT_CONFIG_NOSYSTEM"] = "1";
+                startInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
+                // Optional tracing; logs are verbose but useful during issues
+                startInfo.EnvironmentVariables["GIT_TRACE"] = "1";
 
                 using (var process = new Process { StartInfo = startInfo })
                 {
@@ -432,7 +466,7 @@ exit
             {
                 var startInfo = new ProcessStartInfo
                 {
-                    FileName = "git",
+                    FileName = GetGitExecutablePath(),
                     Arguments = "--version",
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
@@ -453,6 +487,122 @@ exit
                 Program.Log("PortableUpdateManager: Error checking Git availability", ex);
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Returns the full path to the git executable, preferring system git if available
+        /// </summary>
+        private static string GetGitExecutablePath()
+        {
+            try
+            {
+                // First try system Git (more reliable)
+                var systemGit = @"C:\Program Files\Git\cmd\git.exe";
+                if (File.Exists(systemGit)) return systemGit;
+
+                // Then try bundled Git
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var gitBase = Path.Combine(baseDir, "lib", "git");
+                var candidates = new[]
+                {
+                    Path.Combine(gitBase, "cmd", "git.exe"),
+                    Path.Combine(gitBase, "bin", "git.exe"),
+                    Path.Combine(gitBase, "mingw64", "bin", "git.exe"),
+                    "git" // fallback to PATH
+                };
+                foreach (var cand in candidates)
+                {
+                    try
+                    {
+                        if (cand.IndexOf('\\') >= 0 || cand.IndexOf('/') >= 0)
+                        {
+                            if (File.Exists(cand)) return cand;
+                        }
+                        else
+                        {
+                            return cand; // will resolve via PATH
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return "git";
+        }
+
+        /// <summary>
+        /// Returns the full path to an ssh executable, preferring system ssh if available
+        /// </summary>
+        private static string GetBundledSshPath()
+        {
+            try
+            {
+                // First try system SSH (more reliable)
+                var systemSsh = @"C:\Program Files\Git\usr\bin\ssh.exe";
+                if (File.Exists(systemSsh)) return systemSsh;
+
+                // Then try bundled SSH
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var gitBase = Path.Combine(baseDir, "lib", "git");
+                var candidates = new[]
+                {
+                    Path.Combine(gitBase, "usr", "bin", "ssh.exe"),
+                    Path.Combine(gitBase, "bin", "ssh.exe"),
+                    Path.Combine(gitBase, "mingw64", "bin", "ssh.exe"),
+                    "ssh" // fallback to PATH
+                };
+                foreach (var cand in candidates)
+                {
+                    try
+                    {
+                        if (cand.IndexOf('\\') >= 0 || cand.IndexOf('/') >= 0)
+                        {
+                            if (File.Exists(cand)) return cand;
+                        }
+                        else
+                        {
+                            return cand; // will resolve via PATH
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return "ssh";
+        }
+
+        /// <summary>
+        /// Returns the bundled git templates directory if present
+        /// </summary>
+        private static string GetGitTemplatesPath()
+        {
+            try
+            {
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var gitBase = Path.Combine(baseDir, "lib", "git");
+                var candidate = Path.Combine(gitBase, "mingw64", "share", "git-core", "templates");
+                if (Directory.Exists(candidate)) return candidate;
+            }
+            catch { }
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Ensures a portable HOME directory exists for git to use
+        /// </summary>
+        private static string EnsurePortableHome()
+        {
+            try
+            {
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var home = Path.Combine(baseDir, ".home");
+                if (!Directory.Exists(home)) Directory.CreateDirectory(home);
+                var sshDir = Path.Combine(home, ".ssh");
+                if (!Directory.Exists(sshDir)) Directory.CreateDirectory(sshDir);
+                return home;
+            }
+            catch { }
+            return string.Empty;
         }
 
         /// <summary>

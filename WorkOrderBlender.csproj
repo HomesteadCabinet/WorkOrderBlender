@@ -85,5 +85,15 @@
     <Content Include="lib\amd64\**">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+            <!-- Bundle portable Git if present -->
+        <Content Include="lib\git\**">
+          <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+          <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
+        <!-- Exclude problematic Git files from compilation -->
+        <Compile Remove="lib\git\**\*.cs" />
+        <Compile Remove="lib\git\**\*.cpp" />
+        <Compile Remove="lib\git\**\*.c" />
+        <Compile Remove="lib\git\**\*.h" />
   </ItemGroup>
 </Project>
