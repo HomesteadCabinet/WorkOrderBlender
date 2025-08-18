@@ -79,72 +79,40 @@ namespace WorkOrderBlender
                     return null;
                 }
 
-                // Use Git to fetch the latest update.xml from the repository
+                // Query the repo for update.xml without cloning the tree
+                // Option 1: Use raw.githubusercontent.com via HTTP if accessible
+                var httpResult = await CheckForUpdatesWithHttpAsync();
+                if (httpResult != null)
+                {
+                    return httpResult;
+                }
+
+                // Option 2: Fall back to a shallow fetch of only update.xml via sparse-checkout (still minimal)
                 var tempDir = Path.Combine(Path.GetTempPath(), "WOB_Update_Check_" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(tempDir);
-
                 try
                 {
-                    // Set up environment for Git operations
-                    var deployKeyPath = DeployKeyManager.GetDeployKeyPath();
-                    var sshConfigPath = DeployKeyManager.GetSshConfigPath();
+                    var init = await RunGitCommandAsync(tempDir, "init");
+                    if (init.ExitCode != 0) return null;
+                    var remote = await RunGitCommandAsync(tempDir, "remote", "add", "origin", "git@github.com:HomesteadCabinet/WorkOrderBlender.git");
+                    if (remote.ExitCode != 0) return null;
+                    var configSparse = await RunGitCommandAsync(tempDir, "config", "core.sparseCheckout", "true");
+                    if (configSparse.ExitCode != 0) return null;
+                    // write sparse-checkout to include only update.xml
+                    File.WriteAllText(Path.Combine(tempDir, ".git", "info", "sparse-checkout"), "update.xml\n");
+                    var fetch = await RunGitCommandAsync(tempDir, "fetch", "--depth", "1", "origin", "main");
+                    if (fetch.ExitCode != 0) return null;
+                    var checkout = await RunGitCommandAsync(tempDir, "checkout", "FETCH_HEAD");
+                    if (checkout.ExitCode != 0) return null;
 
-                    // Optional: log git/ssh versions for diagnostics
-                    try
-                    {
-                        var gitVersion = await RunGitCommandAsync(tempDir, "--version");
-                        Program.Log($"PortableUpdateManager: git --version => EC={gitVersion.ExitCode}, OUT='{gitVersion.Output}', ERR='{gitVersion.Error}'");
-                        try
-                        {
-                            var sshExePath = GetBundledSshPath();
-                            var sshInfo = new ProcessStartInfo { FileName = sshExePath, Arguments = "-V", UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true };
-                            using (var sshProc = new Process { StartInfo = sshInfo })
-                            {
-                                sshProc.Start();
-                                var sshOut = sshProc.StandardOutput.ReadToEnd();
-                                var sshErr = sshProc.StandardError.ReadToEnd();
-                                sshProc.WaitForExit();
-                                Program.Log($"PortableUpdateManager: ssh -V => EC={sshProc.ExitCode}, OUT='{sshOut}', ERR='{sshErr}'");
-                            }
-                        }
-                        catch { }
-                    }
-                    catch { }
-
-                    // Clone the repository to get the latest update.xml
-                    // Use github.com directly and rely on -i key in GIT_SSH_COMMAND
-                    var cloneResult = await RunGitCommandAsync(tempDir, "clone", "--depth", "1",
-                        "git@github.com:HomesteadCabinet/WorkOrderBlender.git", ".");
-
-                    if (cloneResult.ExitCode != 0)
-                    {
-                        Program.Log($"PortableUpdateManager: Git clone failed: {cloneResult.Output}");
-                        if (!string.IsNullOrEmpty(cloneResult.Error))
-                        {
-                            Program.Log($"PortableUpdateManager: Git error: {cloneResult.Error}");
-                        }
-                        return null;
-                    }
-
-                    // Read the update.xml file
                     var updateXmlPath = Path.Combine(tempDir, "update.xml");
-                    if (!File.Exists(updateXmlPath))
-                    {
-                        Program.Log("PortableUpdateManager: update.xml not found in repository");
-                        return null;
-                    }
-
+                    if (!File.Exists(updateXmlPath)) return null;
                     var updateXml = XDocument.Load(updateXmlPath);
                     return ParseUpdateInfo(updateXml.Root);
                 }
                 finally
                 {
-                    // Clean up temp directory
-                    try
-                    {
-                        Directory.Delete(tempDir, true);
-                    }
-                    catch { }
+                    try { Directory.Delete(tempDir, true); } catch { }
                 }
             }
             catch (Exception ex)
@@ -226,13 +194,50 @@ namespace WorkOrderBlender
 
                 // Add environment variables for portable git/ssh
                 var deployKeyPath = DeployKeyManager.GetDeployKeyPath();
-                var sshConfigPath = DeployKeyManager.GetSshConfigPath();
                 var sshExe = GetBundledSshPath();
                 var templatesDir = GetGitTemplatesPath();
                 var portableHome = EnsurePortableHome();
 
-                startInfo.EnvironmentVariables["GIT_SSH_COMMAND"] =
-                    $"\"{sshExe}\" -i \"{deployKeyPath}\" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes";
+                // Ensure portable ~/.ssh/config exists so we can use GIT_SSH (no bash dependency)
+                try
+                {
+                    if (!string.IsNullOrEmpty(portableHome))
+                    {
+                        var sshDir = Path.Combine(portableHome, ".ssh");
+                        if (!Directory.Exists(sshDir)) Directory.CreateDirectory(sshDir);
+                        var portableConfigPath = Path.Combine(sshDir, "config");
+                        var desiredConfig = string.Join(Environment.NewLine, new []
+                        {
+                            "Host github.com",
+                            "    HostName github.com",
+                            "    User git",
+                            $"    IdentityFile \"{deployKeyPath}\"",
+                            "    IdentitiesOnly yes",
+                            "    StrictHostKeyChecking no",
+                            "    UserKnownHostsFile /dev/null"
+                        });
+                        // Write if missing or content differs
+                        bool writeConfig = true;
+                        try
+                        {
+                            if (File.Exists(portableConfigPath))
+                            {
+                                var existing = File.ReadAllText(portableConfigPath);
+                                writeConfig = !string.Equals(existing.Replace("\r\n","\n"), desiredConfig.Replace("\r\n","\n"), StringComparison.Ordinal);
+                            }
+                        }
+                        catch { }
+                        if (writeConfig)
+                        {
+                            File.WriteAllText(portableConfigPath, desiredConfig);
+                        }
+                    }
+                }
+                catch { }
+
+                // Prefer GIT_SSH (no shell invocation) to avoid requiring bash.exe
+                startInfo.EnvironmentVariables["GIT_SSH"] = sshExe;
+                startInfo.EnvironmentVariables.Remove("GIT_SSH_COMMAND");
                 startInfo.EnvironmentVariables["GIT_SSH_VARIANT"] = "ssh";
                 if (!string.IsNullOrEmpty(templatesDir))
                 {
@@ -431,16 +436,24 @@ namespace WorkOrderBlender
             var exeName = "WorkOrderBlender.exe";
 
             return $@"@echo off
+setlocal EnableExtensions
+
 echo Updating WorkOrderBlender...
 echo.
 
 REM Wait for application to close
 timeout /t 2 /nobreak >nul
 
-REM Backup current installation
-echo Creating backup...
-if not exist ""{currentDir}\backup"" mkdir ""{currentDir}\backup""
-xcopy ""{currentDir}\*"" ""{currentDir}\backup\"" /E /I /Y >nul 2>&1
+REM Backup full current installation into versioned subfolder
+set CURRENT_DIR=""{currentDir}""
+set BACKUP_ROOT=""{currentDir}\backup""
+for /f ""tokens=1-3 delims=/ "" %%a in (""%date%"") do set TODAY=%%c-%%a-%%b
+for /f ""tokens=1-3 delims=:."" %%a in (""%time%"") do set NOW=%%a%%b%%c
+set BACKUP_SUB=""%BACKUP_ROOT%\{GetCurrentVersion()?.ToString() ?? "unknown"}_%TODAY%_%NOW%""
+if not exist %BACKUP_ROOT% mkdir %BACKUP_ROOT%
+if not exist %BACKUP_SUB% mkdir %BACKUP_SUB%
+REM Exclude backup folder itself to avoid recursion
+robocopy %CURRENT_DIR% %BACKUP_SUB% /MIR /XD %BACKUP_ROOT% >nul 2>&1
 
 REM Copy new files
 echo Installing update...
@@ -452,7 +465,8 @@ rmdir /s /q ""{tempDir}""
 
 echo Update complete!
 echo Starting WorkOrderBlender...
-start """" ""{currentDir}\{exeName}""
+start "" ""{currentDir}\{exeName}""
+endlocal
 exit
 ";
         }
@@ -489,83 +503,73 @@ exit
             }
         }
 
-        /// <summary>
-        /// Returns the full path to the git executable, preferring system git if available
+                /// <summary>
+        /// Returns the full path to the git executable, preferring bundled git for portable mode
         /// </summary>
         private static string GetGitExecutablePath()
         {
             try
             {
-                // First try system Git (more reliable)
-                var systemGit = @"C:\Program Files\Git\cmd\git.exe";
-                if (File.Exists(systemGit)) return systemGit;
-
-                // Then try bundled Git
+                // For portable mode, always try bundled Git first
                 var baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 var gitBase = Path.Combine(baseDir, "lib", "git");
                 var candidates = new[]
                 {
                     Path.Combine(gitBase, "cmd", "git.exe"),
                     Path.Combine(gitBase, "bin", "git.exe"),
-                    Path.Combine(gitBase, "mingw64", "bin", "git.exe"),
-                    "git" // fallback to PATH
+                    Path.Combine(gitBase, "mingw64", "bin", "git.exe")
                 };
                 foreach (var cand in candidates)
                 {
                     try
                     {
-                        if (cand.IndexOf('\\') >= 0 || cand.IndexOf('/') >= 0)
-                        {
-                            if (File.Exists(cand)) return cand;
-                        }
-                        else
-                        {
-                            return cand; // will resolve via PATH
-                        }
+                        if (File.Exists(cand)) return cand;
                     }
                     catch { }
                 }
+
+                // Fallback to system Git if bundled not available
+                var systemGit = @"C:\Program Files\Git\cmd\git.exe";
+                if (File.Exists(systemGit)) return systemGit;
+
+                // Last resort: use PATH
+                return "git";
             }
             catch { }
             return "git";
         }
 
-        /// <summary>
-        /// Returns the full path to an ssh executable, preferring system ssh if available
+                /// <summary>
+        /// Returns the full path to an ssh executable, preferring bundled ssh for portable mode
         /// </summary>
         private static string GetBundledSshPath()
         {
             try
             {
-                // First try system SSH (more reliable)
-                var systemSsh = @"C:\Program Files\Git\usr\bin\ssh.exe";
-                if (File.Exists(systemSsh)) return systemSsh;
-
-                // Then try bundled SSH
+                // For portable mode, always try bundled SSH first
                 var baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 var gitBase = Path.Combine(baseDir, "lib", "git");
                 var candidates = new[]
                 {
                     Path.Combine(gitBase, "usr", "bin", "ssh.exe"),
                     Path.Combine(gitBase, "bin", "ssh.exe"),
-                    Path.Combine(gitBase, "mingw64", "bin", "ssh.exe"),
-                    "ssh" // fallback to PATH
+                    Path.Combine(gitBase, "mingw64", "bin", "ssh.exe")
                 };
                 foreach (var cand in candidates)
                 {
                     try
                     {
-                        if (cand.IndexOf('\\') >= 0 || cand.IndexOf('/') >= 0)
-                        {
-                            if (File.Exists(cand)) return cand;
-                        }
-                        else
-                        {
-                            return cand; // will resolve via PATH
-                        }
+                        if (File.Exists(cand)) return cand;
                     }
                     catch { }
                 }
+
+                // Fallback to system SSH if bundled not available
+                var systemSsh = @"C:\Program Files\Git\usr\bin\ssh.exe";
+                if (File.Exists(systemSsh)) return systemSsh;
+
+                // Last resort: use PATH
+                return "ssh";
             }
             catch { }
             return "ssh";

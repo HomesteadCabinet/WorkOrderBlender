@@ -1,10 +1,11 @@
 [core]
 	symlinks = false
 	autocrlf = true
-	fscache = true
 [color]
 	interactive = true
 	ui = auto
+[pack]
+	packSizeLimit = 2g
 [help]
 	format = html
 [diff "astextplain"]
@@ -17,4 +18,9 @@
 	process = git-lfs filter-process
 	required = true
 [credential]
-	helper = helper-selector
+	helper = manager
+[include]
+	; include Git for Windows' system config in order
+	; to inherit settings like `core.autocrlf`
+	path = C:/Program Files (x86)/Git/etc/gitconfig
+	path = C:/Program Files/Git/etc/gitconfig
