@@ -1,8 +1,8 @@
-<?xml Version="1.2.1.0" encoding="UTF-8"?>
+<?xml Version="1.2.2.0" encoding="UTF-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Work Order Blender"
            Language="1033"
-           Version="1.2.1.0"
+           Version="1.2.2.0"
            Manufacturer="WorkOrderBlender"
            UpgradeCode="12345678-1234-1234-1234-123456789012">
 

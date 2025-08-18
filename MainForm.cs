@@ -850,19 +850,7 @@ namespace WorkOrderBlender
         AutoSize = true,
         Anchor = AnchorStyles.Left
       };
-      btnCheckUpdates.Click += (s, e) =>
-      {
-        try
-        {
-          Program.CheckForUpdates(silent: false);
-        }
-        catch (Exception ex)
-        {
-          Program.Log("Manual update check failed", ex);
-          MessageBox.Show("Failed to check for updates: " + ex.Message, "Update Check",
-            MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-      };
+      btnCheckUpdates.Click += CheckForUpdates_Click;
 
       // table.Controls.Add(lblUpdates, 0, 3);
       // table.Controls.Add(btnCheckUpdates, 1, 3);
