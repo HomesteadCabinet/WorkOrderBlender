@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="resources\icon.ico" />
+    <EmbeddedResource Include="resources\workorderblender_deploy_key" />
+    <EmbeddedResource Include="resources\ssh_config" />
     <Content Include="resources\icon.ico">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -45,6 +47,7 @@
       <SpecificVersion>false</SpecificVersion>
       <Private>true</Private>
     </Reference>
+    <Reference Include="System.Net.Http" />
   </ItemGroup>
 
   <!-- Include SQL CE native runtime files -->

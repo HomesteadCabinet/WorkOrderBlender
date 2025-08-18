@@ -251,10 +251,26 @@ namespace WorkOrderBlender
       this.splitMain.Panel1.Controls.Add(this.leftLayoutTable);
       this.splitMain.Panel2.Controls.Add(this.rightLayoutTable);
 
-      // Add splitMain to main table top row and span both columns
-      this.mainLayoutTable.Controls.Add(this.splitMain, 0, 0);
+      // Add menu strip to main table top row
+      this.menuStrip = new System.Windows.Forms.MenuStrip();
+      this.menuStrip.Name = "menuStrip";
+      this.menuStrip.TabIndex = 0;
+
+      // Create menu items
+      var helpMenu = new System.Windows.Forms.ToolStripMenuItem("Help");
+      var checkUpdatesItem = new System.Windows.Forms.ToolStripMenuItem("Check for Updates");
+      checkUpdatesItem.Click += new System.EventHandler(this.CheckForUpdates_Click);
+      helpMenu.DropDownItems.Add(checkUpdatesItem);
+
+      this.menuStrip.Items.Add(helpMenu);
+
+      this.mainLayoutTable.Controls.Add(this.menuStrip, 0, 0);
+      this.mainLayoutTable.SetColumnSpan(this.menuStrip, 2);
+
+      // Add splitMain to main table (now row 1) and span both columns
+      this.mainLayoutTable.Controls.Add(this.splitMain, 0, 1);
       this.mainLayoutTable.SetColumnSpan(this.splitMain, 2);
-      this.mainLayoutTable.Controls.Add(this.actionsLayout, 0, 1);
+      this.mainLayoutTable.Controls.Add(this.actionsLayout, 0, 2);
       this.mainLayoutTable.SetColumnSpan(this.actionsLayout, 2); // Span both columns
 
 
@@ -436,6 +452,7 @@ namespace WorkOrderBlender
     private ProgressBar progressLoading;
     private Label lblLoading;
     private TableLayoutPanel tableWorkOrder;
+    private MenuStrip menuStrip;
     // removed legacy chkSelectAll field
   }
 }
