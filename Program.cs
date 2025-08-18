@@ -11,13 +11,15 @@ namespace WorkOrderBlender
 {
   internal static class Program
   {
-    private static readonly string LogFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WorkOrderBlender.log");
+    private static readonly string LogDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
+    private static readonly string LogFilePath = Path.Combine(LogDirectory, "WorkOrderBlender.log");
     public static readonly InMemoryEditStore Edits = new InMemoryEditStore();
 
     public static void Log(string message, Exception ex = null)
     {
       try
       {
+        if (!Directory.Exists(LogDirectory)) Directory.CreateDirectory(LogDirectory);
         File.AppendAllText(LogFilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}{(ex != null ? ex + Environment.NewLine : string.Empty)}");
       }
       catch { /* ignore logging errors */ }
@@ -36,6 +38,7 @@ namespace WorkOrderBlender
       // Clear previous session log on startup
       try
       {
+        if (!Directory.Exists(LogDirectory)) Directory.CreateDirectory(LogDirectory);
         if (File.Exists(LogFilePath))
         {
           File.Delete(LogFilePath);
