@@ -132,59 +132,39 @@ namespace WorkOrderBlender
         }
       };
 
-      // Apply saved window size and splitter distance after form is fully loaded and sized
+      // Restore window size and position from config
       this.Load += (s, e) =>
       {
         try
         {
           var cfg = UserConfig.LoadOrDefault();
-          // Apply window size if saved
-          try
+          // Apply size
+          if (cfg.MainWindowWidth > 0 && cfg.MainWindowHeight > 0)
           {
-            if (cfg.MainWindowWidth > 0 && cfg.MainWindowHeight > 0)
-            {
-              // Clamp to at least minimum size
-              int w = Math.Max(this.MinimumSize.Width, cfg.MainWindowWidth);
-              int h = Math.Max(this.MinimumSize.Height, cfg.MainWindowHeight);
-              this.Size = new System.Drawing.Size(w, h);
-            }
+            int w = Math.Max(this.MinimumSize.Width, cfg.MainWindowWidth);
+            int h = Math.Max(this.MinimumSize.Height, cfg.MainWindowHeight);
+            this.Size = new System.Drawing.Size(w, h);
           }
-          catch { }
-          int desired = cfg.MainSplitterDistance > 0 ? cfg.MainSplitterDistance : 300;
-
-          // Wait for next tick to ensure layout is complete
-          this.BeginInvoke(new Action(() =>
+          // Apply position if valid
+          if (cfg.MainWindowX >= 0 && cfg.MainWindowY >= 0)
           {
-            try
-            {
-              // Clamp to valid range based on current size
-              int min = Math.Max(0, splitMain.Panel1MinSize);
-              int max = splitMain.Width - splitMain.Panel2MinSize - splitMain.SplitterWidth;
-              if (max < min) max = min; // guard for tiny width at startup
-              int clamped = Math.Min(Math.Max(desired, min), max);
-              if (clamped != splitMain.SplitterDistance) splitMain.SplitterDistance = clamped;
-            }
-            catch (Exception ex)
-            {
-              Program.Log("Error setting splitter distance", ex);
-            }
-          }));
+            this.StartPosition = FormStartPosition.Manual;
+            this.Location = new System.Drawing.Point(cfg.MainWindowX, cfg.MainWindowY);
+          }
         }
-        catch (Exception ex)
-        {
-          Program.Log("Error loading splitter distance", ex);
-        }
+        catch { }
       };
-      this.FormClosing += MainForm_FormClosing;
 
-      // Persist window size on resize end (avoid spamming saves during drag)
-      this.ResizeEnd += (s, e) =>
+      // Persist window size and position
+      this.FormClosing += (s, e) =>
       {
         try
         {
           var cfg = UserConfig.LoadOrDefault();
           cfg.MainWindowWidth = this.Width;
           cfg.MainWindowHeight = this.Height;
+          cfg.MainWindowX = this.Location.X;
+          cfg.MainWindowY = this.Location.Y;
           cfg.Save();
         }
         catch { }
@@ -570,16 +550,37 @@ namespace WorkOrderBlender
 
     private void btnSelectAll_Click(object sender, EventArgs e)
     {
-      foreach (var wo in filteredWorkOrders)
+      try
       {
-        if (wo.SdfExists)
+        // Select all work orders by adding them to checkedDirs
+        foreach (var wo in filteredWorkOrders)
         {
           checkedDirs.Add(wo.DirectoryPath);
         }
+        listWorkOrders.Invalidate(); // Refresh the display
+        RequestRefreshMetricsGrid(); // Update metrics if needed
+        Program.Log($"Selected all {filteredWorkOrders.Count} work orders");
       }
-      UpdatePreviewChangesButton();
-      listWorkOrders.Invalidate();
-      RefreshMetricsGrid();
+      catch (Exception ex)
+      {
+        Program.Log("btnSelectAll_Click error", ex);
+      }
+    }
+
+    private void btnSelectNone_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        // Clear all selections by clearing checkedDirs
+        checkedDirs.Clear();
+        listWorkOrders.Invalidate(); // Refresh the display
+        RequestRefreshMetricsGrid(); // Update metrics if needed
+        Program.Log("Cleared all work order selections");
+      }
+      catch (Exception ex)
+      {
+        Program.Log("btnSelectNone_Click error", ex);
+      }
     }
 
     // Add refresh button functionality
@@ -796,15 +797,18 @@ namespace WorkOrderBlender
 
       var table = new TableLayoutPanel
       {
-        Dock = DockStyle.Fill,
+        Dock = DockStyle.Top,
         ColumnCount = 4,
-        RowCount = 3,
-        Padding = new Padding(10)
+        RowCount = 4,
+        Padding = new Padding(10,10,10,10),
+        Height = 150,
       };
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       dlg.Controls.Add(table);
@@ -824,99 +828,77 @@ namespace WorkOrderBlender
         }
       };
 
-      // Output is now based on work order name + DefaultRoot, so no need for separate output folder setting
-
       var lblSdf = new Label { Text = ".sdf File Name:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtSdfLocal = new TextBox
       {
         Anchor = AnchorStyles.Left | AnchorStyles.Right,
         Width = 400,
-        Text = GetSdfFileName(),
-        ReadOnly = true
+        Text = GetSdfFileName()
       };
 
+      // Hide Purchasing option
+      var cfg = UserConfig.LoadOrDefault();
+      var chkHidePurchasing = new CheckBox { Text = "Hide Purchasing", AutoSize = true, Checked = cfg.HidePurchasing, Anchor = AnchorStyles.Left };
+
+      // Layout rows
       table.Controls.Add(lblRoot, 0, 0);
       table.Controls.Add(txtRootLocal, 1, 0);
       table.Controls.Add(btnBrowseRoot, 2, 0);
+      table.SetColumnSpan(txtRootLocal, 1);
 
       table.Controls.Add(lblSdf, 0, 1);
       table.Controls.Add(txtSdfLocal, 1, 1);
+      table.SetColumnSpan(txtSdfLocal, 2);
 
-      // Add Check Updates button
-      // var lblUpdates = new Label { Text = "Application:", AutoSize = true, Anchor = AnchorStyles.Left };
+      // Add Hide Purchasing on its own row spanning available columns
+      table.Controls.Add(chkHidePurchasing, 0, 2);
+      table.SetColumnSpan(chkHidePurchasing, 3);
+
+      // Buttons row with Check Updates on left, OK/Cancel on right
       var btnCheckUpdates = new Button
       {
         Text = "Check for Updates",
-        AutoSize = true,
-        Anchor = AnchorStyles.Left
+        AutoSize = true
       };
       btnCheckUpdates.Click += CheckForUpdates_Click;
 
-      // table.Controls.Add(lblUpdates, 0, 3);
-      // table.Controls.Add(btnCheckUpdates, 1, 3);
-
-      // Create a table layout for buttons with precise positioning
       var panelButtons = new TableLayoutPanel
       {
         Dock = DockStyle.Bottom,
-        Height = 50,
-        Padding = new Padding(10),
-        ColumnCount = 3,
-        RowCount = 1
+        ColumnCount = 4,
+        RowCount = 1,
+        Padding = new Padding(10,5,10,5),
+        Height = 40,
       };
-
-      // Set up columns: Check Updates (left), spacer (stretch), OK+Cancel (right)
       panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Check Updates
-      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // Spacer
-      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // OK+Cancel
-      panelButtons.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // spacer
+      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // OK
+      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Cancel
 
-      var btnOk = new Button
-      {
-        Text = "OK",
-        DialogResult = DialogResult.OK,
-        AutoSize = true
-      };
-      var btnCancel = new Button
-      {
-        Text = "Cancel",
-        DialogResult = DialogResult.Cancel,
-        AutoSize = true
-      };
-
-      // Create a panel for OK+Cancel buttons (right side)
-      var rightButtonPanel = new FlowLayoutPanel
-      {
-        FlowDirection = FlowDirection.RightToLeft,
-        AutoSize = true,
-        Margin = new Padding(0)
-      };
-      rightButtonPanel.Controls.Add(btnOk);
-      rightButtonPanel.Controls.Add(btnCancel);
-
-      // Position the buttons: Check Updates on far left, OK+Cancel on right
+      var btnOk = new Button { Text = "Close", DialogResult = DialogResult.OK, AutoSize = true };
       panelButtons.Controls.Add(btnCheckUpdates, 0, 0); // Far left
-      panelButtons.Controls.Add(rightButtonPanel, 2, 0); // Far right
+      panelButtons.Controls.Add(btnOk, 2, 0);
 
+      // Add panelButtons to dialog
+      panelButtons.Dock = DockStyle.Bottom;
       dlg.Controls.Add(panelButtons);
-      dlg.AcceptButton = btnOk;
-      dlg.CancelButton = btnCancel;
 
       if (dlg.ShowDialog(this) == DialogResult.OK)
       {
         try
         {
-          if (userConfig == null) userConfig = new UserConfig();
-          userConfig.DefaultRoot = (txtRootLocal.Text ?? string.Empty).Trim();
-          userConfig.SdfFileName = (txtSdfLocal.Text ?? string.Empty).Trim();
-          userConfig.Save();
-
-          // txtOutput now shows work order name, not output folder
+          var cfgNow = UserConfig.LoadOrDefault();
+          var newRoot = (txtRootLocal.Text ?? string.Empty).Trim();
+          var newSdf = (txtSdfLocal.Text ?? string.Empty).Trim();
+          if (!string.IsNullOrEmpty(newRoot)) cfgNow.DefaultRoot = newRoot;
+          if (!string.IsNullOrEmpty(newSdf)) cfgNow.SdfFileName = newSdf;
+          cfgNow.HidePurchasing = chkHidePurchasing.Checked; // persist Hide Purchasing
+          cfgNow.Save();
+          FilterWorkOrders(); // apply filter immediately if changed
         }
         catch (Exception ex)
         {
-          Program.Log("Saving settings failed", ex);
-          MessageBox.Show("Failed to save settings: " + ex.Message);
+          Program.Log("Failed to save settings dialog changes", ex);
         }
       }
     }
@@ -933,8 +915,13 @@ namespace WorkOrderBlender
         query = txtSearch.Text.Trim();
       }
 
-      var next = allWorkOrders.Where(wo => string.IsNullOrEmpty(query) || wo.DirectoryPath.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
-                 .ToList();
+      var cfg = UserConfig.LoadOrDefault();
+      bool hidePurchasing = cfg.HidePurchasing;
+
+      var next = allWorkOrders.Where(wo =>
+        (string.IsNullOrEmpty(query) || wo.DirectoryPath.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+        && (!hidePurchasing || wo.DirectoryPath.IndexOf("purchasing", StringComparison.OrdinalIgnoreCase) < 0)
+      ).ToList();
 
       filteredWorkOrders = next;
       listWorkOrders.VirtualListSize = filteredWorkOrders.Count;
