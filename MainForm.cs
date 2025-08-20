@@ -354,11 +354,18 @@ namespace WorkOrderBlender
 
     private void ScanWorkOrders()
     {
+      // Prevent concurrent scans
+      if (isScanningWorkOrders)
+      {
+        Program.Log("Scan already in progress, skipping duplicate request");
+        return;
+      }
+
       isScanningWorkOrders = true;
       var scanStartTime = DateTime.Now;
       Program.Log($"=== SCAN STARTED at {scanStartTime:HH:mm:ss.fff} ===");
 
-      SetBusy(true);
+      ShowLoadingIndicator(true, "Scanning work orders...");
       listWorkOrders.Items.Clear();
       string root = DefaultRoot;
       Program.Log($"Scanning root directory: {root}");
@@ -367,7 +374,7 @@ namespace WorkOrderBlender
       {
         Program.Log($"Root directory not found: {root}");
         MessageBox.Show("Root directory not found.");
-        SetBusy(false);
+        ShowLoadingIndicator(false);
         return;
       }
 
@@ -538,9 +545,7 @@ namespace WorkOrderBlender
         var totalScanDuration = scanEndTime - scanStartTime;
         Program.Log($"=== SCAN COMPLETED at {scanEndTime:HH:mm:ss.fff} - Total duration: {totalScanDuration:hh\\:mm\\:ss\\.fff} ===");
 
-        SetBusy(false);
-        progress.Style = ProgressBarStyle.Continuous;
-        progress.Value = 0;
+        ShowLoadingIndicator(false);
         isScanningWorkOrders = false;
         RequestRefreshMetricsGrid();
       }
@@ -1016,6 +1021,9 @@ namespace WorkOrderBlender
       var caller = new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name ?? "Unknown";
       Program.Log($"=== REFRESH METRICS GRID STARTED at {refreshStart:HH:mm:ss.fff} - Called by: {caller} ===");
 
+      // Set refresh flag to prevent concurrent refreshes
+      isRefreshingMetrics = true;
+
       try
       {
         // Show loading indicator
@@ -1128,6 +1136,9 @@ namespace WorkOrderBlender
 
         // Hide loading indicator
         ShowLoadingIndicator(false);
+
+        // Clear refresh flag
+        isRefreshingMetrics = false;
       }
     }
 
@@ -2391,32 +2402,64 @@ namespace WorkOrderBlender
       }
     }
 
-    private void ShowLoadingIndicator(bool show)
+    private void ShowLoadingIndicator(bool show, string message = "Loading data...")
     {
       try
       {
         if (InvokeRequired)
         {
-          Invoke(new Action<bool>(ShowLoadingIndicator), show);
+          Invoke(new Action<bool, string>(ShowLoadingIndicator), show, message);
           return;
         }
 
-        panelLoading.Visible = show;
-        if (show)
+        // Reduce layout thrash while switching views
+        bottomLayout.SuspendLayout();
+        try
         {
-          // Position the message where the progress bar lives
-          panelLoading.Bounds = progress.Bounds;
-          panelLoading.Anchor = progress.Anchor;
-          lblLoading.Dock = DockStyle.Fill;
-          lblLoading.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-          lblLoading.Text = "Loading data...";
-          panelLoading.BringToFront();
-          progress.Visible = false;
+          if (show)
+          {
+            // Show loading panel, hide actions panel
+            panelLoading.Visible = true;
+            panelActions.Visible = false;
+
+            // Update loading message
+            lblLoading.Text = message;
+
+            // Adjust existing column styles instead of replacing them to avoid flicker
+            if (bottomLayout.ColumnStyles.Count >= 2)
+            {
+              bottomLayout.ColumnStyles[0].SizeType = SizeType.Absolute;
+              bottomLayout.ColumnStyles[0].Width = 0F;
+              bottomLayout.ColumnStyles[1].SizeType = SizeType.Percent;
+              bottomLayout.ColumnStyles[1].Width = 100F;
+            }
+
+            // Bring loading panel to front
+            panelLoading.BringToFront();
+          }
+          else
+          {
+            // Hide loading panel, show actions panel
+            panelLoading.Visible = false;
+            panelActions.Visible = true;
+
+            // Restore normal column layout
+            if (bottomLayout.ColumnStyles.Count >= 2)
+            {
+              bottomLayout.ColumnStyles[0].SizeType = SizeType.Percent;
+              bottomLayout.ColumnStyles[0].Width = 100F;
+              bottomLayout.ColumnStyles[1].SizeType = SizeType.Absolute;
+              bottomLayout.ColumnStyles[1].Width = 0F;
+            }
+
+            // Reset progress bar
+            progress.Style = ProgressBarStyle.Continuous;
+            progress.Value = 0;
+          }
         }
-        else
+        finally
         {
-          panelLoading.Visible = false;
-          progress.Visible = true;
+          bottomLayout.ResumeLayout(true);
         }
       }
       catch (Exception ex)
@@ -2456,33 +2499,7 @@ namespace WorkOrderBlender
       }
     }
 
-    private void SetBusy(bool isBusy)
-    {
-      try
-      {
-        if (isBusy)
-        {
-          // Show loading panel at the progress bar location
-          panelLoading.Bounds = progress.Bounds;
-          panelLoading.Anchor = progress.Anchor;
-          panelLoading.Visible = true;
-          lblLoading.Dock = DockStyle.Fill;
-          lblLoading.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-          lblLoading.Text = "Loading work orders...";
-          panelLoading.BringToFront();
-          progress.Visible = false;
-        }
-        else
-        {
-          // Hide loading panel and show progress bar
-          panelLoading.Visible = false;
-          progress.Visible = true;
-          progress.Style = ProgressBarStyle.Continuous;
-          progress.Value = 0;
-        }
-      }
-      catch { }
-    }
+    // SetBusy method removed - functionality consolidated into ShowLoadingIndicator
 
     // Thread-safe UI update helper
     private async Task InvokeAsync(Action action)
@@ -2588,6 +2605,9 @@ namespace WorkOrderBlender
       {
         try
         {
+          // Ensure schema is loaded from resources/wo_schema.xml
+          EnsureSchemaLoaded();
+
           var tables = new List<string>();
           using (var cmd = new SqlCeCommand("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'TABLE'", srcConn))
           {
@@ -2600,7 +2620,15 @@ namespace WorkOrderBlender
           {
             if (table.StartsWith("__")) continue;
 
+            // Only process tables present in the schema XML
+            if (!SchemaTables.Contains(table)) continue;
+
+            // Always ensure destination table exists (schema conformance), even if we skip data
             EnsureDestinationTableCombined(destConn, srcConn, table);
+
+            // Skip copying data for excluded tables
+            if (ExcludedDataTables.Contains(table)) continue;
+
             CopyRowsCombined(srcConn, destConn, table, sourceTag, sourcePathDir);
           }
         }
@@ -2624,35 +2652,41 @@ namespace WorkOrderBlender
         var exists = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
         if (!exists)
         {
-                    // Get virtual columns to exclude from consolidation
+          // Get virtual columns to exclude from consolidation
           var virtualColumns = GetVirtualColumnsForTable(tableName);
           if (virtualColumns.Count > 0)
           {
             Program.Log($"Excluding {virtualColumns.Count} virtual columns from table {tableName}: {string.Join(", ", virtualColumns)}");
           }
 
-          // Create like source
-          var cols = src.GetSchema("Columns", new[] { null, null, tableName, null });
-          var columnDefs = new List<string>();
-          foreach (DataRow col in cols.Rows)
+          // Create schema-conformant table: only columns defined in wo_schema.xml
+          var allowedCols = GetAllowedSchemaColumns(tableName);
+          var srcCols = src.GetSchema("Columns", new[] { null, null, tableName, null });
+          var srcColsMap = new Dictionary<string, DataRow>(StringComparer.OrdinalIgnoreCase);
+          foreach (DataRow row in srcCols.Rows)
           {
-            string colName = col["COLUMN_NAME"].ToString();
+            var name = Convert.ToString(row["COLUMN_NAME"]);
+            if (!srcColsMap.ContainsKey(name)) srcColsMap[name] = row;
+          }
 
-            // Skip virtual columns - they shouldn't be in the consolidated database
-            if (virtualColumns.Contains(colName))
+          var columnDefs = new List<string>();
+          foreach (var colName in allowedCols)
+          {
+            if (virtualColumns.Contains(colName)) continue; // never include virtuals
+
+            string typeSql = "NVARCHAR(255)";
+            string nullSql = "NULL";
+            if (srcColsMap.TryGetValue(colName, out var col))
             {
-              continue;
+              string dataType = Convert.ToString(col["DATA_TYPE"]);
+              int length = col.Table.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
+              bool nullable = col.Table.Columns.Contains("IS_NULLABLE") && string.Equals(Convert.ToString(col["IS_NULLABLE"]), "YES", StringComparison.OrdinalIgnoreCase);
+              typeSql = MapType(dataType, length);
+              nullSql = nullable ? "NULL" : "NOT NULL";
             }
-
-            string dataType = col["DATA_TYPE"].ToString();
-            int length = col.Table.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
-            bool nullable = col.Table.Columns.Contains("IS_NULLABLE") && string.Equals(col["IS_NULLABLE"].ToString(), "YES", StringComparison.OrdinalIgnoreCase);
-            string typeSql = MapType(dataType, length);
-            string nullSql = nullable ? "NULL" : "NOT NULL";
             columnDefs.Add($"[{colName}] {typeSql} {nullSql}");
           }
-          columnDefs.Add("[SourceWorkOrder] NVARCHAR(255) NULL");
-          columnDefs.Add("[SourcePath] NVARCHAR(1024) NULL");
+          // No metadata columns in consolidated database
           string createSql = $"CREATE TABLE [{tableName}] (" + string.Join(", ", columnDefs) + ")";
           using (var create = new SqlCeCommand(createSql, dest))
           {
@@ -2666,8 +2700,16 @@ namespace WorkOrderBlender
             // Get virtual columns to exclude from consolidation
             var virtualColumns = GetVirtualColumnsForTable(tableName);
 
-            // Add columns if missing in dest (create superset schema)
+            // Add missing schema-defined columns only (schema conformance)
+            var allowedCols = new HashSet<string>(GetAllowedSchemaColumns(tableName), StringComparer.OrdinalIgnoreCase);
             var srcCols = src.GetSchema("Columns", new[] { null, null, tableName, null });
+            var srcColsMap = new Dictionary<string, DataRow>(StringComparer.OrdinalIgnoreCase);
+            foreach (DataRow row in srcCols.Rows)
+            {
+              var name = Convert.ToString(row["COLUMN_NAME"]);
+              if (!srcColsMap.ContainsKey(name)) srcColsMap[name] = row;
+            }
+
             var destCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             using (var dc = new SqlCeCommand($"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=@t", dest))
             {
@@ -2677,36 +2719,22 @@ namespace WorkOrderBlender
                 while (r.Read()) destCols.Add(r.GetString(0));
               }
             }
-            foreach (DataRow col in srcCols.Rows)
-            {
-              string colName = col["COLUMN_NAME"].ToString();
-              if (destCols.Contains(colName)) continue;
 
-              // Skip virtual columns - they shouldn't be in the consolidated database
+            foreach (var colName in allowedCols)
+            {
+              if (destCols.Contains(colName)) continue;
               if (virtualColumns.Contains(colName)) continue;
 
-              string dataType = col["DATA_TYPE"].ToString();
-              int length = srcCols.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
-              string typeSql = MapType(dataType, length);
+              string typeSql = "NVARCHAR(255)";
+              if (srcColsMap.TryGetValue(colName, out var col))
+              {
+                string dataType = Convert.ToString(col["DATA_TYPE"]);
+                int length = srcCols.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
+                typeSql = MapType(dataType, length);
+              }
               using (var alter = new SqlCeCommand($"ALTER TABLE [" + tableName + "] ADD [" + colName + "] " + typeSql + " NULL", dest)) alter.ExecuteNonQuery();
             }
-            // Ensure source metadata columns
-            using (var c1 = new SqlCeCommand($"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=@t AND COLUMN_NAME='SourceWorkOrder'", dest))
-            {
-              c1.Parameters.AddWithValue("@t", tableName);
-              if (Convert.ToInt32(c1.ExecuteScalar()) == 0)
-              {
-                using (var a1 = new SqlCeCommand($"ALTER TABLE [" + tableName + "] ADD [SourceWorkOrder] NVARCHAR(255) NULL", dest)) a1.ExecuteNonQuery();
-              }
-            }
-            using (var c2 = new SqlCeCommand($"SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=@t AND COLUMN_NAME='SourcePath'", dest))
-            {
-              c2.Parameters.AddWithValue("@t", tableName);
-              if (Convert.ToInt32(c2.ExecuteScalar()) == 0)
-              {
-                using (var a2 = new SqlCeCommand($"ALTER TABLE [" + tableName + "] ADD [SourcePath] NVARCHAR(1024) NULL", dest)) a2.ExecuteNonQuery();
-              }
-            }
+            // No metadata columns in consolidated database
           }
           catch { }
         }
@@ -2768,6 +2796,8 @@ namespace WorkOrderBlender
     {
       // Get virtual columns to exclude from consolidation
       var virtualColumns = GetVirtualColumnsForTable(tableName);
+      // Load allowed schema columns for this table
+      var allowedSchemaCols = new HashSet<string>(GetAllowedSchemaColumns(tableName), StringComparer.OrdinalIgnoreCase);
 
       using (var cmd = new SqlCeCommand($"SELECT * FROM [" + tableName + "]", src))
       using (var reader = cmd.ExecuteReader())
@@ -2775,8 +2805,11 @@ namespace WorkOrderBlender
         var schema = reader.GetSchemaTable();
         var allColNames = schema.Rows.Cast<DataRow>().Select(r => r["ColumnName"].ToString()).ToList();
 
-        // Filter out virtual columns from data copying
-        var colNames = allColNames.Where(name => !virtualColumns.Contains(name)).ToList();
+        // Filter out virtual columns and any columns not present in wo_schema.xml
+        var colNames = allColNames
+          .Where(name => !virtualColumns.Contains(name))
+          .Where(name => allowedSchemaCols.Contains(name))
+          .ToList();
 
         if (virtualColumns.Count > 0)
         {
@@ -2787,12 +2820,15 @@ namespace WorkOrderBlender
           }
         }
 
+        // Log any columns skipped due to schema filtering
+        var nonSchemaCols = allColNames.Where(name => !allowedSchemaCols.Contains(name)).ToList();
+        if (nonSchemaCols.Count > 0)
+        {
+          Program.Log($"Skipping {nonSchemaCols.Count} non-schema columns for table {tableName}: {string.Join(", ", nonSchemaCols)}");
+        }
+
         var destColumns = new List<string>(colNames.Select(n => "[" + n + "]"));
-        destColumns.Add("[SourceWorkOrder]");
-        destColumns.Add("[SourcePath]");
         var destParams = new List<string>(colNames.Select(n => "@" + n));
-        destParams.Add("@__srcWO");
-        destParams.Add("@__srcPath");
         string insertSql = $"INSERT INTO [" + tableName + "] (" + string.Join(", ", destColumns) + ") VALUES (" + string.Join(", ", destParams) + ")";
         using (var insert = new SqlCeCommand(insertSql, dest))
         {
@@ -2800,8 +2836,6 @@ namespace WorkOrderBlender
           {
             insert.Parameters.Add(new SqlCeParameter("@" + name, DBNull.Value));
           }
-          insert.Parameters.Add(new SqlCeParameter("@__srcWO", sourceTag ?? string.Empty));
-          insert.Parameters.Add(new SqlCeParameter("@__srcPath", sourcePathDir ?? string.Empty));
           int rowIndex = 0;
           while (reader.Read())
           {
@@ -2864,6 +2898,82 @@ namespace WorkOrderBlender
           }
         }
       }
+    }
+
+    // ----------------------
+    // Schema helpers / config
+    // ----------------------
+
+    // Tables whose data should not be copied into the consolidated database
+    private static readonly HashSet<string> ExcludedDataTables = new HashSet<string>(new[]
+    {
+      "WorkOrderBatches",
+      "OptimizationResults",
+      "OptimizationResultAssociates",
+      "SawCutLines",
+      "PlacedSheets",
+      "PlacedSheetsVendors",
+      "PartsProcessingStations",
+      "SawStacks"
+    }, StringComparer.OrdinalIgnoreCase);
+
+    // Loaded from resources/wo_schema.xml
+    private static HashSet<string> SchemaTables;
+    private static Dictionary<string, HashSet<string>> SchemaTableToColumns;
+
+    private static void EnsureSchemaLoaded()
+    {
+      if (SchemaTables != null && SchemaTableToColumns != null) return;
+      try
+      {
+        var exeDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        var schemaPath = Path.Combine(exeDir ?? Environment.CurrentDirectory, "resources", "wo_schema.xml");
+        if (!File.Exists(schemaPath))
+        {
+          // Try relative to current working directory as a fallback
+          schemaPath = Path.Combine(Environment.CurrentDirectory, "resources", "wo_schema.xml");
+        }
+
+        var xdoc = System.Xml.Linq.XDocument.Load(schemaPath);
+        var tableToCols = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var tableNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var t in xdoc.Root.Elements("Table"))
+        {
+          var tName = (string)t.Attribute("Name") ?? string.Empty;
+          if (string.IsNullOrWhiteSpace(tName)) continue;
+          tableNames.Add(tName);
+          var cols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+          var colsNode = t.Element("Columns");
+          if (colsNode != null)
+          {
+            foreach (var c in colsNode.Elements("Column"))
+            {
+              var cName = (string)c.Attribute("Name");
+              if (!string.IsNullOrWhiteSpace(cName)) cols.Add(cName);
+            }
+          }
+          tableToCols[tName] = cols;
+        }
+        SchemaTables = tableNames;
+        SchemaTableToColumns = tableToCols;
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Failed to load wo_schema.xml; proceeding without strict schema enforcement", ex);
+        SchemaTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        SchemaTableToColumns = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+      }
+    }
+
+    private static IEnumerable<string> GetAllowedSchemaColumns(string tableName)
+    {
+      EnsureSchemaLoaded();
+      if (SchemaTableToColumns.TryGetValue(tableName, out var cols) && cols != null && cols.Count > 0)
+      {
+        return cols;
+      }
+      // If schema not found for the table, allow no columns to ensure strict conformance
+      return new string[0];
     }
 
     private static void LogInsertFailure(SqlCeConnection dest, string srcTable, string destTable, List<string> colNames, SqlCeCommand insert, int rowIndex, Exception ex, string sourceTag, string sourcePath)
