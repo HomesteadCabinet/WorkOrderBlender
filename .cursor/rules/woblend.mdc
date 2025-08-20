@@ -3,7 +3,8 @@ alwaysApply: true
 ---
 Use native .NET Framework 4.8 components and libraries as much as possible.
 
-Never allow modification of the source databases, only ever use the databases for reading. Schema strictly follows resources/wo_schema.xml.
+Never allow modification of the source databases, only ever use the databases for reading.
+Schema for destination database is in resources/wo_schema.xml.
 
 Project is called WorkOrderBlender.
 
