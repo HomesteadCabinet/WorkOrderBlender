@@ -137,7 +137,8 @@ function Build-PortablePackage {
 
         # Verify the zip file was created
         $expectedZipName = "WorkOrderBlender-$Version-portable.zip"
-        $zipPath = Join-Path $PSScriptRoot "dist" $expectedZipName
+        $zipDir = Join-Path $PSScriptRoot "dist"
+        $zipPath = Join-Path $zipDir $expectedZipName
 
         if (-not (Test-Path $zipPath)) {
             Write-Error "[ERROR] Portable zip file not found at expected location: $zipPath"
@@ -237,7 +238,8 @@ try {
     # Add the new portable zip file if it was built
     if (-not $SkipPortableBuild) {
         $expectedZipName = "WorkOrderBlender-$NewVersion-portable.zip"
-        $zipPath = Join-Path $PSScriptRoot "dist" $expectedZipName
+        $zipDir = Join-Path $PSScriptRoot "dist"
+        $zipPath = Join-Path $zipDir $expectedZipName
         if (Test-Path $zipPath) {
             git add $zipPath
             Write-Host "[OK] Staged portable zip file: $expectedZipName" -ForegroundColor Green
