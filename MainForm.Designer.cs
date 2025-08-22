@@ -41,7 +41,7 @@ namespace WorkOrderBlender
       // progressLoading removed - no longer needed
       this.lblLoading = new System.Windows.Forms.Label();
       this.panelTableSelector = new System.Windows.Forms.Panel();
-      this.panelLeftColumn = new System.Windows.Forms.FlowLayoutPanel();
+      this.panelLeftColumn = new System.Windows.Forms.FlowLayoutPanel(); // Fixed: should be FlowLayoutPanel, not TableLayoutPanel
       this.panelToolbar = new System.Windows.Forms.FlowLayoutPanel();
       this.btnPreviewChanges = new System.Windows.Forms.Button();
       this.tableWorkOrder = new System.Windows.Forms.TableLayoutPanel();
@@ -108,8 +108,8 @@ namespace WorkOrderBlender
       this.txtOutput.Dock = System.Windows.Forms.DockStyle.None; // No dock, manual placement in panel
       this.txtOutput.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom; // Anchor left, top, and bottom for vertical alignment
       this.txtOutput.Width = 450; // Fixed width
-      this.txtOutput.Height = 30; // Consistent height
-      this.txtOutput.Location = new System.Drawing.Point(150, 5);
+      this.txtOutput.Height = 36; // Consistent height
+      this.txtOutput.Location = new System.Drawing.Point(240, 5);
 
       //
       // labelOutput
@@ -117,22 +117,25 @@ namespace WorkOrderBlender
       this.labelOutput.AutoSize = false; // Disable AutoSize to control height for vertical alignment
       this.labelOutput.Name = "labelOutput";
       this.labelOutput.TabIndex = 7;
-      this.labelOutput.Height = 30; // Consistent height for vertical alignment
-      this.labelOutput.Width = 150; // Set a fixed width for better alignment if needed
+      this.labelOutput.Height = 26; // Consistent height for vertical alignment
+      this.labelOutput.Width = 130; // Set a fixed width for better alignment if needed
       this.labelOutput.Text = "Work Order Name:";
       this.labelOutput.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.labelOutput.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom; // Anchor left, top, and bottom for vertical alignment
       this.labelOutput.TextAlign = System.Drawing.ContentAlignment.MiddleLeft; // Vertically center text
       this.labelOutput.Margin = new System.Windows.Forms.Padding(0, 0, 5, 0); // Right margin for spacing
+      // Set the Location property for labelOutput and txtOutput for explicit placement
+      this.labelOutput.Location = new System.Drawing.Point(100, 3); // Place label near left edge, vertically aligned
 
       // Make Settings button fill its cell both horizontally and vertically within its container
       this.btnSettings.Text = "Settings...";
-      this.btnSettings.Width = 100;
-      this.btnSettings.Height = 30;
-      this.btnSettings.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.btnSettings.Width = 80;
+      this.btnSettings.Height = 26;
+      this.btnSettings.Font = new System.Drawing.Font("Microsoft Sans Serif", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.btnSettings.UseVisualStyleBackColor = true;
       this.btnSettings.Margin = new System.Windows.Forms.Padding(0, 0, 0, 0); // No margin for full fill
       this.btnSettings.Click += new System.EventHandler(this.btnSettings_Click);
+      this.btnSettings.Location = new System.Drawing.Point(2, 3);
       // this.btnSettings.Dock = System.Windows.Forms.DockStyle.Fill; // Fill both horizontally and vertically in container
       this.toolTip1.SetToolTip(this.btnSettings, "Open settings dialog");
 
@@ -141,14 +144,14 @@ namespace WorkOrderBlender
       //
       // Make tableWorkOrder full width and docked to top
       this.tableWorkOrder.Dock = System.Windows.Forms.DockStyle.Top; // Fill horizontally at the top
-      this.tableWorkOrder.Height = 40;
+      this.tableWorkOrder.Height = 48;
       this.tableWorkOrder.Padding = new System.Windows.Forms.Padding(6,0,6,0);
       this.tableWorkOrder.ColumnCount = 2; // 2 columns: left (label+textbox), right (toolbar)
       this.tableWorkOrder.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
       // this.tableWorkOrder.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Single;
 
       // Set left column to fill available space, right column to auto-size for toolbar
-      this.tableWorkOrder.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F)); // Left column fills available space
+      this.tableWorkOrder.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F)); // Right column auto-sizes for toolbar
       this.tableWorkOrder.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.AutoSize)); // Right column auto-sizes for toolbar
       // Add top margin of 15 to tableWorkOrder for visual spacing from top of form
       this.tableWorkOrder.Name = "tableWorkOrder";
@@ -163,28 +166,49 @@ namespace WorkOrderBlender
       this.panelLeftColumn.Dock = System.Windows.Forms.DockStyle.Fill;
       this.panelLeftColumn.AutoSize = true;
       this.panelLeftColumn.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-      this.panelLeftColumn.FlowDirection = System.Windows.Forms.FlowDirection.TopDown; // Stack label/textbox vertically
+      this.panelLeftColumn.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight; // Horizontal layout for buttons
+      this.panelLeftColumn.WrapContents = false; // Prevent wrapping to next line
 
       this.panelToolbar.Dock = System.Windows.Forms.DockStyle.Fill;
+      // Add label and textbox to left column panel
+      this.panelLeftColumn.Controls.Add(this.btnSettings);
+      this.panelLeftColumn.Controls.Add(this.labelOutput);
+      this.panelLeftColumn.Controls.Add(this.txtOutput);
       this.panelToolbar.AutoSize = true;
       this.panelToolbar.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-      this.panelToolbar.FlowDirection = System.Windows.Forms.FlowDirection.TopDown; // Stack toolbar buttons vertically
+      this.panelToolbar.FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft; // Stack toolbar buttons vertically
 
       // Add controls to tableWorkOrder - left column with label and textbox, right column with toolbar
       this.tableWorkOrder.Controls.Add(this.panelLeftColumn, 0, 0);
       this.tableWorkOrder.Controls.Add(this.panelToolbar, 1, 0);
 
-      // Add label and textbox to left column panel
-      this.panelLeftColumn.Controls.Add(this.labelOutput);
-      this.panelLeftColumn.Controls.Add(this.txtOutput);
 
+    // Add buttons to toolbar panel
       // Align toolbar panel's content to the right
       this.panelToolbar.Anchor = System.Windows.Forms.AnchorStyles.Right | System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom;
       this.panelToolbar.AutoSize = true;
       this.panelToolbar.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
 
-      // Add buttons to toolbar panel
-      this.panelToolbar.Controls.Add(this.btnSettings);
+      // Toolbar selection buttons for current table (rows include/exclude)
+      this.btnTableSelectAll = new System.Windows.Forms.Button();
+      this.btnTableSelectAll.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
+      this.btnTableSelectAll.Text = "Select All";
+      this.btnTableSelectAll.Height = 26;
+      this.btnTableSelectAll.Width = 90;
+      this.btnTableSelectAll.UseVisualStyleBackColor = true;
+      // click handler wired in constructor
+      this.toolTip1.SetToolTip(this.btnTableSelectAll, "Include all rows in current table");
+      this.panelToolbar.Controls.Add(this.btnTableSelectAll);
+
+      this.btnTableClearAll = new System.Windows.Forms.Button();
+      this.btnTableClearAll.Margin = new System.Windows.Forms.Padding(6, 0, 0, 0);
+      this.btnTableClearAll.Text = "Clear All";
+      this.btnTableClearAll.Height = 26;
+      this.btnTableClearAll.Width = 90;
+      this.btnTableClearAll.UseVisualStyleBackColor = true;
+      // click handler wired in constructor
+      this.toolTip1.SetToolTip(this.btnTableClearAll, "Exclude all rows in current table");
+      this.panelToolbar.Controls.Add(this.btnTableClearAll);
 
 
 
@@ -231,13 +255,13 @@ namespace WorkOrderBlender
       | System.Windows.Forms.AnchorStyles.Right)));
       this.mainLayoutTable.Location = new System.Drawing.Point(15, 50);
       this.mainLayoutTable.Name = "mainLayoutTable";
-      this.mainLayoutTable.ColumnCount = 2;
+      this.mainLayoutTable.ColumnCount = 1;
       this.mainLayoutTable.RowCount = 2;
       this.mainLayoutTable.Size = new System.Drawing.Size(1170, 540);
       this.mainLayoutTable.TabIndex = 12;
 
-      // Column styles: Left panel fixed 200px, right panel fills remaining space
-      this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 300F)); // Left panel fixed width
+      // Column styles: Left panel fixed 300px, right panel fills remaining space
+      // this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 500F)); // Left panel fixed width
       this.mainLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));   // Right panel fills
 
       // Row styles: Top row fills space, Bottom row fixed height for actions
@@ -256,14 +280,13 @@ namespace WorkOrderBlender
       this.panelLeftColumn.AutoSize = false;
       this.panelLeftColumn.WrapContents = false;
 
-      // Create FlowLayoutPanel for right column toolbar
-      this.panelToolbar = new System.Windows.Forms.FlowLayoutPanel();
+      // Create FlowLayoutPanel for right column toolbar (reuse existing instance created above)
       this.panelToolbar.Dock = System.Windows.Forms.DockStyle.Fill;
       this.panelToolbar.Name = "panelToolbar";
       this.panelToolbar.TabIndex = 16;
       this.panelToolbar.Padding = new System.Windows.Forms.Padding(5);
       this.panelToolbar.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
-      this.panelToolbar.AutoSize = false;
+      this.panelToolbar.AutoSize = true;
       this.panelToolbar.WrapContents = false;
 
       this.panelTableSelector = new System.Windows.Forms.Panel();
@@ -278,6 +301,7 @@ namespace WorkOrderBlender
       ((System.ComponentModel.ISupportInitialize)(this.splitMain)).BeginInit();
       this.splitMain.Dock = System.Windows.Forms.DockStyle.Fill;
       this.splitMain.Orientation = System.Windows.Forms.Orientation.Vertical;
+      this.splitMain.FixedPanel = System.Windows.Forms.FixedPanel.Panel1;
       this.splitMain.Panel1.SuspendLayout();
       this.splitMain.Panel2.SuspendLayout();
       this.splitMain.SuspendLayout();
@@ -308,6 +332,9 @@ namespace WorkOrderBlender
       // rightLayoutTable - placed into splitMain.Panel2
       this.rightLayoutTable = new System.Windows.Forms.TableLayoutPanel();
       this.rightLayoutTable.Dock = System.Windows.Forms.DockStyle.Fill;
+      // Add a border to the rightLayoutTable for visual separation
+      this.rightLayoutTable.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Single; // 1px border between cells
+      // this.rightLayoutTable.BackColor = System.Drawing.SystemColors.ControlLight; // Subtle background for border effect
       this.rightLayoutTable.ColumnCount = 1;
       this.rightLayoutTable.RowCount = 1;
       this.rightLayoutTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
@@ -315,8 +342,8 @@ namespace WorkOrderBlender
 
       // panelMetricsBorder wraps metricsGrid to show a thick border in edit mode
       this.panelMetricsBorder.Dock = System.Windows.Forms.DockStyle.Fill;
-      this.panelMetricsBorder.Padding = new System.Windows.Forms.Padding(6);
-      this.panelMetricsBorder.BackColor = System.Drawing.SystemColors.Control;
+      this.panelMetricsBorder.Margin = new System.Windows.Forms.Padding(0);
+      // this.panelMetricsBorder.BackColor = System.Drawing.SystemColors.Control;
       this.panelMetricsBorder.Name = "panelMetricsBorder";
       this.panelMetricsBorder.TabIndex = 99;
       this.panelMetricsBorder.Controls.Add(this.metricsGrid);
@@ -342,6 +369,9 @@ namespace WorkOrderBlender
       this.metricsGrid.Dock = System.Windows.Forms.DockStyle.Fill;
       this.metricsGrid.AllowUserToAddRows = false;
       this.metricsGrid.AllowUserToDeleteRows = false;
+      this.metricsGrid.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle; // 1px border for grid
+
+      this.metricsGrid.Margin = new System.Windows.Forms.Padding(4); // 4px margin on all sides
       this.metricsGrid.AutoSizeColumnsMode = System.Windows.Forms.DataGridViewAutoSizeColumnsMode.None;
       this.metricsGrid.BackgroundColor = System.Drawing.SystemColors.Window;
       this.metricsGrid.ColumnHeadersHeightSizeMode = System.Windows.Forms.DataGridViewColumnHeadersHeightSizeMode.AutoSize;
@@ -350,6 +380,7 @@ namespace WorkOrderBlender
       this.metricsGrid.RowHeadersWidth = 25;
       this.metricsGrid.RowTemplate.Height = 24;
       this.metricsGrid.SelectionMode = System.Windows.Forms.DataGridViewSelectionMode.CellSelect;
+
       this.metricsGrid.Size = new System.Drawing.Size(364, 317);
       this.metricsGrid.TabIndex = 13;
 
@@ -412,7 +443,6 @@ namespace WorkOrderBlender
       this.panelLoading.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
       this.panelLoading.Dock = System.Windows.Forms.DockStyle.Fill;
       this.panelLoading.Name = "panelLoading";
-      this.panelLoading.Text = "Loading...";
       // Set panelLoading height to 40px (logical pixels)
       this.panelLoading.Height = 40;
       this.panelLoading.TabIndex = 17;
@@ -420,29 +450,18 @@ namespace WorkOrderBlender
       this.panelLoading.Padding = new System.Windows.Forms.Padding(0);
       // Custom paint for pink border
 
-
-            // progressLoading removed - no longer needed
-
-      // Create layout for loading panel (message only)
-      this.loadingLayout.Dock = System.Windows.Forms.DockStyle.Fill;
-      this.loadingLayout.ColumnCount = 1;
-      this.loadingLayout.RowCount = 1;
-      this.loadingLayout.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-      this.loadingLayout.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-      this.loadingLayout.Margin = new System.Windows.Forms.Padding(0);
-
       // lblLoading
       //
       this.lblLoading.AutoSize = false;
       this.lblLoading.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
       this.lblLoading.Name = "lblLoading";
-      this.lblLoading.Text = "Loading data...";
+      this.lblLoading.Text = "Loawtwtwetwetwetwetding data...";
       this.lblLoading.Dock = System.Windows.Forms.DockStyle.Fill;
       this.lblLoading.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
-      this.lblLoading.Margin = new System.Windows.Forms.Padding(0);
+      this.lblLoading.Margin = new System.Windows.Forms.Padding(0, -10, 0, 0);
 
-      this.loadingLayout.Controls.Add(this.lblLoading, 0, 0);
-      this.panelLoading.Controls.Add(this.loadingLayout);
+      // this.loadingLayout.Controls.Add(this.lblLoading, 0, 0);
+      this.panelLoading.Controls.Add(this.lblLoading);
 
       // bottomLayout - Bottom row spanning both columns (0,1) and (1,1)
       //
@@ -484,7 +503,6 @@ namespace WorkOrderBlender
       this.panelLoading.Visible = false;
       this.panelLoading.Dock = System.Windows.Forms.DockStyle.Fill;
       this.panelLoading.Margin = new System.Windows.Forms.Padding(0);
-      this.panelLoading.Padding = new System.Windows.Forms.Padding(12, 16, 12, 16); // Match actions panel padding
       this.panelLoading.BorderStyle = System.Windows.Forms.BorderStyle.None; // Remove border for consistency
 
       // Arrange controls within panelActions using proper anchoring
@@ -521,9 +539,9 @@ namespace WorkOrderBlender
 
       // Add splitMain to main table top row and span both columns
       this.mainLayoutTable.Controls.Add(this.splitMain, 0, 0);
-      this.mainLayoutTable.SetColumnSpan(this.splitMain, 2);
+      // this.mainLayoutTable.SetColumnSpan(this.splitMain, 2);
       this.mainLayoutTable.Controls.Add(this.bottomLayout, 0, 1);
-      this.mainLayoutTable.SetColumnSpan(this.bottomLayout, 2); // Span both columns
+      // this.mainLayoutTable.SetColumnSpan(this.bottomLayout, 2); // Span both columns
 
 
       //
@@ -556,6 +574,8 @@ namespace WorkOrderBlender
     private Button btnConsolidate;
     private Button btnPreviewChanges;
     private Button btnSettings;
+    private Button btnTableSelectAll;
+    private Button btnTableClearAll;
     private TextBox txtOutput;
     private Label labelOutput;
     private ProgressBar progress;

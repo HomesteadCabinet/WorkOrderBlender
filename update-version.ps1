@@ -103,23 +103,23 @@ function Update-WixVersion {
     return $true
 }
 
-# Function to build portable package
-function Build-PortablePackage {
+# Function to build package
+function Build-Package {
     param([string]$Version)
 
     Write-Host "`n[INFO] Building portable package..." -ForegroundColor Cyan
 
     try {
-        # Run the build-portable script
-        $buildScript = Join-Path $PSScriptRoot "build-portable.ps1"
+        # Run the build script
+        $buildScript = Join-Path $PSScriptRoot "build.ps1"
         if (-not (Test-Path $buildScript)) {
-            Write-Error "[ERROR] build-portable.ps1 not found"
+            Write-Error "[ERROR] build.ps1 not found"
             return $false
         }
 
-        # Execute build-portable.ps1 with Clean parameter
+        # Execute build.ps1 with Clean parameter
         # We don't need to skip build since we're updating version files first
-        Write-Host "[INFO] Executing build-portable.ps1..." -ForegroundColor Cyan
+        Write-Host "[INFO] Executing build.ps1..." -ForegroundColor Cyan
         $buildArgs = @("-Clean")
         & $buildScript @buildArgs
 
@@ -210,14 +210,14 @@ if (-not $success) {
 
 # Build portable package (unless skipped)
 if (-not $SkipPortableBuild) {
-    # Check if build-portable.ps1 exists
-    $buildScript = Join-Path $PSScriptRoot "build-portable.ps1"
+        # Check if build.ps1 exists
+    $buildScript = Join-Path $PSScriptRoot "build.ps1"
     if (-not (Test-Path $buildScript)) {
-        Write-Error "[ERROR] build-portable.ps1 not found. Cannot build portable package."
+      Write-Error "[ERROR] build.ps1 not found. Cannot build portable package."
         exit 1
     }
 
-    if (-not (Build-PortablePackage $NewVersion)) {
+    if (-not (Build-Package $NewVersion)) {
         Write-Error "[ERROR] Failed to build portable package"
         exit 1
     }
