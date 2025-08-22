@@ -49,6 +49,28 @@ namespace WorkOrderBlender
     public List<ColumnVisibilityEntry> ColumnVisibilities { get; set; } = new List<ColumnVisibilityEntry>();
 
     [Serializable]
+    public sealed class ColumnHeaderEntry
+    {
+      public string TableName { get; set; }
+      public string ColumnName { get; set; }
+      public string HeaderText { get; set; }
+      public string ToolTip { get; set; }
+    }
+
+    public List<ColumnHeaderEntry> ColumnHeaders { get; set; } = new List<ColumnHeaderEntry>();
+
+    [Serializable]
+    public sealed class ColumnColorEntry
+    {
+      public string TableName { get; set; }
+      public string ColumnName { get; set; }
+      public int BackColorArgb { get; set; } // Store as ARGB integer for serialization
+      public int ForeColorArgb { get; set; } // Store as ARGB integer for serialization
+    }
+
+    public List<ColumnColorEntry> ColumnColors { get; set; } = new List<ColumnColorEntry>();
+
+    [Serializable]
     public sealed class VirtualColumnDef
     {
       public string TableName { get; set; }
@@ -90,6 +112,7 @@ namespace WorkOrderBlender
       EnsureBuiltInSourceFileColumn();
       if (ColumnWidths == null) ColumnWidths = new List<ColumnWidthEntry>();
       if (ColumnVisibilities == null) ColumnVisibilities = new List<ColumnVisibilityEntry>();
+      if (ColumnHeaders == null) ColumnHeaders = new List<ColumnHeaderEntry>();
       if (VirtualColumns == null) VirtualColumns = new List<VirtualColumnDef>();
 
       // Only add if missing to avoid overwriting user's preferences
@@ -165,7 +188,6 @@ namespace WorkOrderBlender
       AddWidth("Products", "_SourceFile", 120);
       AddWidth("Parts", "_SourceFile", 120);
       AddWidth("Subassemblies", "_SourceFile", 120);
-      AddWidth("Sheets", "_SourceFile", 120);
     }
 
     private void EnsureBuiltInSourceFileColumn()
@@ -326,14 +348,154 @@ namespace WorkOrderBlender
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
       var entry = ColumnVisibilities.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
         && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
-      if (entry == null)
+
+      if (isVisible)
       {
-        entry = new ColumnVisibilityEntry { TableName = tableName, ColumnName = columnName, IsVisible = isVisible };
-        ColumnVisibilities.Add(entry);
+        // Only store hidden columns to prevent excessive data - remove visible column entries
+        if (entry != null)
+        {
+          ColumnVisibilities.Remove(entry);
+        }
       }
       else
       {
-        entry.IsVisible = isVisible;
+        // Store hidden columns
+        if (entry == null)
+        {
+          entry = new ColumnVisibilityEntry { TableName = tableName, ColumnName = columnName, IsVisible = false };
+          ColumnVisibilities.Add(entry);
+        }
+        else
+        {
+          entry.IsVisible = false;
+        }
+      }
+    }
+
+    public string TryGetColumnHeaderText(string tableName, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
+      var entry = ColumnHeaders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      var text = entry?.HeaderText;
+      return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    public void SetColumnHeaderText(string tableName, string columnName, string headerText)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      var entry = ColumnHeaders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry == null)
+      {
+        entry = new ColumnHeaderEntry { TableName = tableName, ColumnName = columnName };
+        ColumnHeaders.Add(entry);
+      }
+      entry.HeaderText = headerText ?? string.Empty;
+    }
+
+    public string TryGetColumnHeaderToolTip(string tableName, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
+      var entry = ColumnHeaders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      var tip = entry?.ToolTip;
+      return string.IsNullOrWhiteSpace(tip) ? null : tip;
+    }
+
+    public void SetColumnHeaderToolTip(string tableName, string columnName, string toolTip)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      var entry = ColumnHeaders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry == null)
+      {
+        entry = new ColumnHeaderEntry { TableName = tableName, ColumnName = columnName };
+        ColumnHeaders.Add(entry);
+      }
+      entry.ToolTip = toolTip ?? string.Empty;
+    }
+
+    // Column color management methods
+    public System.Drawing.Color? TryGetColumnBackColor(string tableName, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
+      var entry = ColumnColors.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry != null && entry.BackColorArgb != 0)
+      {
+        return System.Drawing.Color.FromArgb(entry.BackColorArgb);
+      }
+      return null;
+    }
+
+    public System.Drawing.Color? TryGetColumnForeColor(string tableName, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return null;
+      var entry = ColumnColors.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry != null && entry.ForeColorArgb != 0)
+      {
+        return System.Drawing.Color.FromArgb(entry.ForeColorArgb);
+      }
+      return null;
+    }
+
+    public void SetColumnBackColor(string tableName, string columnName, System.Drawing.Color? backColor)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      var entry = ColumnColors.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry == null)
+      {
+        entry = new ColumnColorEntry { TableName = tableName, ColumnName = columnName };
+        ColumnColors.Add(entry);
+      }
+      entry.BackColorArgb = backColor.HasValue ? backColor.Value.ToArgb() : 0;
+
+      // Remove entry if no colors are set to keep settings.xml clean
+      if (entry.BackColorArgb == 0 && entry.ForeColorArgb == 0)
+      {
+        ColumnColors.Remove(entry);
+      }
+    }
+
+    public void SetColumnForeColor(string tableName, string columnName, System.Drawing.Color? foreColor)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      var entry = ColumnColors.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry == null)
+      {
+        entry = new ColumnColorEntry { TableName = tableName, ColumnName = columnName };
+        ColumnColors.Add(entry);
+      }
+      entry.ForeColorArgb = foreColor.HasValue ? foreColor.Value.ToArgb() : 0;
+
+      // Remove entry if no colors are set to keep settings.xml clean
+      if (entry.BackColorArgb == 0 && entry.ForeColorArgb == 0)
+      {
+        ColumnColors.Remove(entry);
+      }
+    }
+
+    public void SetColumnColors(string tableName, string columnName, System.Drawing.Color? backColor, System.Drawing.Color? foreColor)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      var entry = ColumnColors.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
+      if (entry == null)
+      {
+        entry = new ColumnColorEntry { TableName = tableName, ColumnName = columnName };
+        ColumnColors.Add(entry);
+      }
+      entry.BackColorArgb = backColor.HasValue ? backColor.Value.ToArgb() : 0;
+      entry.ForeColorArgb = foreColor.HasValue ? foreColor.Value.ToArgb() : 0;
+
+      // Remove entry if no colors are set to keep settings.xml clean
+      if (entry.BackColorArgb == 0 && entry.ForeColorArgb == 0)
+      {
+        ColumnColors.Remove(entry);
       }
     }
 
@@ -468,76 +630,76 @@ namespace WorkOrderBlender
       }
     }
 
-      private static readonly object configFileLock = new object();
+    private static readonly object configFileLock = new object();
 
-  public static UserConfig LoadOrDefault()
-  {
-    lock (cacheLock)
+    public static UserConfig LoadOrDefault()
     {
-      if (cachedInstance != null)
+      lock (cacheLock)
       {
-        return cachedInstance;
-      }
-
-      lock (configFileLock)
-      {
-        try
+        if (cachedInstance != null)
         {
-          var path = GetConfigPath();
-          if (File.Exists(path))
+          return cachedInstance;
+        }
+
+        lock (configFileLock)
+        {
+          try
           {
-            // Check if file is empty or corrupted
-            var fileInfo = new FileInfo(path);
-            if (fileInfo.Length == 0)
+            var path = GetConfigPath();
+            if (File.Exists(path))
             {
-              Program.Log("Settings file is empty, recreating with defaults");
-              File.Delete(path);
-            }
-            else
-            {
-              try
+              // Check if file is empty or corrupted
+              var fileInfo = new FileInfo(path);
+              if (fileInfo.Length == 0)
               {
-                var ser = new XmlSerializer(typeof(UserConfig));
-                using (var fs = File.OpenRead(path))
-                {
-                  var cfg = (UserConfig)ser.Deserialize(fs);
-                  cfg.EnsureDefaultMetricsLayout();
-                  cachedInstance = cfg;
-                  return cfg;
-                }
+                Program.Log("Settings file is empty, recreating with defaults");
+                File.Delete(path);
               }
-              catch (Exception xmlEx)
+              else
               {
-                Program.Log("XML parsing failed, recreating corrupted settings.xml", xmlEx);
                 try
                 {
-                  File.Delete(path);
+                  var ser = new XmlSerializer(typeof(UserConfig));
+                  using (var fs = File.OpenRead(path))
+                  {
+                    var cfg = (UserConfig)ser.Deserialize(fs);
+                    cfg.EnsureDefaultMetricsLayout();
+                    cachedInstance = cfg;
+                    return cfg;
+                  }
                 }
-                catch { }
+                catch (Exception xmlEx)
+                {
+                  Program.Log("XML parsing failed, recreating corrupted settings.xml", xmlEx);
+                  try
+                  {
+                    File.Delete(path);
+                  }
+                  catch { }
+                }
               }
             }
-          }
 
-          // Create default settings file if it doesn't exist or was corrupted
-          Program.Log("Creating default settings.xml");
-          var defaultConfig = new UserConfig();
-          defaultConfig.EnsureDefaultMetricsLayout();
-          defaultConfig.Save(); // Create the file with defaults
-          return defaultConfig;
+            // Create default settings file if it doesn't exist or was corrupted
+            Program.Log("Creating default settings.xml");
+            var defaultConfig = new UserConfig();
+            defaultConfig.EnsureDefaultMetricsLayout();
+            defaultConfig.Save(); // Create the file with defaults
+            return defaultConfig;
+          }
+          catch (Exception ex)
+          {
+            Program.Log("Error loading UserConfig", ex);
+          }
+          var created = new UserConfig();
+          created.EnsureDefaultMetricsLayout();
+          cachedInstance = created;
+          return created;
         }
-        catch (Exception ex)
-        {
-          Program.Log("Error loading UserConfig", ex);
-        }
-        var created = new UserConfig();
-        created.EnsureDefaultMetricsLayout();
-        cachedInstance = created;
-        return created;
       }
     }
-  }
 
-      // Method to clear the cached instance (useful for testing or when config changes externally)
+    // Method to clear the cached instance (useful for testing or when config changes externally)
     public static void ClearCache()
     {
       lock (cacheLock)
@@ -596,18 +758,18 @@ namespace WorkOrderBlender
             cachedInstance = null;
           }
         }
-      catch (Exception ex)
-      {
-        Program.Log("Saving UserConfig failed", ex);
-        // Clean up temp file if it exists
-        try
+        catch (Exception ex)
         {
-          var tempPath = GetConfigPath() + ".tmp";
-          if (File.Exists(tempPath))
-            File.Delete(tempPath);
+          Program.Log("Saving UserConfig failed", ex);
+          // Clean up temp file if it exists
+          try
+          {
+            var tempPath = GetConfigPath() + ".tmp";
+            if (File.Exists(tempPath))
+              File.Delete(tempPath);
+          }
+          catch { }
         }
-        catch { }
-      }
       }
     }
   }

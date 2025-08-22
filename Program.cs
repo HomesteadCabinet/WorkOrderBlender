@@ -4,7 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using AutoUpdaterDotNET;
+// AutoUpdater.NET removed - portable builds only
 using System.Threading.Tasks;
 
 namespace WorkOrderBlender
@@ -65,7 +65,7 @@ namespace WorkOrderBlender
       try
       {
         // Configure auto-updater
-        ConfigureAutoUpdater();
+        // AutoUpdater removed - portable builds only
 
         // Create main form and defer update check until after UI is shown and idle
         var mainForm = new MainForm();
@@ -120,11 +120,7 @@ namespace WorkOrderBlender
               var path = Path.Combine(managedDir, "System.Data.SqlServerCe.dll");
               if (File.Exists(path)) return Assembly.LoadFrom(path);
             }
-            if (e.Name.StartsWith("AutoUpdater.NET", StringComparison.OrdinalIgnoreCase))
-            {
-              var path = Path.Combine(managedDir, "AutoUpdater.NET.dll");
-              if (File.Exists(path)) return Assembly.LoadFrom(path);
-            }
+            // AutoUpdater.NET assembly loading removed - portable builds only
           }
           catch { }
           return null;
@@ -163,26 +159,7 @@ namespace WorkOrderBlender
       catch { }
     }
 
-    private static void ConfigureAutoUpdater()
-    {
-      // Configure AutoUpdater.NET
-      AutoUpdater.UpdateMode = Mode.ForcedDownload;
-      AutoUpdater.ShowSkipButton = false;
-      AutoUpdater.ShowRemindLaterButton = true;
-      AutoUpdater.RemindLaterTimeSpan = RemindLaterFormat.Days;
-      AutoUpdater.RemindLaterAt = 3;
-
-      // Set application details
-      AutoUpdater.AppTitle = "Work Order SDF Consolidator";
-      AutoUpdater.RunUpdateAsAdmin = false;
-
-      // Handle update events
-      AutoUpdater.UpdateFormSize = new System.Drawing.Size(800, 600);
-      AutoUpdater.ApplicationExitEvent += () => Environment.Exit(0);
-
-      // Optional: Custom update form styling
-      AutoUpdater.ReportErrors = true;
-    }
+    // ConfigureAutoUpdater method removed - portable builds only
 
     public static async void CheckForUpdates(bool silent = false, bool isStartupCheck = false)
     {

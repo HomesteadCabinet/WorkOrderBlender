@@ -25,8 +25,6 @@ namespace WorkOrderBlender
       ("Products", "Products"),
       ("Parts", "Parts"),
       ("Subassemblies", "Subassemblies"),
-      ("Sheets", "Sheets"),
-      ("Materials", "Materials"),
       ("Hardware", "Hardware"),
     };
 
@@ -57,6 +55,13 @@ namespace WorkOrderBlender
     public MainForm()
     {
       InitializeComponent();
+      // Wire toolbar selection buttons
+      try
+      {
+        if (btnTableSelectAll != null) btnTableSelectAll.Click += btnTableSelectAll_Click;
+        if (btnTableClearAll != null) btnTableClearAll.Click += btnTableClearAll_Click;
+      }
+      catch { }
 
       // Set window title with version number
       var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
@@ -118,12 +123,35 @@ namespace WorkOrderBlender
       this.listWorkOrders.StateImageList = CreateCheckStateImageList();
       this.listWorkOrders.MouseDown += listWorkOrders_MouseDown;
       this.listWorkOrders.KeyDown += listWorkOrders_KeyDown;
+      this.metricsGrid.DataError += metricsGrid_DataError;
       this.Shown += (s, e) =>
       {
         try
         {
           // Use synchronous loading instead of async
           ScanWorkOrders();
+
+          // Defer applying saved splitter distance until after initial layout completes
+          this.BeginInvoke(new Action(() =>
+          {
+            try
+            {
+              var cfg = UserConfig.LoadOrDefault();
+              if (cfg.MainSplitterDistance > 0)
+              {
+                // Clamp desired distance within valid bounds
+                int available = splitMain.Width - splitMain.SplitterWidth - splitMain.Panel2MinSize;
+                if (available < splitMain.Panel1MinSize) available = splitMain.Panel1MinSize;
+                int desired = cfg.MainSplitterDistance;
+                int clamped = Math.Max(splitMain.Panel1MinSize, Math.Min(desired, available));
+                if (clamped > 0)
+                {
+                  splitMain.SplitterDistance = clamped;
+                }
+              }
+            }
+            catch { }
+          }));
         }
         catch (Exception ex)
         {
@@ -150,6 +178,16 @@ namespace WorkOrderBlender
           {
             this.StartPosition = FormStartPosition.Manual;
             this.Location = new System.Drawing.Point(cfg.MainWindowX, cfg.MainWindowY);
+          }
+
+          // Apply splitter distance if valid
+          if (cfg.MainSplitterDistance > 0)
+          {
+            try
+            {
+              splitMain.SplitterDistance = Math.Max(splitMain.Panel1MinSize, cfg.MainSplitterDistance);
+            }
+            catch { }
           }
         }
         catch { }
@@ -178,10 +216,52 @@ namespace WorkOrderBlender
           try
           {
             var cfg = UserConfig.LoadOrDefault();
+            // Hard-lock: always record the actual splitter distance
             cfg.MainSplitterDistance = Math.Max(splitMain.Panel1MinSize, splitMain.SplitterDistance);
             cfg.Save();
           }
           catch { }
+        };
+      }
+      catch { }
+
+      // Re-apply saved splitter distance after any size/layout changes to keep it locked
+      try
+      {
+        void ReapplySavedSplitterDistance()
+        {
+          try
+          {
+            var cfg = UserConfig.LoadOrDefault();
+            if (cfg.MainSplitterDistance > 0 && splitMain.Width > 0)
+            {
+              int available = splitMain.Width - splitMain.SplitterWidth - splitMain.Panel2MinSize;
+              if (available < splitMain.Panel1MinSize) available = splitMain.Panel1MinSize;
+              int desired = cfg.MainSplitterDistance;
+              int clamped = Math.Max(splitMain.Panel1MinSize, Math.Min(desired, available));
+              if (clamped > 0 && clamped != splitMain.SplitterDistance)
+              {
+                splitMain.SplitterDistance = clamped;
+              }
+            }
+          }
+          catch { }
+        }
+
+        // Apply on initial Shown via BeginInvoke is already wired above.
+        // Also apply on first few size changes to counter autosizing/DPI adjustments.
+        int remainingApplies = 3; // small number to avoid infinite loops
+        this.splitMain.SizeChanged += (s, e) =>
+        {
+          if (remainingApplies <= 0) return;
+          remainingApplies--;
+          this.BeginInvoke(new Action(ReapplySavedSplitterDistance));
+        };
+
+        // Apply when form finishes user resize
+        this.ResizeEnd += (s, e) =>
+        {
+          this.BeginInvoke(new Action(ReapplySavedSplitterDistance));
         };
       }
       catch { }
@@ -204,14 +284,22 @@ namespace WorkOrderBlender
       // Subscribe to changes in the edit store
       Program.Edits.ChangesUpdated += (s, e) =>
       {
-        if (InvokeRequired)
-          Invoke(new Action(UpdatePreviewChangesButton));
-        else
-          UpdatePreviewChangesButton();
+        UpdatePreviewChangesButton();
       };
 
       // Initialize button state
       UpdatePreviewChangesButton();
+    }
+
+    // Suppress grid binding errors and log them to avoid intrusive dialogs
+    private void metricsGrid_DataError(object sender, DataGridViewDataErrorEventArgs e)
+    {
+      try
+      {
+        Program.Log($"DataGridView DataError at row {e.RowIndex}, column {e.ColumnIndex}", e.Exception);
+        e.ThrowException = false;
+      }
+      catch { }
     }
 
     // SQL CE connection helpers are centralized in SqlCeUtils
@@ -350,8 +438,6 @@ namespace WorkOrderBlender
       return absoluteDir;
     }
 
-
-
     private void ScanWorkOrders()
     {
       // Prevent concurrent scans
@@ -380,7 +466,7 @@ namespace WorkOrderBlender
 
       try
       {
-        // Get all directories first
+        // Get all directories - this is the only operation we need
         var dirScanStart = DateTime.Now;
         Program.Log($"Starting directory enumeration at {dirScanStart:HH:mm:ss.fff}");
 
@@ -391,124 +477,34 @@ namespace WorkOrderBlender
 
         Program.Log($"Directory enumeration completed in {dirScanDuration.TotalMilliseconds:F0}ms - Found {totalDirs} directories");
 
-        // Update progress bar for scanning
-        progress.Maximum = totalDirs;
-        progress.Value = 0;
-        progress.Style = ProgressBarStyle.Continuous;
-
+        // Create work order entries with minimal information
         var results = new List<WorkOrderEntry>();
-          var completedCount = 0;
-          var startTime = DateTime.Now;
-          var totalFileSize = 0L;
-          var processedFileSize = 0L;
+        foreach (var dir in dirs)
+        {
+          try
+          {
+            string sdfPath = Path.Combine(dir, GetSdfFileName());
 
-                 // Simple progress tracking - update UI during processing
-            var lastProgressLog = DateTime.Now;
-
-                 foreach (var dir in dirs)
+            var entry = new WorkOrderEntry
             {
-              try
-              {
-             string sdfPath = Path.Combine(dir, GetSdfFileName());
-             bool exists = false;
-             long fileSize = 0;
+              DirectoryPath = dir,
+              SdfPath = sdfPath,
+              SdfExists = File.Exists(sdfPath), // Simple check, no file info needed
+              FileSize = 0 // Not needed, set to 0
+            };
 
-             try
-             {
-               exists = File.Exists(sdfPath);
-               if (exists)
-               {
-                 var fileInfo = new FileInfo(sdfPath);
-                 fileSize = fileInfo.Length;
-               }
-             }
-             catch (Exception ex) { Program.Log($"File.Exists failed for {sdfPath}", ex); }
+            results.Add(entry);
+          }
+          catch (Exception ex)
+          {
+            Program.Log($"Error processing directory {dir}", ex);
+          }
+        }
 
-             var entry = new WorkOrderEntry
-             {
-               DirectoryPath = dir,
-               SdfPath = sdfPath,
-               SdfExists = exists,
-               FileSize = fileSize
-             };
-
-             results.Add(entry);
-             completedCount++;
-             if (exists && fileSize > 0)
-             {
-               totalFileSize += fileSize;
-               processedFileSize += fileSize;
-             }
-
-             // Update progress bar and status
-             if (InvokeRequired)
-             {
-               Invoke(new Action(() =>
-               {
-                 progress.Value = completedCount;
-                 var elapsed = DateTime.Now - startTime;
-                 var remaining = totalDirs - completedCount;
-
-                 if (completedCount > 0 && remaining > 0)
-                 {
-                   // Calculate time estimates
-                   var avgTimePerItem = elapsed.TotalMilliseconds / completedCount;
-                   var estimatedRemaining = TimeSpan.FromMilliseconds(avgTimePerItem * remaining);
-                    var totalEstimated = elapsed + estimatedRemaining;
-
-                    // Format file size information
-                    var fileSizeInfo = totalFileSize > 0 ?
-                      $" ({FormatFileSize(processedFileSize)}/{FormatFileSize(totalFileSize)})" : "";
-
-                   // Update progress bar text
-                    var progressText = $"Scanning work orders... {completedCount}/{totalDirs} ({completedCount * 100 / totalDirs}%){fileSizeInfo} - Est. completion: {totalEstimated:hh\\:mm\\:ss}";
-                    progress.Tag = progressText;
-
-                   // Update loading label
-                   lblLoading.Text = progressText;
-
-                   // Update tooltip
-                      var toolTip = new ToolTip();
-                      toolTip.SetToolTip(progress, progressText);
-                    }
-               }));
-                  }
-
-             // Log progress every 2 seconds
-                var now = DateTime.Now;
-                if ((now - lastProgressLog).TotalSeconds >= 2.0)
-                {
-                  var elapsed = DateTime.Now - startTime;
-                  var remaining = totalDirs - completedCount;
-                  var avgTimePerItem = elapsed.TotalMilliseconds / completedCount;
-                  var estimatedRemaining = TimeSpan.FromMilliseconds(avgTimePerItem * remaining);
-
-                  Program.Log($"Progress: {completedCount}/{totalDirs} ({completedCount * 100 / totalDirs}%) - Elapsed: {elapsed:hh\\:mm\\:ss} - Est. remaining: {estimatedRemaining:hh\\:mm\\:ss}");
-                  lastProgressLog = now;
-                }
-
-                    if (exists)
-                    {
-               Program.Log($"Processed {Path.GetFileName(dir)} - SDF: {FormatFileSize(fileSize)}");
-                  }
-                  else
-                  {
-               Program.Log($"Processed {Path.GetFileName(dir)} - No SDF found");
-             }
-           }
-              catch (Exception ex)
-              {
-             Program.Log($"Error processing directory {dir}", ex);
-             completedCount++;
-           }
-         }
-
-                 // Progress tracking completed
-
-          var parallelEnd = DateTime.Now;
-        var parallelDuration = parallelEnd - startTime;
-          Program.Log($"Parallel processing completed in {parallelDuration.TotalMilliseconds:F0}ms");
-        Program.Log($"Processed {results.Count} work orders, total file size: {FormatFileSize(totalFileSize)}");
+        var parallelEnd = DateTime.Now;
+        var parallelDuration = parallelEnd - dirScanStart;
+        Program.Log($"Processing completed in {parallelDuration.TotalMilliseconds:F0}ms");
+        Program.Log($"Processed {results.Count} work orders");
 
         // Update UI / state
         allWorkOrders.Clear();
@@ -516,10 +512,10 @@ namespace WorkOrderBlender
         Program.Log($"Updated work order list with {results.Count} entries");
 
         // Build initial filtered list
-         FilterWorkOrders();
+        FilterWorkOrders();
 
-         // Update button state after loading
-         UpdatePreviewChangesButton();
+        // Update button state after loading
+        UpdatePreviewChangesButton();
 
         if (checkedDirs.Count > 0)
         {
@@ -550,8 +546,6 @@ namespace WorkOrderBlender
         RequestRefreshMetricsGrid();
       }
     }
-
-    // legacy handler no longer used
 
     private void btnSelectAll_Click(object sender, EventArgs e)
     {
@@ -601,8 +595,6 @@ namespace WorkOrderBlender
         MessageBox.Show("Error refreshing work orders: " + ex.Message);
       }
     }
-
-
 
     private void btnConsolidate_Click(object sender, EventArgs e)
     {
@@ -767,14 +759,7 @@ namespace WorkOrderBlender
           if (token.IsCancellationRequested) return;
 
           // Use synchronous filtering for better performance
-          if (InvokeRequired)
-          {
-            Invoke(new Action(FilterWorkOrders));
-          }
-          else
-          {
-            FilterWorkOrders();
-          }
+          FilterWorkOrders();
         }
         catch { }
       });
@@ -784,8 +769,6 @@ namespace WorkOrderBlender
     {
       OpenSettingsDialog();
     }
-
-
 
     private void OpenSettingsDialog()
     {
@@ -805,7 +788,7 @@ namespace WorkOrderBlender
         Dock = DockStyle.Top,
         ColumnCount = 4,
         RowCount = 4,
-        Padding = new Padding(10,10,10,10),
+        Padding = new Padding(10, 10, 10, 10),
         Height = 150,
       };
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -872,7 +855,7 @@ namespace WorkOrderBlender
         Dock = DockStyle.Bottom,
         ColumnCount = 4,
         RowCount = 1,
-        Padding = new Padding(10,5,10,5),
+        Padding = new Padding(10, 5, 10, 5),
         Height = 40,
       };
       panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Check Updates
@@ -910,15 +893,7 @@ namespace WorkOrderBlender
 
     private void FilterWorkOrders()
     {
-      string query = string.Empty;
-      if (InvokeRequired)
-      {
-        Invoke(new Action(() => query = txtSearch.Text.Trim()));
-      }
-      else
-      {
-        query = txtSearch.Text.Trim();
-      }
+      string query = txtSearch.Text.Trim();
 
       var cfg = UserConfig.LoadOrDefault();
       bool hidePurchasing = cfg.HidePurchasing;
@@ -932,26 +907,6 @@ namespace WorkOrderBlender
       listWorkOrders.VirtualListSize = filteredWorkOrders.Count;
       listWorkOrders.Invalidate();
     }
-
-    private async Task FilterAsyncInternal(CancellationToken token)
-    {
-      string query = string.Empty;
-      Invoke(new Action(() => query = txtSearch.Text.Trim()));
-
-      var next = await Task.Run(() =>
-      {
-        return allWorkOrders.Where(wo => string.IsNullOrEmpty(query) || wo.DirectoryPath.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
-                   .ToList();
-      }, token);
-
-      if (token.IsCancellationRequested) return;
-
-      filteredWorkOrders = next;
-      listWorkOrders.VirtualListSize = filteredWorkOrders.Count;
-      listWorkOrders.Invalidate();
-    }
-
-    // removed legacy ItemCheck handler; custom state image toggling is used instead
 
     private void listWorkOrders_SelectedIndexChanged(object sender, EventArgs e)
     {
@@ -1006,6 +961,7 @@ namespace WorkOrderBlender
     {
       try
       {
+        ShowLoadingIndicator(true);
         if (suppressTableSelectorChanged) return;
         RequestRefreshMetricsGrid();
       }
@@ -1015,7 +971,7 @@ namespace WorkOrderBlender
       }
     }
 
-        private void RefreshMetricsGrid()
+    private void RefreshMetricsGrid()
     {
       var refreshStart = DateTime.Now;
       var caller = new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name ?? "Unknown";
@@ -1115,12 +1071,42 @@ namespace WorkOrderBlender
                 WireUpGridEvents();
                 AddGridContextMenu();
                 Program.Log("Metrics grid events/context menu wired after binding");
+                // Apply disabled style to excluded rows
+                ApplyDisabledRowStyling();
               }
-              finally { metricsGrid.Visible = prevVisible; metricsGrid.ResumeLayout(); metricsGrid.Refresh(); }
+              finally
+              {
+                metricsGrid.Visible = prevVisible;
+                metricsGrid.ResumeLayout();
+                metricsGrid.Refresh();
+                panelMetricsBorder.Refresh();
+              }
               var bindEnd = DateTime.Now;
-              Program.Log($"Data bind completed in {(bindEnd-bindStart).TotalMilliseconds:F0}ms (build: {(bindStart-buildStart).TotalMilliseconds:F0}ms)");
+              Program.Log($"Data bind completed in {(bindEnd - bindStart).TotalMilliseconds:F0}ms (build: {(bindStart - buildStart).TotalMilliseconds:F0}ms)");
             }
             else { }
+          }
+          else
+          {
+            // No sources selected – clear the metrics grid
+            Program.Log("No work orders selected; clearing metrics grid");
+            currentSourcePaths = new List<string>();
+            metricsGrid.SuspendLayout();
+            var prevVisible = metricsGrid.Visible;
+            metricsGrid.Visible = false;
+            try
+            {
+              metricsGrid.DataSource = null;
+              metricsGrid.Rows.Clear();
+            }
+            catch { }
+            finally
+            {
+              metricsGrid.Visible = prevVisible;
+              metricsGrid.ResumeLayout();
+              metricsGrid.Refresh();
+              panelMetricsBorder.Refresh();
+            }
           }
         }
       }
@@ -1142,21 +1128,6 @@ namespace WorkOrderBlender
       }
     }
 
-    // Dialog helpers removed
-
-    private void IntegrateMetricsGrid()
-    {
-      // No-op after removal of MetricsDialog-based swapping; retained for log stability if called
-      try
-      {
-        WireUpGridEvents();
-        AddGridContextMenu();
-      }
-      catch { }
-    }
-
-    // MetricsDialog removed; helper no longer used
-
     private void WireUpGridEvents()
     {
       try
@@ -1165,8 +1136,15 @@ namespace WorkOrderBlender
         if (gridEventsWired)
         {
           Program.Log("WireUpGridEvents: already wired, skipping");
-              return;
-            }
+          return;
+        }
+
+        // Enable custom header styling (disable visual styles for headers)
+        metricsGrid.EnableHeadersVisualStyles = false;
+
+        // Set selection colors for better visibility
+        metricsGrid.DefaultCellStyle.SelectionBackColor = System.Drawing.Color.FromArgb(215, 245, 255); // Light blue selection
+        metricsGrid.DefaultCellStyle.SelectionForeColor = System.Drawing.Color.Black; // Black text on selection
 
         // Wire up any MainForm-specific grid events here
         // Column resizing and reordering persistence
@@ -1196,6 +1174,9 @@ namespace WorkOrderBlender
         // Virtual column action handling
         metricsGrid.CellClick -= Grid_CellClick;
         metricsGrid.CellClick += Grid_CellClick;
+        // Disabled-style formatting for excluded rows
+        metricsGrid.CellFormatting -= MetricsGrid_CellFormatting_DisabledStyle;
+        metricsGrid.CellFormatting += MetricsGrid_CellFormatting_DisabledStyle;
 
         // Edit-mode related events
         metricsGrid.CellValueChanged -= MetricsGrid_CellValueChanged_Edit;
@@ -1204,6 +1185,10 @@ namespace WorkOrderBlender
         metricsGrid.CurrentCellDirtyStateChanged += MetricsGrid_CurrentCellDirtyStateChanged_Edit;
         metricsGrid.CellEndEdit -= MetricsGrid_CellEndEdit_Edit;
         metricsGrid.CellEndEdit += MetricsGrid_CellEndEdit_Edit;
+
+        // Header styling updates when current cell changes
+        metricsGrid.CurrentCellChanged -= MetricsGrid_CurrentCellChanged;
+        metricsGrid.CurrentCellChanged += MetricsGrid_CurrentCellChanged;
 
         // Debounced order persistence setup
         if (orderPersistTimer == null)
@@ -1230,6 +1215,42 @@ namespace WorkOrderBlender
       }
     }
 
+    // Per-cell styling to indicate excluded (non-selected) rows
+    private void MetricsGrid_CellFormatting_DisabledStyle(object sender, DataGridViewCellFormattingEventArgs e)
+    {
+      try
+      {
+        if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
+        if (metricsGrid?.Rows == null) return;
+        var row = metricsGrid.Rows[e.RowIndex];
+        if (row?.DataBoundItem is DataRowView drv)
+        {
+          if (string.IsNullOrEmpty(currentSelectedTable)) return;
+          var dataRow = drv.Row;
+          object keyObj = null;
+          if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
+          var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+          if (!string.IsNullOrEmpty(linkKey))
+          {
+            bool include = Program.Edits.ShouldInclude(currentSelectedTable, linkKey);
+            if (!include)
+            {
+              var disabledFore = System.Drawing.Color.FromArgb(150, 150, 150);
+              var disabledBack = System.Drawing.Color.FromArgb(240, 240, 240);
+              // Only override if column has no explicit color to avoid masking column styling
+              if (e.CellStyle.ForeColor == System.Drawing.Color.Empty)
+                e.CellStyle.ForeColor = disabledFore;
+              if (e.CellStyle.BackColor == System.Drawing.Color.Empty)
+                e.CellStyle.BackColor = disabledBack;
+              e.CellStyle.SelectionForeColor = disabledFore;
+              e.CellStyle.SelectionBackColor = disabledBack;
+            }
+          }
+        }
+      }
+      catch { }
+    }
+
     private void MetricsGrid_ColumnWidthChanged(object sender, DataGridViewColumnEventArgs e)
     {
       try
@@ -1245,9 +1266,9 @@ namespace WorkOrderBlender
           cfg.Save();
           Program.Log("Persisted width successfully");
         }
-            }
-            catch (Exception ex)
-            {
+      }
+      catch (Exception ex)
+      {
         Program.Log("MetricsGrid_ColumnWidthChanged error", ex);
       }
     }
@@ -1274,6 +1295,19 @@ namespace WorkOrderBlender
       }
     }
 
+    private void MetricsGrid_CurrentCellChanged(object sender, EventArgs e)
+    {
+      try
+      {
+        // Refresh header styles when current cell changes to update selected header highlighting
+        RefreshAllColumnHeaderStyles();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("MetricsGrid_CurrentCellChanged error", ex);
+      }
+    }
+
     private void PersistCurrentOrderSafely()
     {
       try
@@ -1289,9 +1323,9 @@ namespace WorkOrderBlender
         Program.Log("PersistCurrentOrder: saving to settings.xml");
         cfg.Save();
         Program.Log("PersistCurrentOrder: save complete");
-            }
-            catch (Exception ex)
-            {
+      }
+      catch (Exception ex)
+      {
         Program.Log("PersistCurrentOrderSafely error", ex);
       }
     }
@@ -1352,24 +1386,91 @@ namespace WorkOrderBlender
           }
         }
 
-        // Style virtual columns distinctly to stand out
+        // Apply header overrides and tooltips
+        metricsGrid.ShowCellToolTips = true; // enable tooltips generally
+        foreach (DataGridViewColumn col in metricsGrid.Columns)
+        {
+          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          var headerText = cfg.TryGetColumnHeaderText(tableName, key);
+          if (!string.IsNullOrWhiteSpace(headerText))
+          {
+            col.HeaderText = headerText;
+          }
+          var headerTip = cfg.TryGetColumnHeaderToolTip(tableName, key);
+          if (!string.IsNullOrWhiteSpace(headerTip))
+          {
+            // DataGridView does not natively show header tooltips unless set on HeaderCell
+            col.HeaderCell.ToolTipText = headerTip;
+          }
+        }
+
+        // Apply column colors
+        foreach (DataGridViewColumn col in metricsGrid.Columns)
+        {
+          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          var backColor = cfg.TryGetColumnBackColor(tableName, key);
+          if (backColor.HasValue)
+          {
+            col.DefaultCellStyle.BackColor = backColor.Value;
+            col.HeaderCell.Style.BackColor = backColor.Value;
+          }
+          var foreColor = cfg.TryGetColumnForeColor(tableName, key);
+          if (foreColor.HasValue)
+          {
+            col.DefaultCellStyle.ForeColor = foreColor.Value;
+            col.HeaderCell.Style.ForeColor = foreColor.Value;
+          }
+
+          // Ensure header styles are synchronized
+          ApplyHeaderStyles(col);
+        }
+
+        // Style virtual columns with defaults (only if no custom colors are set)
         foreach (var def in virtualColumnDefs)
         {
           if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
           if (!metricsGrid.Columns.Contains(def.ColumnName)) continue;
           var vc = metricsGrid.Columns[def.ColumnName];
-          if (def.IsLookupColumn)
-          {
-            vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(255, 255, 224); // light yellow
-            vc.DefaultCellStyle.ForeColor = System.Drawing.Color.Black;
-          }
-          else if (def.IsActionColumn)
-          {
-            vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(230, 240, 255); // light blue
-            vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkBlue;
-            vc.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-          }
           vc.ReadOnly = true;
+
+          // Apply default styling only if no custom colors are set
+          var key = !string.IsNullOrEmpty(vc.DataPropertyName) ? vc.DataPropertyName : vc.Name;
+          var hasCustomBackColor = cfg.TryGetColumnBackColor(tableName, key).HasValue;
+          var hasCustomForeColor = cfg.TryGetColumnForeColor(tableName, key).HasValue;
+
+          if (!hasCustomBackColor)
+          {
+            if (def.IsLookupColumn)
+            {
+              vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(255, 255, 224); // light yellow
+              vc.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(255, 255, 224);
+            }
+            else if (def.IsActionColumn)
+            {
+              vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(230, 240, 255); // light blue
+              vc.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(230, 240, 255);
+            }
+            else
+            {
+              vc.DefaultCellStyle.BackColor = System.Drawing.Color.Beige;
+              vc.HeaderCell.Style.BackColor = System.Drawing.Color.Beige;
+            }
+          }
+
+          if (!hasCustomForeColor)
+          {
+            if (def.IsActionColumn)
+            {
+              vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkBlue;
+              vc.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkBlue;
+              vc.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            }
+            else
+            {
+              vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkSlateGray;
+              vc.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkSlateGray;
+            }
+          }
         }
 
         // Apply order (build a sensible default when none is saved)
@@ -1433,7 +1534,9 @@ namespace WorkOrderBlender
           var col = metricsGrid.Columns["_SourceFile"];
           col.ReadOnly = true;
           col.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(248, 248, 255);
+          col.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(248, 248, 255);
           col.DefaultCellStyle.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
+          col.HeaderCell.Style.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
           col.HeaderText = "Work Order";
         }
 
@@ -1441,8 +1544,14 @@ namespace WorkOrderBlender
         metricsGrid.AllowUserToOrderColumns = true;
         metricsGrid.AllowUserToResizeColumns = true;
 
+        // Enable custom header styling (disable visual styles for headers)
+        metricsGrid.EnableHeadersVisualStyles = false;
+
         // Initialize edit mode visuals/state
         ApplyMainGridEditState();
+
+        // Ensure all column headers have proper styling
+        RefreshAllColumnHeaderStyles();
       }
       catch (Exception ex)
       {
@@ -1542,7 +1651,7 @@ namespace WorkOrderBlender
                     try { row[col] = reader[col]; } catch { row[col] = DBNull.Value; }
                   }
 
-                  // Apply in-memory overrides by LinkID if present and skip deleted rows
+                  // Apply in-memory overrides by LinkID if present; do not filter here so we can style excluded rows
                   try
                   {
                     object linkVal = DBNull.Value;
@@ -1550,7 +1659,6 @@ namespace WorkOrderBlender
                     if (linkVal != DBNull.Value && linkVal != null)
                     {
                       var linkKey = Convert.ToString(linkVal);
-                      if (Program.Edits.IsDeleted(tableName, linkKey)) continue;
                       var overrides = Program.Edits.SnapshotTable(tableName);
                       if (overrides.TryGetValue(linkKey, out var rowOverrides))
                       {
@@ -1676,12 +1784,12 @@ namespace WorkOrderBlender
                 }
                 catch { }
               }
-        }
-      }
-      catch (Exception ex)
-      {
+            }
+          }
+          catch (Exception ex)
+          {
             Program.Log($"MainForm: BuildVirtualLookupCaches failed for {def.ColumnName}", ex);
-      }
+          }
           virtualLookupCacheByColumn[def.ColumnName] = lookup;
         }
       }
@@ -1781,35 +1889,133 @@ namespace WorkOrderBlender
         // Hide/Show columns
         menu.Items.Add(new ToolStripSeparator());
         var hideColumn = new ToolStripMenuItem("Hide Column");
-        hideColumn.Click += (s, e) => { col.Visible = false; SaveColumnVisibility(col.Name, false); };
+        hideColumn.Click += (s, e) =>
+        {
+          col.Visible = false;
+          SaveColumnVisibility(col.Name, false);
+          panelMetricsBorder.Refresh();
+        };
         menu.Items.Add(hideColumn);
 
-        var showColumnsMenu = new ToolStripMenuItem("Show Columns");
-        var hasHiddenColumns = false;
-        foreach (DataGridViewColumn gridCol in metricsGrid.Columns)
+        // Only show "Show Columns" submenu if there are hidden columns
+        var hiddenColumns = metricsGrid.Columns.Cast<DataGridViewColumn>().Where(gridCol => !gridCol.Visible).ToList();
+        if (hiddenColumns.Count > 0)
         {
-          if (!gridCol.Visible)
+          var showColumnsMenu = new ToolStripMenuItem("Show Columns");
+          foreach (var gridCol in hiddenColumns)
           {
-            hasHiddenColumns = true;
             var showCol = new ToolStripMenuItem(gridCol.HeaderText ?? gridCol.Name);
-            showCol.Click += (s, e) => { gridCol.Visible = true; SaveColumnVisibility(gridCol.Name, true); };
+            showCol.Click += (s, e) =>
+            {
+              gridCol.Visible = true;
+              SaveColumnVisibility(gridCol.Name, true);
+              panelMetricsBorder.Refresh();
+            };
             showColumnsMenu.DropDownItems.Add(showCol);
           }
+          menu.Items.Add(showColumnsMenu);
         }
-        showColumnsMenu.Enabled = hasHiddenColumns;
-        menu.Items.Add(showColumnsMenu);
 
-        var showAllColumns = new ToolStripMenuItem("Show All Columns");
-        showAllColumns.Click += (s, e) =>
+        // Only show "Show All Columns" if there are hidden columns
+        if (hiddenColumns.Count > 0)
         {
-          foreach (DataGridViewColumn gridCol in metricsGrid.Columns)
+          var showAllColumns = new ToolStripMenuItem("Show All Columns");
+          showAllColumns.Click += (s, e) =>
           {
-            gridCol.Visible = true;
-            SaveColumnVisibility(gridCol.Name, true);
+            foreach (DataGridViewColumn gridCol in metricsGrid.Columns)
+            {
+              gridCol.Visible = true;
+              SaveColumnVisibility(gridCol.Name, true);
+              panelMetricsBorder.Refresh();
+            }
+          };
+          menu.Items.Add(showAllColumns);
+        }
+
+        // Header label and tooltip customization
+        menu.Items.Add(new ToolStripSeparator());
+        var setHeaderLabel = new ToolStripMenuItem("Set Header Label...");
+        setHeaderLabel.Click += (s, e) =>
+        {
+          var text = PromptForText("Header Label", col.HeaderText ?? col.Name);
+          if (text != null)
+          {
+            SaveColumnHeaderText(col, text);
           }
         };
-        showAllColumns.Enabled = hasHiddenColumns;
-        menu.Items.Add(showAllColumns);
+        // Use Unicode X mark for clear actions for clarity and modern UI
+        var clearHeaderLabel = new ToolStripMenuItem("  ✗ Clear Header Label");
+        clearHeaderLabel.Click += (s, e) => { SaveColumnHeaderText(col, string.Empty); };
+        var setHeaderTooltip = new ToolStripMenuItem("Set Header Tooltip...");
+        setHeaderTooltip.Click += (s, e) =>
+        {
+          var text = PromptForText("Header Tooltip", col.HeaderCell.ToolTipText ?? string.Empty);
+          if (text != null)
+          {
+            SaveColumnHeaderToolTip(col, text);
+          }
+        };
+        var clearHeaderTooltip = new ToolStripMenuItem(" ✗ Clear Header Tooltip");
+        clearHeaderTooltip.Click += (s, e) => { SaveColumnHeaderToolTip(col, string.Empty); };
+
+        // Show/hide clear actions based on whether values are set in config
+        try
+        {
+          var cfgForMenu = UserConfig.LoadOrDefault();
+          var cfgKey = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          bool hasHeader = !string.IsNullOrWhiteSpace(currentSelectedTable) && !string.IsNullOrWhiteSpace(cfgForMenu.TryGetColumnHeaderText(currentSelectedTable, cfgKey));
+          bool hasTip = !string.IsNullOrWhiteSpace(currentSelectedTable) && !string.IsNullOrWhiteSpace(cfgForMenu.TryGetColumnHeaderToolTip(currentSelectedTable, cfgKey));
+          clearHeaderLabel.Visible = hasHeader;
+          clearHeaderTooltip.Visible = hasTip;
+        }
+        catch { }
+        menu.Items.Add(setHeaderLabel);
+        menu.Items.Add(clearHeaderLabel);
+        menu.Items.Add(setHeaderTooltip);
+        menu.Items.Add(clearHeaderTooltip);
+
+        // Column color customization
+        menu.Items.Add(new ToolStripSeparator());
+        var setColumnColor = new ToolStripMenuItem("Set Column Color...");
+        setColumnColor.Click += (s, e) =>
+        {
+          var colorDialog = new ColorDialog();
+          colorDialog.Color = col.DefaultCellStyle.BackColor;
+          if (colorDialog.ShowDialog() == DialogResult.OK)
+          {
+            SaveColumnBackColor(col, colorDialog.Color);
+          }
+        };
+        var clearColumnColor = new ToolStripMenuItem("  ✗ Clear Column Color");
+        clearColumnColor.Click += (s, e) => { SaveColumnBackColor(col, null); };
+        var setTextColor = new ToolStripMenuItem("Set Text Color...");
+        setTextColor.Click += (s, e) =>
+        {
+          var colorDialog = new ColorDialog();
+          colorDialog.Color = col.DefaultCellStyle.ForeColor;
+          if (colorDialog.ShowDialog() == DialogResult.OK)
+          {
+            SaveColumnForeColor(col, colorDialog.Color);
+          }
+        };
+        var clearTextColor = new ToolStripMenuItem("  ✗ Clear Text Color");
+        clearTextColor.Click += (s, e) => { SaveColumnForeColor(col, null); };
+
+        // Show/hide clear color actions based on whether colors are set in config
+        try
+        {
+          var cfgForMenu = UserConfig.LoadOrDefault();
+          var cfgKey = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          bool hasBackColor = !string.IsNullOrWhiteSpace(currentSelectedTable) && cfgForMenu.TryGetColumnBackColor(currentSelectedTable, cfgKey).HasValue;
+          bool hasForeColor = !string.IsNullOrWhiteSpace(currentSelectedTable) && cfgForMenu.TryGetColumnForeColor(currentSelectedTable, cfgKey).HasValue;
+          clearColumnColor.Visible = hasBackColor;
+          clearTextColor.Visible = hasForeColor;
+        }
+        catch { }
+        menu.Items.Add(setColumnColor);
+        menu.Items.Add(clearColumnColor);
+        menu.Items.Add(setTextColor);
+        menu.Items.Add(clearTextColor);
 
         // Manage virtual columns from header context
         menu.Items.Add(new ToolStripSeparator());
@@ -1861,6 +2067,147 @@ namespace WorkOrderBlender
       }
       catch { }
       return null;
+    }
+
+    private string PromptForText(string title, string initialText)
+    {
+      try
+      {
+        var dlg = new Form
+        {
+          Text = title,
+          StartPosition = FormStartPosition.CenterParent,
+          FormBorderStyle = FormBorderStyle.FixedDialog,
+          MinimizeBox = false,
+          MaximizeBox = false,
+          Width = 400,
+          Height = 150
+        };
+        var lbl = new Label { Text = title + ":", AutoSize = true, Location = new System.Drawing.Point(12, 15) };
+        var txt = new TextBox { Location = new System.Drawing.Point(15, 40), Width = 360 };
+        txt.Text = initialText ?? string.Empty;
+        var btnOk = new Button { Text = "OK", DialogResult = DialogResult.OK, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, Location = new System.Drawing.Point(dlg.ClientSize.Width - 170, 80) };
+        var btnCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, Location = new System.Drawing.Point(dlg.ClientSize.Width - 90, 80) };
+        dlg.AcceptButton = btnOk; dlg.CancelButton = btnCancel;
+        dlg.Controls.Add(lbl); dlg.Controls.Add(txt); dlg.Controls.Add(btnOk); dlg.Controls.Add(btnCancel);
+        if (dlg.ShowDialog(this) == DialogResult.OK)
+        {
+          return txt.Text;
+        }
+      }
+      catch { }
+      return null;
+    }
+
+    private void SaveColumnHeaderText(DataGridViewColumn column, string headerText)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(currentSelectedTable) || column == null) return;
+        var cfg = UserConfig.LoadOrDefault();
+        var key = !string.IsNullOrEmpty(column.DataPropertyName) ? column.DataPropertyName : column.Name;
+        cfg.SetColumnHeaderText(currentSelectedTable, key, headerText);
+        cfg.Save();
+        // Apply immediately
+        column.HeaderText = string.IsNullOrEmpty(headerText) ? key : headerText;
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SaveColumnHeaderText error", ex);
+      }
+    }
+
+    private void SaveColumnHeaderToolTip(DataGridViewColumn col, string toolTip)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(currentSelectedTable)) return;
+        var cfg = UserConfig.LoadOrDefault();
+        var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+        cfg.SetColumnHeaderToolTip(currentSelectedTable, key, toolTip);
+        cfg.Save();
+      }
+      catch { }
+    }
+
+    private void SaveColumnBackColor(DataGridViewColumn col, System.Drawing.Color? backColor)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(currentSelectedTable)) return;
+        var cfg = UserConfig.LoadOrDefault();
+        var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+        cfg.SetColumnBackColor(currentSelectedTable, key, backColor);
+        cfg.Save();
+
+        // Apply the color immediately
+        if (backColor.HasValue)
+        {
+          col.DefaultCellStyle.BackColor = backColor.Value;
+          col.HeaderCell.Style.BackColor = backColor.Value;
+        }
+        else
+        {
+          // Reset to default color based on column type
+          if (virtualColumnNames.Contains(col.Name))
+          {
+            col.DefaultCellStyle.BackColor = System.Drawing.Color.Beige;
+            col.HeaderCell.Style.BackColor = System.Drawing.Color.Beige;
+          }
+          else
+          {
+            col.DefaultCellStyle.BackColor = System.Drawing.Color.White;
+            col.HeaderCell.Style.BackColor = System.Drawing.Color.White;
+          }
+        }
+
+        // Ensure header styles are synchronized
+        ApplyHeaderStyles(col);
+
+        // Force refresh to show header changes immediately
+        metricsGrid.InvalidateColumn(col.Index);
+      }
+      catch { }
+    }
+
+    private void SaveColumnForeColor(DataGridViewColumn col, System.Drawing.Color? foreColor)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(currentSelectedTable)) return;
+        var cfg = UserConfig.LoadOrDefault();
+        var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+        cfg.SetColumnForeColor(currentSelectedTable, key, foreColor);
+        cfg.Save();
+
+        // Apply the color immediately
+        if (foreColor.HasValue)
+        {
+          col.DefaultCellStyle.ForeColor = foreColor.Value;
+          col.HeaderCell.Style.ForeColor = foreColor.Value;
+        }
+        else
+        {
+          // Reset to default color based on column type
+          if (virtualColumnNames.Contains(col.Name))
+          {
+            col.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkSlateGray;
+            col.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkSlateGray;
+          }
+          else
+          {
+            col.DefaultCellStyle.ForeColor = System.Drawing.Color.Black;
+            col.HeaderCell.Style.ForeColor = System.Drawing.Color.Black;
+          }
+        }
+
+        // Ensure header styles are synchronized
+        ApplyHeaderStyles(col);
+
+        // Force refresh to show header changes immediately
+        metricsGrid.InvalidateColumn(col.Index);
+      }
+      catch { }
     }
 
     private void SaveColumnVisibility(string columnName, bool isVisible)
@@ -2246,7 +2593,7 @@ namespace WorkOrderBlender
       }
     }
 
-    // Add context menu to the grid for easy access to MetricsDialog features
+    // Add context menu to the grid for easy access to grid features
     private void AddGridContextMenu()
     {
       try
@@ -2266,6 +2613,52 @@ namespace WorkOrderBlender
       }
     }
 
+    // Visually indicate excluded rows (non-selected) with a disabled style
+    private void ApplyDisabledRowStyling()
+    {
+      try
+      {
+        if (metricsGrid == null || metricsGrid.Rows.Count == 0) return;
+        if (string.IsNullOrEmpty(currentSelectedTable)) return;
+        // Use a subtle gray forecolor and light background for excluded rows
+        var disabledFore = System.Drawing.Color.FromArgb(150, 150, 150);
+        var disabledBack = System.Drawing.Color.FromArgb(240, 240, 240);
+        foreach (DataGridViewRow row in metricsGrid.Rows)
+        {
+          try
+          {
+            if (row?.DataBoundItem is DataRowView drv)
+            {
+              var dataRow = drv.Row;
+              object keyObj = null;
+              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
+              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+              bool include = true;
+              if (!string.IsNullOrEmpty(linkKey)) include = Program.Edits.ShouldInclude(currentSelectedTable, linkKey);
+
+              if (!include)
+              {
+                row.DefaultCellStyle.ForeColor = disabledFore;
+                row.DefaultCellStyle.BackColor = disabledBack;
+                row.DefaultCellStyle.SelectionForeColor = disabledFore;
+                row.DefaultCellStyle.SelectionBackColor = disabledBack;
+              }
+              else
+              {
+                // Clear row-level overrides so column-level colors apply
+                row.DefaultCellStyle.ForeColor = System.Drawing.Color.Empty;
+                row.DefaultCellStyle.BackColor = System.Drawing.Color.Empty;
+                row.DefaultCellStyle.SelectionForeColor = System.Drawing.Color.Empty;
+                row.DefaultCellStyle.SelectionBackColor = System.Drawing.Color.Empty;
+              }
+            }
+          }
+          catch { }
+        }
+      }
+      catch { }
+    }
+
     private void ShowBodyContextMenu(int rowIndex, int columnIndex, System.Drawing.Point clientLocation)
     {
       try
@@ -2278,17 +2671,81 @@ namespace WorkOrderBlender
         exportWmf.Click += (s, e) => ExportStreamsForSelection("WMFStream");
         export.DropDownItems.Add(exportJpeg);
         export.DropDownItems.Add(exportWmf);
-        var delete = new ToolStripMenuItem("Delete Selected Rows");
+        var include = new ToolStripMenuItem("Include Selected Rows");
+        include.Click += (s, e) => IncludeSelectedRows();
+        var delete = new ToolStripMenuItem("Exclude Selected Rows");
         delete.Click += (s, e) => DeleteSelectedRows();
+        try
+        {
+          // Enable/disable based on current selection state
+          bool anyExcluded = false;
+          bool anyIncluded = false;
+          var rows = metricsGrid.SelectedRows.Cast<DataGridViewRow>().ToList();
+          if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
+          foreach (var r in rows)
+          {
+            if (r?.DataBoundItem is DataRowView drv)
+            {
+              var dataRow = drv.Row;
+              object keyObj = null;
+              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"];
+              else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
+              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+              {
+                bool includeState = Program.Edits.ShouldInclude(currentSelectedTable, linkKey);
+                if (includeState) anyIncluded = true; else anyExcluded = true;
+              }
+            }
+          }
+          include.Enabled = anyExcluded;
+          delete.Enabled = anyIncluded;
+        }
+        catch { }
         var refreshVirtual = new ToolStripMenuItem("Refresh Virtual Columns");
         refreshVirtual.Click += (s, e) => RefreshVirtualColumns();
         menu.Items.Add(export);
+        menu.Items.Add(include);
         menu.Items.Add(delete);
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(refreshVirtual);
         menu.Show(metricsGrid, clientLocation);
       }
       catch { }
+    }
+    // Include all rows for current table
+    private void btnTableSelectAll_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        if (string.IsNullOrEmpty(currentSelectedTable)) return;
+        Program.Edits.SelectAll(currentSelectedTable);
+        RefreshMetricsGrid();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error selecting all rows", ex);
+      }
+    }
+
+    // Exclude all rows for current table
+    private void btnTableClearAll_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        if (string.IsNullOrEmpty(currentSelectedTable)) return;
+        Program.Edits.ClearAll(currentSelectedTable);
+        RefreshMetricsGrid();
+        // Also clear when no work orders selected
+        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        {
+          RequestRefreshMetricsGrid();
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error clearing all rows", ex);
+      }
     }
 
     // Export functionality for stream columns
@@ -2340,7 +2797,7 @@ namespace WorkOrderBlender
       }
     }
 
-    // Delete functionality for selected rows
+    // Exclude functionality for selected rows (selection-based include model)
     private void DeleteSelectedRows()
     {
       try
@@ -2357,7 +2814,7 @@ namespace WorkOrderBlender
         if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
         if (rows.Count == 0) { MessageBox.Show("No rows selected."); return; }
 
-        int deleted = 0;
+        int changed = 0;
         foreach (var row in rows)
         {
           try
@@ -2372,32 +2829,84 @@ namespace WorkOrderBlender
               var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
               if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
               {
-                Program.Edits.MarkDeleted(currentSelectedTable, linkKey);
-                deleted++;
+                // Deselect this row (exclude from destination)
+                Program.Edits.DeselectRow(currentSelectedTable, linkKey);
+                changed++;
               }
-
-              // Remove from current view immediately
-              try { dataRow.Delete(); } catch { }
             }
             else
             {
-              // Fallback: remove the grid row
-              metricsGrid.Rows.Remove(row);
+              // If not a DataRow-bound item, just note the change; view will refresh below
             }
           }
           catch { }
         }
 
-        // Refresh grid to reflect deletions
-        if (deleted > 0)
+        // Refresh grid to reflect selection changes; clear if nothing selected
+        if (changed > 0)
+        {
+          try { RefreshMetricsGrid(); } catch { }
+          if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+          {
+            RequestRefreshMetricsGrid();
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error excluding selected rows", ex);
+        MessageBox.Show("Error excluding selected rows: " + ex.Message, "Selection Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Include functionality for selected rows (undo exclusion)
+    private void IncludeSelectedRows()
+    {
+      try
+      {
+        if (metricsGrid?.DataSource == null)
+        {
+          MessageBox.Show("No data loaded. Please select a table first.", "No Data",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var rows = metricsGrid.SelectedRows.Cast<DataGridViewRow>().ToList();
+        if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
+        if (rows.Count == 0) { MessageBox.Show("No rows selected."); return; }
+
+        int changed = 0;
+        foreach (var row in rows)
+        {
+          try
+          {
+            if (row.IsNewRow) continue;
+            if (row?.DataBoundItem is DataRowView drv)
+            {
+              var dataRow = drv.Row;
+              object keyObj = null;
+              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
+              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
+              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+              {
+                Program.Edits.SelectRow(currentSelectedTable, linkKey);
+                changed++;
+              }
+            }
+          }
+          catch { }
+        }
+
+        if (changed > 0)
         {
           try { RefreshMetricsGrid(); } catch { }
         }
       }
       catch (Exception ex)
       {
-        Program.Log("Error deleting selected rows", ex);
-        MessageBox.Show("Error deleting selected rows: " + ex.Message, "Delete Error",
+        Program.Log("Error including selected rows", ex);
+        MessageBox.Show("Error including selected rows: " + ex.Message, "Selection Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
     }
@@ -2406,11 +2915,6 @@ namespace WorkOrderBlender
     {
       try
       {
-        if (InvokeRequired)
-        {
-          Invoke(new Action<bool, string>(ShowLoadingIndicator), show, message);
-          return;
-        }
 
         // Reduce layout thrash while switching views
         bottomLayout.SuspendLayout();
@@ -2476,71 +2980,6 @@ namespace WorkOrderBlender
       public override string ToString()
       {
         return Label;
-      }
-    }
-
-
-    private static void AutoSizeListViewColumns(ListView view)
-    {
-      try
-      {
-        view.BeginUpdate();
-        // Fit to content, then ensure headers are visible if wider
-        view.AutoResizeColumns(ColumnHeaderAutoResizeStyle.ColumnContent);
-        view.AutoResizeColumns(ColumnHeaderAutoResizeStyle.HeaderSize);
-        foreach (ColumnHeader ch in view.Columns)
-        {
-          if (ch.Width < 50) ch.Width = 50;
-        }
-      }
-      finally
-      {
-        view.EndUpdate();
-      }
-    }
-
-    // SetBusy method removed - functionality consolidated into ShowLoadingIndicator
-
-    // Thread-safe UI update helper
-    private async Task InvokeAsync(Action action)
-    {
-      if (InvokeRequired)
-      {
-        await Task.Run(() => Invoke(action));
-      }
-      else
-      {
-        action();
-      }
-    }
-
-    // Format file size for display
-    private string FormatFileSize(long bytes)
-    {
-      if (bytes < 1024) return $"{bytes} B";
-      if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
-      if (bytes < 1024 * 1024 * 1024) return $"{bytes / (1024.0 * 1024.0):F1} MB";
-      return $"{bytes / (1024.0 * 1024.0 * 1024.0):F1} GB";
-    }
-
-    // Update scan status in the UI
-    private void UpdateScanStatus(string status)
-    {
-      try
-      {
-        // Update the progress bar tooltip with detailed status
-        if (progress.Tag != null)
-        {
-          var toolTip = new ToolTip();
-          toolTip.SetToolTip(progress, status);
-        }
-
-        // Log the status for debugging
-        Program.Log($"Scan Status: {status}");
-      }
-      catch (Exception ex)
-      {
-        Program.Log("Error updating scan status", ex);
       }
     }
 
@@ -2695,7 +3134,7 @@ namespace WorkOrderBlender
         }
         else
         {
-                    try
+          try
           {
             // Get virtual columns to exclude from consolidation
             var virtualColumns = GetVirtualColumnsForTable(tableName);
@@ -2791,8 +3230,7 @@ namespace WorkOrderBlender
     }
 
     // removed legacy prefixed consolidation path
-
-        private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
+    private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
     {
       // Get virtual columns to exclude from consolidation
       var virtualColumns = GetVirtualColumnsForTable(tableName);
@@ -2855,7 +3293,7 @@ namespace WorkOrderBlender
                 if (p.Value == null) p.Value = DBNull.Value;
               }
 
-              // Apply in-memory overrides by LinkID if present and skip deleted rows
+              // Apply in-memory overrides by LinkID if present; do not filter so we can style excluded rows
               try
               {
                 int linkOrdinal = -1;
@@ -2866,7 +3304,6 @@ namespace WorkOrderBlender
                   if (linkVal != DBNull.Value && linkVal != null)
                   {
                     var linkKey = Convert.ToString(linkVal);
-                    if (Program.Edits.IsDeleted(tableName, linkKey)) { rowIndex++; continue; }
                     var overrides = Program.Edits.SnapshotTable(tableName);
                     if (overrides.TryGetValue(linkKey, out var rowOverrides))
                     {
@@ -3126,6 +3563,58 @@ namespace WorkOrderBlender
     {
       // Placeholder for export functionality
       MessageBox.Show($"Export action for ID: {keyValue}", "Export", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void ApplyHeaderStyles(DataGridViewColumn col)
+    {
+      try
+      {
+        // Ensure header styles are synchronized with cell styles
+        // Force creation of header cell style if it doesn't exist
+        if (col.HeaderCell.Style == null)
+        {
+          col.HeaderCell.Style = new DataGridViewCellStyle();
+        }
+
+        // Check if this column is currently selected (has the current cell)
+        bool isSelected = metricsGrid.CurrentCell != null && metricsGrid.CurrentCell.ColumnIndex == col.Index;
+
+        if (isSelected)
+        {
+          // Apply selected header styling
+          col.HeaderCell.Style.ForeColor = System.Drawing.Color.White; // White text on selected header
+        }
+        else
+        {
+          // Apply normal header styling
+          col.HeaderCell.Style.BackColor = col.DefaultCellStyle.BackColor;
+          col.HeaderCell.Style.ForeColor = col.DefaultCellStyle.ForeColor;
+        }
+
+        // Apply additional header-specific styling
+        col.HeaderCell.Style.Font = col.HeaderCell.Style.Font ?? metricsGrid.Font;
+        col.HeaderCell.Style.Alignment = DataGridViewContentAlignment.MiddleCenter;
+      }
+      catch { }
+    }
+
+    private void RefreshAllColumnHeaderStyles()
+    {
+      try
+      {
+        // Ensure visual styles are disabled for custom header styling
+        metricsGrid.EnableHeadersVisualStyles = false;
+
+        foreach (DataGridViewColumn col in metricsGrid.Columns)
+        {
+          ApplyHeaderStyles(col);
+        }
+
+        // Force grid to refresh and redraw headers
+        metricsGrid.Invalidate();
+        metricsGrid.Refresh();
+      }
+      catch { }
     }
   }
 

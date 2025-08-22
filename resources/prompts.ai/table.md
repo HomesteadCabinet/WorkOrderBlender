@@ -432,7 +432,7 @@ public sealed class UserConfig
 
 **25. MainForm Integration**
 - Seamless integration with main application window
-- Support for multiple table types (Products, Parts, Subassemblies, Sheets)
+- Support for multiple table types (Products, Parts, Subassemblies, Hardware)
 - Handle table switching with configuration persistence
 - Integrate with application-wide edit store
 - Support for both standalone and embedded grid modes

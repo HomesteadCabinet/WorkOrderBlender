@@ -31,15 +31,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
-  <!-- Remove NuGet package, add DLL reference instead -->
-  <!-- Download AutoUpdater.NET.dll from GitHub releases and add to project -->
-
-  <ItemGroup>
-    <Reference Include="AutoUpdater.NET">
-      <HintPath>lib\AutoUpdater.NET.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
-  </ItemGroup>
+  <!-- AutoUpdater.NET removed - portable builds only -->
 
   <ItemGroup>
     <Reference Include="System.Data.SqlServerCe">

@@ -301,13 +301,13 @@ namespace WorkOrderBlender
       MinimizeBox = false;
       MaximizeBox = false;
       Width = 520;
-      Height = 380;
+      Height = 280;
 
       var mainTable = new TableLayoutPanel
       {
         Dock = DockStyle.Fill,
         ColumnCount = 2,
-        RowCount = 4,
+        RowCount = 6,
         Padding = new Padding(8),
       };
       mainTable.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));

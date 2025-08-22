@@ -11,9 +11,20 @@ namespace WorkOrderBlender
     // Table -> LinkID(string) -> ColumnName -> Value
     private readonly Dictionary<string, Dictionary<string, Dictionary<string, object>>> tableToEdits
       = new Dictionary<string, Dictionary<string, Dictionary<string, object>>>(StringComparer.OrdinalIgnoreCase);
-    // Table -> Deleted LinkIDs
+    // Table -> Deleted LinkIDs (legacy delete semantics)
     private readonly Dictionary<string, HashSet<string>> tableToDeleted
       = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+    // Selection model: default include or default exclude with exceptions per table
+    private sealed class RowSelectionState
+    {
+      public bool DefaultInclude; // true = include all unless in Exceptions; false = exclude all unless in Exceptions
+      public HashSet<string> Exceptions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Table -> Selection state (rows to include)
+    private readonly Dictionary<string, RowSelectionState> tableToSelection
+      = new Dictionary<string, RowSelectionState>(StringComparer.OrdinalIgnoreCase);
 
     private void OnChangesUpdated()
     {
@@ -145,6 +156,103 @@ namespace WorkOrderBlender
       }
     }
 
+    // ----------------------
+    // Selection API (include rows in destination)
+    // ----------------------
+
+    private RowSelectionState GetOrCreateSelection(string tableName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName)) return null;
+      if (!tableToSelection.TryGetValue(tableName, out var state))
+      {
+        state = new RowSelectionState { DefaultInclude = true }; // all selected by default
+        tableToSelection[tableName] = state;
+      }
+      return state;
+    }
+
+    public void SelectAll(string tableName)
+    {
+      lock (sync)
+      {
+        var state = GetOrCreateSelection(tableName);
+        if (state == null) return;
+        state.DefaultInclude = true; // include all by default
+        state.Exceptions.Clear(); // no exceptions
+      }
+      OnChangesUpdated();
+    }
+
+    public void ClearAll(string tableName)
+    {
+      lock (sync)
+      {
+        var state = GetOrCreateSelection(tableName);
+        if (state == null) return;
+        state.DefaultInclude = false; // exclude all by default
+        state.Exceptions.Clear(); // no exceptions; nothing included until explicitly selected
+      }
+      OnChangesUpdated();
+    }
+
+    public void SelectRow(string tableName, string linkId)
+    {
+      if (string.IsNullOrWhiteSpace(tableName)) return;
+      if (linkId == null) linkId = string.Empty;
+      lock (sync)
+      {
+        var state = GetOrCreateSelection(tableName);
+        if (state == null) return;
+        if (state.DefaultInclude)
+        {
+          // included by default; remove from exclusion exceptions
+          state.Exceptions.Remove(linkId);
+        }
+        else
+        {
+          // excluded by default; add to inclusion exceptions
+          state.Exceptions.Add(linkId);
+        }
+      }
+      OnChangesUpdated();
+    }
+
+    public void DeselectRow(string tableName, string linkId)
+    {
+      if (string.IsNullOrWhiteSpace(tableName)) return;
+      if (linkId == null) linkId = string.Empty;
+      lock (sync)
+      {
+        var state = GetOrCreateSelection(tableName);
+        if (state == null) return;
+        if (state.DefaultInclude)
+        {
+          // included by default; add to exclusion exceptions
+          state.Exceptions.Add(linkId);
+        }
+        else
+        {
+          // excluded by default; remove from inclusion exceptions
+          state.Exceptions.Remove(linkId);
+        }
+      }
+      OnChangesUpdated();
+    }
+
+    public bool ShouldInclude(string tableName, string linkId)
+    {
+      lock (sync)
+      {
+        if (!tableToSelection.TryGetValue(tableName, out var state))
+        {
+          // no explicit selection -> include by default
+          return true;
+        }
+        var key = linkId ?? string.Empty;
+        return state.DefaultInclude ? !state.Exceptions.Contains(key) : state.Exceptions.Contains(key);
+      }
+    }
+
     public HashSet<string> GetAllTablesWithEdits()
     {
       lock (sync)
@@ -165,7 +273,8 @@ namespace WorkOrderBlender
     {
       lock (sync)
       {
-        return tableToEdits.Count > 0 || tableToDeleted.Count > 0;
+        // consider selections as changes as well
+        return tableToEdits.Count > 0 || tableToDeleted.Count > 0 || tableToSelection.Count > 0;
       }
     }
 
@@ -188,7 +297,13 @@ namespace WorkOrderBlender
           deleteCount += deletedSet.Count;
         }
 
-        return editCount + deleteCount;
+        int selectionExceptionCount = 0;
+        foreach (var sel in tableToSelection.Values)
+        {
+          selectionExceptionCount += sel.Exceptions.Count;
+        }
+
+        return editCount + deleteCount + selectionExceptionCount;
       }
     }
 
@@ -198,6 +313,7 @@ namespace WorkOrderBlender
       {
         tableToEdits.Clear();
         tableToDeleted.Clear();
+        tableToSelection.Clear();
       }
       OnChangesUpdated();
     }
@@ -209,6 +325,7 @@ namespace WorkOrderBlender
       {
         tableToEdits.Remove(tableName);
         tableToDeleted.Remove(tableName);
+        tableToSelection.Remove(tableName);
       }
       OnChangesUpdated();
     }

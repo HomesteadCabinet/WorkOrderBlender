@@ -1,12 +1,20 @@
 <?xml version="1.0"?>
 <UserConfig xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <DefaultRoot>M:\Homestead_Library\Work Orders</DefaultRoot>
-  <WorkOrderName></WorkOrderName>
+  <DefaultOutput>M:\Homestead_Library\Work Orders</DefaultOutput>
+  <SdfFileName>MicrovellumWorkOrder.sdf</SdfFileName>
+  <WorkOrderName />
+  <MainSplitterDistance>305</MainSplitterDistance>
+  <MainWindowWidth>1692</MainWindowWidth>
+  <MainWindowHeight>789</MainWindowHeight>
+  <MainWindowX>138</MainWindowX>
+  <MainWindowY>87</MainWindowY>
+  <HidePurchasing>true</HidePurchasing>
   <ColumnWidths>
     <ColumnWidthEntry>
       <TableName>Products</TableName>
       <ColumnName>RoomName</ColumnName>
-      <Width>194</Width>
+      <Width>111</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Products</TableName>
@@ -31,7 +39,7 @@
     <ColumnWidthEntry>
       <TableName>Products</TableName>
       <ColumnName>ItemNumber</ColumnName>
-      <Width>59</Width>
+      <Width>51</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Parts</TableName>
@@ -41,32 +49,117 @@
     <ColumnWidthEntry>
       <TableName>Parts</TableName>
       <ColumnName>Name</ColumnName>
-      <Width>374</Width>
+      <Width>243</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Parts</TableName>
       <ColumnName>MaterialName</ColumnName>
-      <Width>171</Width>
+      <Width>230</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Products</TableName>
       <ColumnName>_SourceFile</ColumnName>
-      <Width>120</Width>
+      <Width>201</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Parts</TableName>
       <ColumnName>_SourceFile</ColumnName>
-      <Width>120</Width>
+      <Width>216</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Subassemblies</TableName>
       <ColumnName>_SourceFile</ColumnName>
-      <Width>120</Width>
+      <Width>171</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
-      <TableName>Sheets</TableName>
-      <ColumnName>_SourceFile</ColumnName>
-      <Width>120</Width>
+      <TableName>Parts</TableName>
+      <ColumnName>#</ColumnName>
+      <Width>37</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>TotalQuantity</ColumnName>
+      <Width>78</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Products</TableName>
+      <ColumnName>WorkOrderName</ColumnName>
+      <Width>172</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Products</TableName>
+      <ColumnName>Depth</ColumnName>
+      <Width>69</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Products</TableName>
+      <ColumnName>Height</ColumnName>
+      <Width>71</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Products</TableName>
+      <ColumnName>Width</ColumnName>
+      <Width>64</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Products</TableName>
+      <ColumnName>Comments1</ColumnName>
+      <Width>183</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Subassemblies</TableName>
+      <ColumnName>ActivityPath</ColumnName>
+      <Width>99</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>Product</ColumnName>
+      <Width>144</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Subassemblies</TableName>
+      <ColumnName>#</ColumnName>
+      <Width>39</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Subassemblies</TableName>
+      <ColumnName>Product</ColumnName>
+      <Width>134</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Product</ColumnName>
+      <Width>192</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>#</ColumnName>
+      <Width>42</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Name</ColumnName>
+      <Width>217</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Width</ColumnName>
+      <Width>63</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Height</ColumnName>
+      <Width>65</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Depth</ColumnName>
+      <Width>66</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Code</ColumnName>
+      <Width>181</Width>
     </ColumnWidthEntry>
   </ColumnWidths>
   <ColumnOrders>
@@ -74,53 +167,508 @@
       <TableName>Products</TableName>
       <Columns>
         <string>_SourceFile</string>
-        <string>RoomName</string>
-        <string>Name</string>
-        <string>ProductSpecGroupName</string>
-        <string>Comments</string>
-        <string>Quantity</string>
         <string>ItemNumber</string>
+        <string>RoomName</string>
+        <string>Quantity</string>
+        <string>Width</string>
+        <string>Height</string>
+        <string>Depth</string>
+        <string>Comments</string>
+        <string>Comments1</string>
+        <string>Comments2</string>
+        <string>Comments3</string>
+        <string>CopiedLinkIDList</string>
+        <string>DateShipped</string>
+        <string>DrawIndex</string>
+        <string>Extruded</string>
+        <string>IsBuyOut</string>
+        <string>JPegName</string>
+        <string>JPegStream</string>
+        <string>LinkID</string>
+        <string>LinkIDCategory</string>
+        <string>LinkIDLibrary</string>
+        <string>LinkIDLocation</string>
+        <string>Name</string>
+        <string>LinkIDProductGroup</string>
+        <string>LinkIDProject</string>
+        <string>LinkIDRelease</string>
+        <string>LinkIDSpecificationGroup</string>
+        <string>LinkIDWall</string>
+        <string>LinkIDWorkOrder</string>
+        <string>Modified</string>
+        <string>PerfectGrainChar</string>
+        <string>PrintFlag</string>
+        <string>PrintFlags</string>
+        <string>ProductSpecGroupName</string>
+        <string>QuantityShipped</string>
+        <string>QuoteName</string>
+        <string>RoomComponentType</string>
+        <string>Row_ID</string>
+        <string>ScanCode</string>
+        <string>ShippingTicketName</string>
+        <string>TiffName</string>
+        <string>TiffStream</string>
+        <string>Type</string>
+        <string>UITreeFilter</string>
+        <string>WMFName</string>
+        <string>WMFStream</string>
+        <string>WorkBook</string>
+        <string>WorkOrderName</string>
+        <string>X</string>
+        <string>Y</string>
+        <string>Z</string>
+        <string>ID</string>
+        <string>Angle</string>
+        <string>AncorType</string>
+        <string>ActivityPathShort</string>
+        <string>ActivityPath</string>
       </Columns>
     </ColumnOrderEntry>
     <ColumnOrderEntry>
       <TableName>Parts</TableName>
       <Columns>
         <string>_SourceFile</string>
-        <string>Code</string>
+        <string>Product</string>
+        <string>#</string>
+        <string>PerfectGrainCaption</string>
         <string>Name</string>
         <string>MaterialName</string>
+        <string>TotalQuantity</string>
+        <string>Length</string>
+        <string>Width</string>
+        <string>Thickness</string>
+        <string>MaterialThickness</string>
+        <string>Barcode</string>
+        <string>Comments</string>
+        <string>Comments1</string>
+        <string>BasePoint</string>
+        <string>BasePointX</string>
+        <string>BasePointY</string>
+        <string>BasePointZ</string>
+        <string>CodeFormula</string>
+        <string>Comments2</string>
+        <string>Comments3</string>
+        <string>CutPartLength</string>
+        <string>CutPartWidth</string>
+        <string>DontIncludeRoutesinNestBorder</string>
+        <string>DrawToken2DElv</string>
+        <string>DrawToken3D</string>
+        <string>DXFFileName</string>
+        <string>EdgeNameBottom</string>
+        <string>EdgeNameBottomWMF</string>
+        <string>JPegStream</string>
+        <string>LinkID</string>
+        <string>LinkIDCategory</string>
+        <string>EdgeNameLeft</string>
+        <string>EdgeNameLeftWMF</string>
+        <string>EdgeNameRight</string>
+        <string>LinkIDProject</string>
+        <string>EdgeNameRightWMF</string>
+        <string>EdgeNameTop</string>
+        <string>EdgeNameTopWMF</string>
+        <string>LinkIDWorkOrder</string>
+        <string>Modified</string>
+        <string>PrintFlag</string>
+        <string>EdgeSequence</string>
+        <string>Face6Barcode</string>
+        <string>Face6FileName</string>
+        <string>Row_ID</string>
+        <string>ScanCode</string>
+        <string>FileName</string>
+        <string>FinishPriority</string>
+        <string>TiffStream</string>
+        <string>Type</string>
+        <string>FullFace6FileName</string>
+        <string>WMFName</string>
+        <string>WMFStream</string>
+        <string>FullFileName</string>
+        <string>Grain</string>
+        <string>GrainFormula</string>
+        <string>HandlingCode</string>
+        <string>HandlingCodeFormula</string>
+        <string>ID</string>
+        <string>HatchType</string>
+        <string>HboreBarcodeLeft</string>
+        <string>HboreBarcodeLower</string>
+        <string>HboreBarcodeRight</string>
+        <string>HboreBarcodeUpper</string>
+        <string>HboreFileNameLeft</string>
+        <string>HboreFileNameLower</string>
+        <string>HboreFileNameRight</string>
+        <string>HboreFileNameUpper</string>
+        <string>Index</string>
+        <string>InventoryAvailableQty</string>
+        <string>InventoryCurrentQty</string>
+        <string>InventoryMinQty</string>
+        <string>IrregularShape</string>
+        <string>IsFormulaMaterial</string>
+        <string>LabelPosition</string>
+        <string>LinkIDBottomFaceRendering</string>
+        <string>LinkIDCoreRendering</string>
+        <string>LinkIDDefaultVendor</string>
+        <string>LinkIDEQPart</string>
+        <string>LinkIDMaterial</string>
+        <string>LinkIDParentSubAssembly</string>
+        <string>LinkIDProcessingStations</string>
+        <string>LinkIDProduct</string>
+        <string>LinkIDSheetSize</string>
+        <string>LinkIDSubAssembly</string>
+        <string>LinkIDTopFaceRendering</string>
+        <string>LinkIDVendor</string>
+        <string>Location1</string>
+        <string>Location2</string>
+        <string>MachinePoint</string>
+        <string>MarkUp</string>
+        <string>MarkUpFormula</string>
+        <string>MaterialCode</string>
+        <string>MaterialComments</string>
+        <string>MaterialCommentsFormula</string>
+        <string>MaterialFlipSetting</string>
+        <string>MaterialLaborValue</string>
+        <string>MaterialLaborValueFormula</string>
+        <string>MaterialType</string>
+        <string>MaterialXData1</string>
+        <string>MaterialXData1Formula</string>
+        <string>MaterialXData2</string>
+        <string>MaterialXData2Formula</string>
+        <string>MaterialXData3</string>
+        <string>MaterialXData3Formula</string>
+        <string>OverProductionQuantity</string>
+        <string>OverridePartCutLength</string>
+        <string>OverridePartCutThickness</string>
+        <string>OverridePartCutWidth</string>
+        <string>Par1</string>
+        <string>Par2</string>
+        <string>Par3</string>
+        <string>PartType</string>
+        <string>Region</string>
+        <string>RotationX</string>
+        <string>RotationY</string>
+        <string>RotationZ</string>
+        <string>RunFieldNameFace5</string>
+        <string>RunFieldNameFace6</string>
+        <string>SkipSpreadsheetSync</string>
+        <string>UDID</string>
+        <string>UnderProductionQuantity</string>
+        <string>UnitType</string>
+        <string>VendorCost</string>
+        <string>WasteFactor</string>
+        <string>WasteFactorFormula</string>
+        <string>WMFNameFace6</string>
+        <string>WMFStreamDimensioned</string>
+        <string>WMFStreamFace6</string>
+        <string>WMFStreamFace6Dimensioned</string>
+        <string>XD01</string>
+        <string>XD02</string>
+        <string>XD03</string>
+        <string>XD04</string>
+        <string>XD05</string>
+        <string>XD06</string>
+        <string>XD07</string>
+        <string>XD08</string>
+        <string>XD09</string>
+        <string>XD10</string>
+        <string>XD11</string>
+        <string>XD12</string>
+        <string>XD13</string>
+        <string>XD14</string>
+        <string>XD15</string>
+        <string>XD16</string>
+        <string>XD17</string>
+        <string>XD18</string>
+        <string>Code</string>
+        <string>AdjustedCutPartLength</string>
+        <string>AdjustedCutPartWidth</string>
+        <string>Quantity</string>
+        <string>RemoveRoutesOutsideBorder</string>
+      </Columns>
+    </ColumnOrderEntry>
+    <ColumnOrderEntry>
+      <TableName>Subassemblies</TableName>
+      <Columns>
+        <string>_SourceFile</string>
+        <string>Product</string>
+        <string>#</string>
+        <string>Name</string>
+        <string>ActivityPath</string>
+        <string>ActivityPathShort</string>
+        <string>Width</string>
+        <string>Quantity</string>
+        <string>Angle</string>
+        <string>BayPosition</string>
+        <string>Comments</string>
+        <string>Comments1</string>
+        <string>Depth</string>
+        <string>Height</string>
+        <string>Comments2</string>
+        <string>Comments3</string>
+        <string>ContainsSubassemblies</string>
+        <string>DrawIndex</string>
+        <string>IsBuyOut</string>
+        <string>JPegName</string>
+        <string>JPegStream</string>
+        <string>LinkID</string>
+        <string>LinkIDCategory</string>
+        <string>LinkIDLibrary</string>
+        <string>LinkIDParentProduct</string>
+        <string>LinkIDParentSubassembly</string>
+        <string>LinkIDProject</string>
+        <string>LinkIDWorkOrder</string>
+        <string>Modified</string>
+        <string>ModifiedRowID</string>
+        <string>PerfectGrainCaption</string>
+        <string>ScanCode</string>
+        <string>TiffName</string>
+        <string>TiffStream</string>
+        <string>Type</string>
+        <string>WMFName</string>
+        <string>WMFStream</string>
+        <string>WorkBook</string>
+        <string>X</string>
+        <string>Y</string>
+        <string>Z</string>
+        <string>ID</string>
+      </Columns>
+    </ColumnOrderEntry>
+    <ColumnOrderEntry>
+      <TableName>Hardware</TableName>
+      <Columns>
+        <string>_SourceFile</string>
+        <string>Product</string>
+        <string>#</string>
+        <string>Name</string>
+        <string>TotalQuantity</string>
+        <string>Width</string>
+        <string>Height</string>
+        <string>Depth</string>
+        <string>Thickness</string>
+        <string>Code</string>
+        <string>Comments</string>
+        <string>Quantity</string>
+        <string>BasePoint</string>
+        <string>BasePointX</string>
+        <string>BasePointY</string>
+        <string>BasePointZ</string>
+        <string>CodeFormula</string>
+        <string>Comments1</string>
+        <string>Comments2</string>
+        <string>Comments3</string>
+        <string>Grain</string>
+        <string>GrainFormula</string>
+        <string>HandlingCode</string>
+        <string>HandlingCodeFormula</string>
+        <string>HatchType</string>
+        <string>Index</string>
+        <string>InventoryAvailableQty</string>
+        <string>InventoryCurrentQty</string>
+        <string>InventoryMinQty</string>
+        <string>IsFormulaMaterial</string>
+        <string>LinkID</string>
+        <string>LinkIDBottomFaceRendering</string>
+        <string>LinkIDCategory</string>
+        <string>LinkIDCoreRendering</string>
+        <string>LinkIDDefaultVendor</string>
+        <string>LinkIDEQPart</string>
+        <string>LinkIDMaterial</string>
+        <string>LinkIDParentSubAssembly</string>
+        <string>LinkIDProcessingStations</string>
+        <string>LinkIDProduct</string>
+        <string>LinkIDProject</string>
+        <string>LinkIDSheetSize</string>
+        <string>LinkIDSubAssembly</string>
+        <string>LinkIDTopFaceRendering</string>
+        <string>LinkIDVendor</string>
+        <string>LinkIDWorkOrder</string>
+        <string>MarkUp</string>
+        <string>MarkUpFormula</string>
+        <string>MaterialCommentsFormula</string>
+        <string>MaterialFlipSetting</string>
+        <string>MaterialLaborValue</string>
+        <string>MaterialLaborValueFormula</string>
+        <string>MaterialXData1</string>
+        <string>MaterialXData1Formula</string>
+        <string>MaterialXData2</string>
+        <string>MaterialXData2Formula</string>
+        <string>MaterialXData3</string>
+        <string>MaterialXData3Formula</string>
+        <string>Modified</string>
+        <string>PartType</string>
+        <string>Region</string>
+        <string>RotationX</string>
+        <string>RotationY</string>
+        <string>RotationZ</string>
+        <string>ScanCode</string>
+        <string>SkipSpreadsheetSync</string>
+        <string>Type</string>
+        <string>UnitType</string>
+        <string>VendorCost</string>
+        <string>WasteFactor</string>
+        <string>WasteFactorFormula</string>
+        <string>ID</string>
       </Columns>
     </ColumnOrderEntry>
   </ColumnOrders>
-  <ColumnVisibilities />
+  <ColumnVisibilities>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>Quantity</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Quantity</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Thickness</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+  </ColumnVisibilities>
+  <ColumnHeaders>
+    <ColumnHeaderEntry>
+      <TableName>Products</TableName>
+      <ColumnName>RoomName</ColumnName>
+      <HeaderText />
+      <ToolTip />
+    </ColumnHeaderEntry>
+    <ColumnHeaderEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>TotalQuantity</ColumnName>
+      <HeaderText>Quantity</HeaderText>
+      <ToolTip>The number of parts, can be changed</ToolTip>
+    </ColumnHeaderEntry>
+    <ColumnHeaderEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>PerfectGrainCaption</ColumnName>
+      <HeaderText>GrainContainer</HeaderText>
+      <ToolTip>The container to associate the parts with. Format is #1, #2, #3...etc All parts with the same GrainContainer will be sequenced based on X,Y values</ToolTip>
+    </ColumnHeaderEntry>
+    <ColumnHeaderEntry>
+      <TableName>Products</TableName>
+      <ColumnName>ItemNumber</ColumnName>
+      <HeaderText>#</HeaderText>
+    </ColumnHeaderEntry>
+    <ColumnHeaderEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>TotalQuantity</ColumnName>
+      <HeaderText>Quantity</HeaderText>
+    </ColumnHeaderEntry>
+  </ColumnHeaders>
+  <ColumnColors>
+    <ColumnColorEntry>
+      <TableName>Products</TableName>
+      <ColumnName>ItemNumber</ColumnName>
+      <BackColorArgb>-22</BackColorArgb>
+      <ForeColorArgb>-8372224</ForeColorArgb>
+    </ColumnColorEntry>
+    <ColumnColorEntry>
+      <TableName>Subassemblies</TableName>
+      <ColumnName>Name</ColumnName>
+      <BackColorArgb>0</BackColorArgb>
+      <ForeColorArgb>-8388480</ForeColorArgb>
+    </ColumnColorEntry>
+    <ColumnColorEntry>
+      <TableName>Hardware</TableName>
+      <ColumnName>Name</ColumnName>
+      <BackColorArgb>0</BackColorArgb>
+      <ForeColorArgb>-8388544</ForeColorArgb>
+    </ColumnColorEntry>
+  </ColumnColors>
   <VirtualColumns>
     <VirtualColumnDef>
       <TableName>Products</TableName>
       <ColumnName>_SourceFile</ColumnName>
       <ColumnType>BuiltIn</ColumnType>
-      <ButtonText>Work Order</ButtonText>
       <ActionType>SourceFile</ActionType>
+      <ButtonText>Work Order</ButtonText>
     </VirtualColumnDef>
     <VirtualColumnDef>
       <TableName>Parts</TableName>
       <ColumnName>_SourceFile</ColumnName>
       <ColumnType>BuiltIn</ColumnType>
-      <ButtonText>Work Order</ButtonText>
       <ActionType>SourceFile</ActionType>
+      <ButtonText>Work Order</ButtonText>
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Parts</TableName>
+      <ColumnName>#</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>ItemNumber</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Parts</TableName>
+      <ColumnName>Product</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>Name</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Subassemblies</TableName>
+      <ColumnName>#</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDParentProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>ItemNumber</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Subassemblies</TableName>
+      <ColumnName>Product</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDParentProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>Name</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
     </VirtualColumnDef>
     <VirtualColumnDef>
       <TableName>Subassemblies</TableName>
       <ColumnName>_SourceFile</ColumnName>
       <ColumnType>BuiltIn</ColumnType>
-      <ButtonText>Work Order</ButtonText>
       <ActionType>SourceFile</ActionType>
+      <ButtonText>Work Order</ButtonText>
     </VirtualColumnDef>
     <VirtualColumnDef>
-      <TableName>Sheets</TableName>
-      <ColumnName>_SourceFile</ColumnName>
-      <ColumnType>BuiltIn</ColumnType>
-      <ButtonText>Work Order</ButtonText>
-      <ActionType>SourceFile</ActionType>
+      <TableName>Hardware</TableName>
+      <ColumnName>#</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>ItemNumber</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Hardware</TableName>
+      <ColumnName>Product</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>Name</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
     </VirtualColumnDef>
   </VirtualColumns>
+  <SkippedVersion />
+  <LastUpdateCheck>2025-08-22T14:26:02.983595-06:00</LastUpdateCheck>
 </UserConfig>
