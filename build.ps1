@@ -73,7 +73,7 @@ Write-Host "Copying application files..." -ForegroundColor Yellow
 Copy-Item -Path (Join-Path $outputDir "*") -Destination $portableDir -Recurse -Force
 
 # Optionally include helpful files
-foreach ($extra in @("README.md", "CHANGELOG.md", "LICENSE", "DISTRIBUTION_SETUP_COMPLETE.md")) {
+foreach ($extra in @("README.md")) {
     $extraPath = Join-Path $PSScriptRoot $extra
     if (Test-Path $extraPath) { Copy-Item $extraPath -Destination $portableDir -Force }
 }

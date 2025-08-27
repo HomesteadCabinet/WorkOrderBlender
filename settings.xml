@@ -3,12 +3,12 @@
   <DefaultRoot>M:\Homestead_Library\Work Orders</DefaultRoot>
   <DefaultOutput>M:\Homestead_Library\Work Orders</DefaultOutput>
   <SdfFileName>MicrovellumWorkOrder.sdf</SdfFileName>
-  <WorkOrderName />
+  <WorkOrderName>TEST</WorkOrderName>
   <MainSplitterDistance>305</MainSplitterDistance>
-  <MainWindowWidth>1692</MainWindowWidth>
-  <MainWindowHeight>789</MainWindowHeight>
-  <MainWindowX>138</MainWindowX>
-  <MainWindowY>87</MainWindowY>
+  <MainWindowWidth>1824</MainWindowWidth>
+  <MainWindowHeight>860</MainWindowHeight>
+  <MainWindowX>37</MainWindowX>
+  <MainWindowY>108</MainWindowY>
   <HidePurchasing>true</HidePurchasing>
   <ColumnWidths>
     <ColumnWidthEntry>
@@ -231,6 +231,7 @@
         <string>Product</string>
         <string>#</string>
         <string>PerfectGrainCaption</string>
+        <string>Grain</string>
         <string>Name</string>
         <string>MaterialName</string>
         <string>TotalQuantity</string>
@@ -254,19 +255,19 @@
         <string>DrawToken2DElv</string>
         <string>DrawToken3D</string>
         <string>DXFFileName</string>
-        <string>EdgeNameBottom</string>
         <string>EdgeNameBottomWMF</string>
         <string>JPegStream</string>
         <string>LinkID</string>
+        <string>LinkIDProject</string>
+        <string>LinkIDWorkOrder</string>
         <string>LinkIDCategory</string>
         <string>EdgeNameLeft</string>
+        <string>EdgeNameBottom</string>
         <string>EdgeNameLeftWMF</string>
         <string>EdgeNameRight</string>
-        <string>LinkIDProject</string>
         <string>EdgeNameRightWMF</string>
         <string>EdgeNameTop</string>
         <string>EdgeNameTopWMF</string>
-        <string>LinkIDWorkOrder</string>
         <string>Modified</string>
         <string>PrintFlag</string>
         <string>EdgeSequence</string>
@@ -282,7 +283,6 @@
         <string>WMFName</string>
         <string>WMFStream</string>
         <string>FullFileName</string>
-        <string>Grain</string>
         <string>GrainFormula</string>
         <string>HandlingCode</string>
         <string>HandlingCodeFormula</string>
@@ -380,7 +380,6 @@
         <string>AdjustedCutPartLength</string>
         <string>AdjustedCutPartWidth</string>
         <string>Quantity</string>
-        <string>RemoveRoutesOutsideBorder</string>
       </Columns>
     </ColumnOrderEntry>
     <ColumnOrderEntry>
@@ -507,6 +506,12 @@
         <string>ID</string>
       </Columns>
     </ColumnOrderEntry>
+    <ColumnOrderEntry>
+      <TableName>Sheets</TableName>
+      <Columns>
+        <string>_SourceFile</string>
+      </Columns>
+    </ColumnOrderEntry>
   </ColumnOrders>
   <ColumnVisibilities>
     <ColumnVisibilityEntry>
@@ -522,6 +527,71 @@
     <ColumnVisibilityEntry>
       <TableName>Hardware</TableName>
       <ColumnName>Thickness</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>DontIncludeRoutesinNestBorder</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>DrawToken2DElv</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>DXFFileName</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>DrawToken3D</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>EdgeNameBottomWMF</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>EdgeNameLeftWMF</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>EdgeNameRightWMF</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>EdgeNameTopWMF</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>PrintFlag</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>Modified</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>FinishPriority</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>UDID</ColumnName>
+      <IsVisible>false</IsVisible>
+    </ColumnVisibilityEntry>
+    <ColumnVisibilityEntry>
+      <TableName>Parts</TableName>
+      <ColumnName>SkipSpreadsheetSync</ColumnName>
       <IsVisible>false</IsVisible>
     </ColumnVisibilityEntry>
   </ColumnVisibilities>
@@ -668,7 +738,14 @@
       <ButtonText />
       <ButtonIcon />
     </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Sheets</TableName>
+      <ColumnName>_SourceFile</ColumnName>
+      <ColumnType>BuiltIn</ColumnType>
+      <ActionType>SourceFile</ActionType>
+      <ButtonText>Work Order</ButtonText>
+    </VirtualColumnDef>
   </VirtualColumns>
   <SkippedVersion />
-  <LastUpdateCheck>2025-08-22T14:26:02.983595-06:00</LastUpdateCheck>
+  <LastUpdateCheck>2025-08-27T11:38:51.4775604-06:00</LastUpdateCheck>
 </UserConfig>

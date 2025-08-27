@@ -1,5 +1,9 @@
 name: Build and Release
 
+# This workflow creates releases when version tags are pushed
+# IMPORTANT: The update.xml file should be updated as part of the version bump commit
+# DO NOT automatically commit update.xml changes - this creates unnecessary commits
+# Use the update-version.ps1 script to update both version and update.xml in one commit
 on:
   push:
     tags:
@@ -33,31 +37,9 @@ jobs:
         Compress-Archive -Path ./publish/* -DestinationPath "WorkOrderBlender-$version.zip"
       shell: pwsh
 
-    - name: Get version from tag
-      id: get_version
-      run: |
-        $version = "${{ github.ref_name }}" -replace '^v', ''
-        echo "version=$version" >> $env:GITHUB_OUTPUT
-      shell: pwsh
+    # Removed version extraction - no longer needed since we don't modify update.xml
 
-    - name: Update update.xml
-      run: |
-        $version = "${{ steps.get_version.outputs.version }}"
-        $downloadUrl = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/WorkOrderBlender-${{ github.ref_name }}.zip"
-        $changelogUrl = "https://raw.githubusercontent.com/${{ github.repository }}/main/CHANGELOG.md"
-
-        $updateXml = @"
-        <?xml version="1.0" encoding="UTF-8"?>
-        <item>
-          <version>$version</version>
-          <url>$downloadUrl</url>
-          <changelog>$changelogUrl</changelog>
-          <mandatory>false</mandatory>
-        </item>
-        "@
-
-        $updateXml | Out-File -FilePath "update.xml" -Encoding UTF8
-      shell: pwsh
+    # Removed update.xml modification - file should already be correct from version bump commit
 
     - name: Create Release
       id: create_release
@@ -70,10 +52,6 @@ jobs:
         draft: false
         prerelease: false
         body: |
-          ## Changes in this release
-
-          See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
-
           ## Installation
 
           1. Download the `WorkOrderBlender-${{ github.ref_name }}.zip` file
@@ -94,12 +72,5 @@ jobs:
         asset_name: WorkOrderBlender-${{ github.ref_name }}.zip
         asset_content_type: application/zip
 
-    - name: Commit updated update.xml
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add update.xml
-        git diff --staged --quiet || git commit -m "Update update.xml for version ${{ steps.get_version.outputs.version }}"
-        git push origin HEAD:main
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+# Removed automatic commit of update.xml to prevent extra commits
+# The update.xml file should be updated as part of the version bump commit

@@ -310,7 +310,7 @@ namespace WorkOrderBlender
             }
             catch
             {
-                return new Version(1, 0, 0, 0);
+                return new Version(1, 0, 0);
             }
         }
 
@@ -363,14 +363,15 @@ namespace WorkOrderBlender
                     ZipFile.ExtractToDirectory(zipPath, extractPath);
 
                     // Create update script
-                    var updateScript = CreateUpdateScript(tempDir, extractPath);
-                    var scriptPath = Path.Combine(tempDir, "update.bat");
+                    var updateScript = CreatePowerShellUpdateScript(tempDir, extractPath);
+                    var scriptPath = Path.Combine(tempDir, "update.ps1");
                     File.WriteAllText(scriptPath, updateScript);
 
                     // Launch update script and exit
                     var psi = new ProcessStartInfo
                     {
-                        FileName = scriptPath,
+                        FileName = "powershell.exe",
+                        Arguments = $"-ExecutionPolicy Bypass -File \"{scriptPath}\"",
                         UseShellExecute = true
                         // Do not elevate; elevation can break access to mapped/UNC paths
                     };
@@ -428,14 +429,16 @@ namespace WorkOrderBlender
             }
         }
 
-        /// <summary>
-        /// Creates a batch script to perform the update
+                /// <summary>
+        /// Creates a batch script to perform the update (legacy method)
         /// </summary>
         private static string CreateUpdateScript(string tempDir, string extractPath)
         {
             var currentDir = AppDomain.CurrentDomain.BaseDirectory;
             var exeName = "WorkOrderBlender.exe";
             var versionStr = (GetCurrentVersion() ?? new Version(1,0,0,0)).ToString();
+            var logsDir = Path.Combine(currentDir, "logs");
+
             return $@"@echo off
 setlocal EnableExtensions
 
@@ -448,23 +451,27 @@ timeout /t 3 /nobreak >nul
 REM Prepare paths
 set ""CURRENT_DIR={currentDir}""
 set ""BACKUP_ROOT={currentDir}\backup""
+set ""LOGS_DIR={logsDir}""
 for /f ""tokens=1-3 delims=/ "" %%a in (""%date%"") do set TODAY=%%c-%%a-%%b
 for /f ""tokens=1-3 delims=:."" %%a in (""%time%"") do set NOW=%%a%%b%%c
 set ""BACKUP_SUB=%BACKUP_ROOT%\{versionStr}_%TODAY%_%NOW%""
 
+REM Ensure logs directory exists
+if not exist ""%LOGS_DIR%"" mkdir ""%LOGS_DIR%""
+
 echo Backing up current app to temp snapshot...
 set ""TEMP_BACKUP={tempDir}\backup_snapshot""
 if not exist ""%TEMP_BACKUP%"" mkdir ""%TEMP_BACKUP%""
-robocopy ""%CURRENT_DIR%."" ""%TEMP_BACKUP%."" /MIR /R:1 /W:1 /XJ /XD ""%BACKUP_ROOT%"" ""%BACKUP_SUB%"" ""backup"" > ""%CURRENT_DIR%\wob_backup_stage1.log"" 2>&1
+robocopy ""%CURRENT_DIR%."" ""%TEMP_BACKUP%."" /MIR /R:1 /W:1 /XJ /XD ""%BACKUP_ROOT%"" ""%BACKUP_SUB%"" ""backup"" > ""%LOGS_DIR%\wob_backup_stage1.log"" 2>&1
 echo Robocopy temp backup errorlevel: %errorlevel%
 
 echo Installing update...
-robocopy ""{extractPath}."" ""%CURRENT_DIR%."" /MIR /R:1 /W:1 > ""%CURRENT_DIR%\wob_install.log"" 2>&1
+robocopy ""{extractPath}."" ""%CURRENT_DIR%."" /MIR /R:1 /W:1 > ""%LOGS_DIR%\wob_install.log"" 2>&1
 
 if not exist ""%BACKUP_ROOT%"" mkdir ""%BACKUP_ROOT%""
 if not exist ""%BACKUP_SUB%"" mkdir ""%BACKUP_SUB%""
 echo Saving backup snapshot into application backup folder...
-robocopy ""%TEMP_BACKUP%."" ""%BACKUP_SUB%."" /E /R:1 /W:1 /XJ /XD ""backup"" > ""%CURRENT_DIR%\wob_backup_stage2.log"" 2>&1
+robocopy ""%TEMP_BACKUP%."" ""%BACKUP_SUB%."" /E /R:1 /W:1 /XJ /XD ""backup"" > ""%LOGS_DIR%\wob_backup_stage2.log"" 2>&1
 
 echo Cleaning up...
 rmdir /s /q ""{tempDir}""
@@ -474,6 +481,164 @@ echo Starting WorkOrderBlender...
 start "" ""%CURRENT_DIR%\{exeName}""
 endlocal
 exit
+";
+        }
+
+        /// <summary>
+        /// Creates a PowerShell script to perform the update with better settings.xml handling
+        /// </summary>
+        private static string CreatePowerShellUpdateScript(string tempDir, string extractPath)
+        {
+            var currentDir = AppDomain.CurrentDomain.BaseDirectory;
+            var exeName = "WorkOrderBlender.exe";
+            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0,0)).ToString();
+            var logsDir = Path.Combine(currentDir, "logs");
+
+            return $@"# WorkOrderBlender Update Script
+# This script handles the update process with intelligent settings.xml management
+
+param(
+    [string]$CurrentDir = ""{currentDir}"",
+    [string]$ExtractPath = ""{extractPath}"",
+    [string]$TempDir = ""{tempDir}""
+)
+
+# Ensure we're running with proper execution policy
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+
+# Prepare paths
+$BackupRoot = Join-Path $CurrentDir ""backup""
+$LogsDir = Join-Path $CurrentDir ""logs""
+$ExeName = ""{exeName}""
+$VersionStr = ""{versionStr}""
+$Timestamp = Get-Date -Format ""yyyy-MM-dd_HHmmss""
+$BackupSub = Join-Path $BackupRoot ""$VersionStr`_$Timestamp""
+
+# Ensure directories exist
+if (!(Test-Path $LogsDir)) {{ New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null }}
+if (!(Test-Path $BackupRoot)) {{ New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null }}
+if (!(Test-Path $BackupSub)) {{ New-Item -ItemType Directory -Path $BackupSub -Force | Out-Null }}
+
+Write-Host ""Updating WorkOrderBlender..."" -ForegroundColor Green
+Write-Host
+
+# Wait for application to close
+Start-Sleep -Seconds 3
+
+# Create temp backup snapshot
+Write-Host ""Backing up current app to temp snapshot..."" -ForegroundColor Yellow
+$TempBackup = Join-Path $TempDir ""backup_snapshot""
+if (!(Test-Path $TempBackup)) {{ New-Item -ItemType Directory -Path $TempBackup -Force | Out-Null }}
+
+# Backup current installation (excluding backup and logs directories)
+$RobocopyArgs = @(
+    $CurrentDir,
+    $TempBackup,
+    ""/MIR"",
+    ""/R:1"",
+    ""/W:1"",
+    ""/XD"",
+    $BackupRoot,
+    $BackupSub,
+    ""backup"",
+    ""logs""
+)
+& robocopy @RobocopyArgs | Tee-Object -FilePath (Join-Path $LogsDir ""wob_backup_stage1.log"")
+
+# Check if settings.xml has been modified
+$SettingsModified = $false
+$CurrentSettingsPath = Join-Path $CurrentDir ""settings.xml""
+$BackupSettingsPath = Join-Path $TempBackup ""settings.xml""
+
+if (Test-Path $CurrentSettingsPath) {{
+    Write-Host ""Checking if settings.xml has been modified..."" -ForegroundColor Yellow
+    try {{
+        $CurrentContent = Get-Content $CurrentSettingsPath -Raw
+        $BackupContent = Get-Content $BackupSettingsPath -Raw
+        if ($CurrentContent -ne $BackupContent) {{
+            $SettingsModified = $true
+            Write-Host ""settings.xml has been modified - will prompt for overwrite"" -ForegroundColor Yellow
+        }}
+    }} catch {{
+        Write-Host ""Error comparing settings.xml files: $($_.Exception.Message)"" -ForegroundColor Red
+    }}
+}}
+
+# Handle settings.xml modification
+$OverwriteSettings = $true
+if ($SettingsModified) {{
+    Write-Host
+    Write-Host ""WARNING: Your settings.xml file has been modified."" -ForegroundColor Red
+    Write-Host ""Do you want to overwrite it with the new version? (Y/N)"" -ForegroundColor Yellow
+    Write-Host ""If you choose Y, a backup will be created."" -ForegroundColor Yellow
+    Write-Host
+
+    $Response = Read-Host ""Enter Y to overwrite, N to keep current""
+
+    if ($Response -eq ""Y"" -or $Response -eq ""y"") {{
+        Write-Host ""Creating backup of current settings.xml..."" -ForegroundColor Green
+        $BackupSettingsPath = Join-Path $BackupSub ""settings.xml.backup""
+        Copy-Item $CurrentSettingsPath $BackupSettingsPath -Force
+        Write-Host ""Backup created at: $BackupSettingsPath"" -ForegroundColor Green
+        $OverwriteSettings = $true
+    }} else {{
+        Write-Host ""Keeping current settings.xml"" -ForegroundColor Green
+        $OverwriteSettings = $false
+    }}
+}}
+
+# Install update
+Write-Host ""Installing update..."" -ForegroundColor Yellow
+if ($OverwriteSettings) {{
+    # Install all files including settings.xml
+    $RobocopyArgs = @(
+        $ExtractPath,
+        $CurrentDir,
+        ""/MIR"",
+        ""/R:1"",
+        ""/W:1""
+    )
+    & robocopy @RobocopyArgs | Tee-Object -FilePath (Join-Path $LogsDir ""wob_install.log"")
+}} else {{
+    # Install all files except settings.xml
+    $RobocopyArgs = @(
+        $ExtractPath,
+        $CurrentDir,
+        ""/MIR"",
+        ""/R:1"",
+        ""/W:1"",
+        ""/XF"",
+        ""settings.xml""
+    )
+    & robocopy @RobocopyArgs | Tee-Object -FilePath (Join-Path $LogsDir ""wob_install.log"")
+    Write-Host ""settings.xml preserved from previous installation"" -ForegroundColor Green
+}}
+
+# Save backup snapshot
+Write-Host ""Saving backup snapshot into application backup folder..."" -ForegroundColor Yellow
+$RobocopyArgs = @(
+    $TempBackup,
+    $BackupSub,
+    ""/E"",
+    ""/R:1"",
+    ""/W:1"",
+    ""/XD"",
+    ""backup""
+)
+& robocopy @RobocopyArgs | Tee-Object -FilePath (Join-Path $LogsDir ""wob_backup_stage2.log"")
+
+# Cleanup
+Write-Host ""Cleaning up..."" -ForegroundColor Yellow
+if (Test-Path $TempDir) {{
+    Remove-Item $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+}}
+
+Write-Host ""Update complete!"" -ForegroundColor Green
+Write-Host ""Starting WorkOrderBlender..."" -ForegroundColor Green
+
+# Start the application
+$ExePath = Join-Path $CurrentDir $ExeName
+Start-Process $ExePath -WorkingDirectory $CurrentDir
 ";
         }
 
