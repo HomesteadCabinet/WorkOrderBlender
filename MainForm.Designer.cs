@@ -189,6 +189,19 @@ namespace WorkOrderBlender
       this.panelToolbar.AutoSize = true;
       this.panelToolbar.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
 
+
+      this.btnFilterFronts = new System.Windows.Forms.Button();
+      this.btnFilterFronts.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
+      this.btnFilterFronts.Text = "Fronts";
+      this.btnFilterFronts.Height = 26;
+      this.btnFilterFronts.Width = 90;
+      this.btnFilterFronts.UseVisualStyleBackColor = true;
+      this.btnFilterFronts.Enabled = false; // Disabled by default
+      this.toolTip1.SetToolTip(this.btnFilterFronts, "Show only front parts (doors, drawer fronts, false fronts, applicance fronts, etc.) ");
+      this.btnFilterFronts.Click += new System.EventHandler(this.btnFilterFronts_Click);
+      this.panelToolbar.Controls.Add(this.btnFilterFronts);
+
+
       // Toolbar selection buttons for current table (rows include/exclude)
       this.btnTableSelectAll = new System.Windows.Forms.Button();
       this.btnTableSelectAll.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
@@ -576,6 +589,7 @@ namespace WorkOrderBlender
     private Button btnSettings;
     private Button btnTableSelectAll;
     private Button btnTableClearAll;
+    private Button btnFilterFronts;
     private TextBox txtOutput;
     private Label labelOutput;
     private ProgressBar progress;

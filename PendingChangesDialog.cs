@@ -11,7 +11,6 @@ namespace WorkOrderBlender
     {
         private readonly TabControl tabControl;
         private readonly DataGridView editsGrid;
-        private readonly DataGridView deletionsGrid;
         private readonly Label statusLabel;
 
         public PendingChangesDialog()
@@ -40,21 +39,7 @@ namespace WorkOrderBlender
             editsTab.Controls.Add(editsGrid);
             tabControl.TabPages.Add(editsTab);
 
-            // Create deletions tab
-            var deletionsTab = new TabPage("Deleted Records");
-            deletionsGrid = new DataGridView
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = true,
-                AllowUserToAddRows = false,
-                AllowUserToDeleteRows = false,
-                AutoGenerateColumns = true,
-                AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells,
-                SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-                MultiSelect = true
-            };
-            deletionsTab.Controls.Add(deletionsGrid);
-            tabControl.TabPages.Add(deletionsTab);
+            // Deletions are no longer shown in pending changes
 
                         // Create status panel
             var statusPanel = new Panel
@@ -159,30 +144,25 @@ namespace WorkOrderBlender
             var editCount = PopulateEditsTable(editsTable);
             editsGrid.DataSource = editsTable;
 
-            // Load deleted records
-            var deletionsTable = CreateDeletionsDataTable();
-            var deleteCount = PopulateDeletionsTable(deletionsTable);
-            deletionsGrid.DataSource = deletionsTable;
+            // Deletions are not displayed anymore
 
             // Update tab titles with counts
             tabControl.TabPages[0].Text = $"Modified Data ({editCount})";
-            tabControl.TabPages[1].Text = $"Deleted Records ({deleteCount})";
 
             // Update status
-            if (editCount == 0 && deleteCount == 0)
+            if (editCount == 0)
             {
                 statusLabel.Text = "No pending changes found.";
                 statusLabel.ForeColor = Color.Gray;
             }
             else
             {
-                statusLabel.Text = $"Found {editCount} modified record(s) and {deleteCount} deleted record(s).";
+                statusLabel.Text = $"Found {editCount} modified record(s).";
                 statusLabel.ForeColor = Color.DarkGreen;
             }
 
             // Auto-size columns for better visibility
             AutoSizeGridColumns(editsGrid);
-            AutoSizeGridColumns(deletionsGrid);
         }
 
         private DataTable CreateEditsDataTable()
@@ -230,45 +210,9 @@ namespace WorkOrderBlender
             return count;
         }
 
-        private DataTable CreateDeletionsDataTable()
-        {
-            var table = new DataTable("Deletions");
-            table.Columns.Add("Table", typeof(string));
-            table.Columns.Add("LinkID", typeof(string));
-            return table;
-        }
-
-        private int PopulateDeletionsTable(DataTable table)
-        {
-            int count = 0;
-
-            var editStore = Program.Edits;
-            var allTables = GetTablesWithDeletions();
-
-            foreach (var tableName in allTables)
-            {
-                var deletedSnapshot = editStore.SnapshotDeleted(tableName);
-                foreach (var linkId in deletedSnapshot)
-                {
-                    var row = table.NewRow();
-                    row["Table"] = tableName;
-                    row["LinkID"] = linkId;
-                    table.Rows.Add(row);
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
                 private HashSet<string> GetTablesWithEdits()
         {
             return Program.Edits.GetAllTablesWithEdits();
-        }
-
-        private HashSet<string> GetTablesWithDeletions()
-        {
-            return Program.Edits.GetAllTablesWithDeletions();
         }
 
         private string FormatValue(object value)
