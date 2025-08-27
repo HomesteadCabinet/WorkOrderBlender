@@ -52,6 +52,33 @@ namespace WorkOrderBlender
       OnChangesUpdated();
     }
 
+    public void RemoveOverride(string tableName, string linkId, string columnName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
+      if (linkId == null) linkId = string.Empty;
+      lock (sync)
+      {
+        if (tableToEdits.TryGetValue(tableName, out var linkMap))
+        {
+          if (linkMap.TryGetValue(linkId, out var colMap))
+          {
+            colMap.Remove(columnName);
+            // Remove the link entry if no more column edits exist
+            if (colMap.Count == 0)
+            {
+              linkMap.Remove(linkId);
+            }
+            // Remove the table entry if no more link edits exist
+            if (linkMap.Count == 0)
+            {
+              tableToEdits.Remove(tableName);
+            }
+          }
+        }
+      }
+      OnChangesUpdated();
+    }
+
     public bool TryGetRowOverrides(string tableName, string linkId, out Dictionary<string, object> overrides)
     {
       lock (sync)

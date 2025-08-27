@@ -268,12 +268,13 @@ namespace WorkOrderBlender
 
       // Setup metrics grid refresh debounce
       metricsRefreshTimer = new System.Windows.Forms.Timer();
-      metricsRefreshTimer.Interval = 120; // ms to coalesce repeated requests
+      metricsRefreshTimer.Interval = 50; // ms to coalesce repeated requests - reduced from 120ms for more responsive loading indicator
       metricsRefreshTimer.Tick += (s, e2) =>
       {
         if ((DateTime.UtcNow - lastRefreshRequestUtc).TotalMilliseconds >= metricsRefreshTimer.Interval)
         {
           metricsRefreshTimer.Stop();
+          Program.Log($"metricsRefreshTimer.Tick: Timer fired, calling RefreshMetricsGrid (isRefreshingMetrics={isRefreshingMetrics})");
           if (!isRefreshingMetrics)
           {
             RefreshMetricsGrid();
@@ -290,6 +291,9 @@ namespace WorkOrderBlender
       // Initialize button state
       UpdatePreviewChangesButton();
     }
+
+    // Flag to track when we're refreshing the table to prevent loading indicator from being hidden prematurely
+    private bool isRefreshingTable = false;
 
     // Suppress grid binding errors and log them to avoid intrusive dialogs
     private void metricsGrid_DataError(object sender, DataGridViewDataErrorEventArgs e)
@@ -668,11 +672,17 @@ namespace WorkOrderBlender
       {
         RunConsolidation(selected.Select(s => (s.Directory, s.SdfPath)).ToList(), destPath);
         MessageBox.Show($"Consolidation complete. File created at:\n{destPath}");
+
+        // Reset progress bar after successful consolidation
+        progress.Value = 0;
       }
       catch (Exception ex)
       {
         Program.Log("Consolidation error", ex);
         MessageBox.Show("Error: " + ex.Message);
+
+        // Reset progress bar on error as well
+        progress.Value = 0;
       }
     }
 
@@ -921,6 +931,7 @@ namespace WorkOrderBlender
     private void RequestRefreshMetricsGrid()
     {
       lastRefreshRequestUtc = DateTime.UtcNow;
+      Program.Log($"RequestRefreshMetricsGrid: Starting {metricsRefreshTimer.Interval}ms timer");
       if (!metricsRefreshTimer.Enabled)
       {
         metricsRefreshTimer.Start();
@@ -961,13 +972,25 @@ namespace WorkOrderBlender
     {
       try
       {
-        ShowLoadingIndicator(true);
         if (suppressTableSelectorChanged) return;
+
+        Program.Log("cmbTableSelector_SelectedIndexChanged: Starting table refresh");
+
+        // Set flag to indicate we're refreshing the table
+        isRefreshingTable = true;
+
+        // Show loading indicator immediately when table selector changes
+        ShowLoadingIndicator(true, "Loading table data...");
+
+        // Ensure the loading indicator stays visible by forcing a UI update
+        Application.DoEvents();
+
         RequestRefreshMetricsGrid();
       }
       catch (Exception ex)
       {
         Program.Log("Error in table selector changed", ex);
+        isRefreshingTable = false;
       }
     }
 
@@ -979,11 +1002,12 @@ namespace WorkOrderBlender
 
       // Set refresh flag to prevent concurrent refreshes
       isRefreshingMetrics = true;
+      Program.Log($"RefreshMetricsGrid: isRefreshingMetrics set to true, isRefreshingTable={isRefreshingTable}");
 
       try
       {
-        // Show loading indicator
-        ShowLoadingIndicator(true);
+        // Loading indicator is already shown by cmbTableSelector_SelectedIndexChanged
+        // No need to show it again here
 
         // Ensure table selector is initialized and has a default selection
         if (cmbTableSelector.Items.Count == 0)
@@ -1120,11 +1144,16 @@ namespace WorkOrderBlender
         var totalRefreshDuration = refreshEnd - refreshStart;
         Program.Log($"=== REFRESH METRICS GRID COMPLETED at {refreshEnd:HH:mm:ss.fff} - Total duration: {totalRefreshDuration:hh\\:mm\\:ss\\.fff} ===");
 
+        // Clear table refresh flag first
+        isRefreshingTable = false;
+        Program.Log($"RefreshMetricsGrid: isRefreshingTable set to false");
+
         // Hide loading indicator
         ShowLoadingIndicator(false);
 
         // Clear refresh flag
         isRefreshingMetrics = false;
+        Program.Log($"RefreshMetricsGrid: isRefreshingMetrics set to false");
       }
     }
 
@@ -1140,7 +1169,7 @@ namespace WorkOrderBlender
         }
 
         // Enable custom header styling (disable visual styles for headers)
-        metricsGrid.EnableHeadersVisualStyles = false;
+        metricsGrid.EnableHeadersVisualStyles = true;
 
         // Set selection colors for better visibility
         metricsGrid.DefaultCellStyle.SelectionBackColor = System.Drawing.Color.FromArgb(215, 245, 255); // Light blue selection
@@ -2328,6 +2357,7 @@ namespace WorkOrderBlender
         metricsGrid.ReadOnly = !isEditModeMainGrid;
         metricsGrid.EditMode = isEditModeMainGrid ? DataGridViewEditMode.EditOnKeystroke : DataGridViewEditMode.EditOnKeystrokeOrF2;
         metricsGrid.SelectionMode = isEditModeMainGrid ? DataGridViewSelectionMode.CellSelect : DataGridViewSelectionMode.FullRowSelect;
+        RefreshAllColumnHeaderStyles();
         // Toggle thick green border using wrapper panel if available
         try
         {
@@ -2503,17 +2533,26 @@ namespace WorkOrderBlender
               catch { orig = dataRow[columnName]; }
             }
             if (orig == DBNull.Value) orig = null;
-            if (!object.Equals(newValue, orig))
+
+            var key = (dataRow.Table.Columns.Contains("LinkID") ? dataRow["LinkID"] : (dataRow.Table.Columns.Contains("ID") ? dataRow["ID"] : null));
+            string linkKey = key == null || key == DBNull.Value ? null : Convert.ToString(key);
+
+            if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
             {
-              var key = (dataRow.Table.Columns.Contains("LinkID") ? dataRow["LinkID"] : (dataRow.Table.Columns.Contains("ID") ? dataRow["ID"] : null));
-              string linkKey = key == null || key == DBNull.Value ? null : Convert.ToString(key);
-              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+              if (!object.Equals(newValue, orig))
               {
+                // Value changed from original - add to pending changes
                 Program.Edits.UpsertOverride(currentSelectedTable, linkKey, columnName, newValue);
               }
-              // Mark row clean so subsequent edits diff against new baseline
-              try { dataRow.AcceptChanges(); } catch { }
+              else
+              {
+                // Value matches original - remove from pending changes if it exists
+                Program.Edits.RemoveOverride(currentSelectedTable, linkKey, columnName);
+              }
             }
+
+            // Mark row clean so subsequent edits diff against new baseline
+            try { dataRow.AcceptChanges(); } catch { }
           }
         }
       }
@@ -2915,6 +2954,15 @@ namespace WorkOrderBlender
     {
       try
       {
+        // If we're trying to hide the loading indicator but we're in the middle of a table refresh,
+        // don't hide it yet - wait until the refresh is complete
+        if (!show && isRefreshingTable)
+        {
+          Program.Log($"ShowLoadingIndicator: Skipping hide request while table refresh is in progress (isRefreshingTable={isRefreshingTable})");
+          return;
+        }
+
+        Program.Log($"ShowLoadingIndicator: show={show}, message='{message}', isRefreshingTable={isRefreshingTable}");
 
         // Reduce layout thrash while switching views
         bottomLayout.SuspendLayout();
@@ -3581,8 +3629,16 @@ namespace WorkOrderBlender
 
         if (isSelected)
         {
-          // Apply selected header styling
-          col.HeaderCell.Style.ForeColor = System.Drawing.Color.White; // White text on selected header
+          if (this.isEditModeMainGrid)
+          {
+            col.HeaderCell.Style.ForeColor = System.Drawing.Color.Green; // Green text on selected header
+            col.HeaderCell.Style.BackColor = System.Drawing.SystemColors.Control; // Use default control background
+          }
+          else
+          {
+            col.HeaderCell.Style.ForeColor = System.Drawing.Color.White; // White text on selected header
+            col.HeaderCell.Style.BackColor = System.Drawing.ColorTranslator.FromHtml("#0078d7"); // Set to #0078d7 (blue)
+          }
         }
         else
         {
