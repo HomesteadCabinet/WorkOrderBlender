@@ -300,8 +300,8 @@ namespace WorkOrderBlender
     {
       lock (sync)
       {
-        // consider selections as changes as well
-        return tableToEdits.Count > 0 || tableToDeleted.Count > 0 || tableToSelection.Count > 0;
+        // Only consider actual edits for pending changes
+        return tableToEdits.Count > 0;
       }
     }
 
@@ -318,19 +318,8 @@ namespace WorkOrderBlender
           }
         }
 
-        int deleteCount = 0;
-        foreach (var deletedSet in tableToDeleted.Values)
-        {
-          deleteCount += deletedSet.Count;
-        }
-
-        int selectionExceptionCount = 0;
-        foreach (var sel in tableToSelection.Values)
-        {
-          selectionExceptionCount += sel.Exceptions.Count;
-        }
-
-        return editCount + deleteCount + selectionExceptionCount;
+        // Pending changes should not include deletions or excluded row selections
+        return editCount;
       }
     }
 

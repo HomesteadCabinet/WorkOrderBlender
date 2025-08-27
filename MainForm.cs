@@ -38,6 +38,8 @@ namespace WorkOrderBlender
     private List<string> currentSourcePaths = new List<string>();
     private bool isApplyingLayout = false;
     private bool gridEventsWired = false;
+    // Suppress order persistence and related work during heavy programmatic updates/binding
+    private bool isSuppressingOrderPersistence = false;
     private bool isEditModeMainGrid = false; // tracks edit mode for metricsGrid
     private System.Windows.Forms.Timer orderPersistTimer;
     private DateTime lastOrderChangeUtc;
@@ -51,6 +53,17 @@ namespace WorkOrderBlender
     private bool isRefreshingMetrics;
     private bool suppressTableSelectorChanged;
     private bool isScanningWorkOrders;
+
+    // Cache key for virtual column lookup caches to avoid unnecessary rebuilds
+    private string virtualCacheKey = null;
+
+    // Clear virtual column caches when source data changes
+    private void ClearVirtualColumnCaches()
+    {
+      virtualCacheKey = null;
+      virtualLookupCacheByColumn.Clear();
+      Program.Log("ClearVirtualColumnCaches: cleared all virtual column caches");
+    }
 
     public MainForm()
     {
@@ -304,6 +317,90 @@ namespace WorkOrderBlender
         e.ThrowException = false;
       }
       catch { }
+    }
+
+    // Safely rebind a BindingSource to a new DataTable while keeping the grid stable
+    private void RebindBindingSourceSafely(BindingSource bindingSource, DataTable newTable)
+    {
+      try
+      {
+        if (metricsGrid == null || bindingSource == null) return;
+        Program.Log($"RebindBindingSourceSafely: Rebinding to table '{newTable?.TableName ?? "<null>"}' with {newTable?.Rows.Count ?? 0} rows");
+        // Suppress persistence and layout-driven event work during rebind
+        var prevApplying = isApplyingLayout; isApplyingLayout = true;
+        var prevSuppress = isSuppressingOrderPersistence; isSuppressingOrderPersistence = true;
+        try { if (orderPersistTimer != null && orderPersistTimer.Enabled) { orderPersistTimer.Stop(); Program.Log("RebindBindingSourceSafely: stopped pending order persistence timer"); } } catch { }
+        metricsGrid.SuspendLayout();
+        var prevVisible = metricsGrid.Visible;
+        metricsGrid.Visible = false;
+        try
+        {
+          try { metricsGrid.CurrentCell = null; } catch { }
+          try { metricsGrid.ClearSelection(); } catch { }
+
+          // Rebind through the BindingSource without detaching the grid to preserve columns/order
+          try { bindingSource.SuspendBinding(); } catch { }
+          bindingSource.RaiseListChangedEvents = false;
+          bindingSource.DataSource = newTable;
+          bindingSource.RaiseListChangedEvents = true;
+          bindingSource.ResetBindings(false);
+          try { bindingSource.ResumeBinding(); } catch { }
+        }
+        finally
+        {
+          metricsGrid.Visible = prevVisible;
+          metricsGrid.ResumeLayout();
+          metricsGrid.Refresh();
+          try { if (orderPersistTimer != null && orderPersistTimer.Enabled) { orderPersistTimer.Stop(); Program.Log("RebindBindingSourceSafely: ensured order persistence timer is stopped after rebind"); } } catch { }
+          lastOrderChangeUtc = DateTime.UtcNow;
+          // Restore flags after rebind
+          isApplyingLayout = prevApplying;
+          isSuppressingOrderPersistence = prevSuppress;
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("RebindBindingSourceSafely error", ex);
+      }
+    }
+
+    // Ensure the filtered table has all columns expected by the grid (including virtuals)
+    private void EnsureTableHasGridColumns(DataTable table)
+    {
+      try
+      {
+        if (table == null || metricsGrid == null) return;
+        // Always ensure built-in _SourceFile exists so bound columns resolve
+        if (!table.Columns.Contains("_SourceFile")) table.Columns.Add("_SourceFile", typeof(string));
+
+        // Add any missing bound columns the grid expects
+        foreach (DataGridViewColumn gridCol in metricsGrid.Columns)
+        {
+          var key = !string.IsNullOrEmpty(gridCol.DataPropertyName) ? gridCol.DataPropertyName : gridCol.Name;
+          if (string.IsNullOrWhiteSpace(key)) continue;
+          if (!table.Columns.Contains(key))
+          {
+            // Default to string type for missing columns; values can be filled later as needed
+            table.Columns.Add(key, typeof(string));
+          }
+        }
+
+        // Also ensure virtual columns list exist if tracked
+        if (virtualColumnNames != null)
+        {
+          foreach (var name in virtualColumnNames)
+          {
+            if (!string.IsNullOrWhiteSpace(name) && !table.Columns.Contains(name))
+            {
+              table.Columns.Add(name, typeof(string));
+            }
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("EnsureTableHasGridColumns error", ex);
+      }
     }
 
     // SQL CE connection helpers are centralized in SqlCeUtils
@@ -922,6 +1019,19 @@ namespace WorkOrderBlender
     {
       try
       {
+        // If no work orders are selected at all, clear the metrics grid and return early
+        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        {
+          ClearMetricsGridFast();
+          // Also hide the loading indicator as there's nothing to load
+          ShowLoadingIndicator(false);
+          return; // Exit early to prevent PopulateTableSelector from triggering a refresh
+        }
+
+        // Show loading immediately when work order selection changes
+        ShowLoadingIndicator(true, "Loading work order data...");
+        Application.DoEvents();
+
         PopulateTableSelector();
         RequestRefreshMetricsGrid();
       }
@@ -930,12 +1040,18 @@ namespace WorkOrderBlender
 
     private void RequestRefreshMetricsGrid()
     {
-      lastRefreshRequestUtc = DateTime.UtcNow;
-      Program.Log($"RequestRefreshMetricsGrid: Starting {metricsRefreshTimer.Interval}ms timer");
+      // Start timing to diagnose performance around refresh requests
+      var reqStart = DateTime.Now; // capture start time
+
+      lastRefreshRequestUtc = DateTime.UtcNow; // record last request
+      Program.Log($"RequestRefreshMetricsGrid: start, timerEnabled={metricsRefreshTimer.Enabled}, isRefreshingMetrics={isRefreshingMetrics}, isRefreshingTable={isRefreshingTable}, intervalMs={metricsRefreshTimer.Interval}");
       if (!metricsRefreshTimer.Enabled)
       {
         metricsRefreshTimer.Start();
       }
+      var reqEnd = DateTime.Now; // capture end time
+      var reqDuration = reqEnd - reqStart; // compute duration
+      Program.Log($"RequestRefreshMetricsGrid: completed in {reqDuration.TotalMilliseconds:F0}ms; timerEnabled={metricsRefreshTimer.Enabled}");
     }
 
     private void PopulateTableSelector()
@@ -945,20 +1061,60 @@ namespace WorkOrderBlender
         suppressTableSelectorChanged = true;
         try
         {
-          cmbTableSelector.Items.Clear();
+          // Overall timing for PopulateTableSelector
+          var overallStart = DateTime.Now; // start timing
+
+          // Remember the previously selected table name so we can restore it
+          string previousTableName = null; // holds previous selection
+          if (cmbTableSelector.SelectedItem is TableSelectorItem prev)
+          {
+            previousTableName = prev.TableName;
+          }
+
+          // Log initial state for diagnostics
+          Program.Log($"PopulateTableSelector: start, prev='{(string.IsNullOrWhiteSpace(previousTableName) ? "<none>" : previousTableName)}', breakdownMetricsCount={breakdownMetrics.Count()}");
+
+          // Rebuild the items list from breakdownMetrics
+          var clearStart = DateTime.Now; // timing clear
+          cmbTableSelector.Items.Clear(); // clear items first
+          var clearEnd = DateTime.Now; // timing clear end
 
           // Add table options from breakdownMetrics
+          var addStart = DateTime.Now; // timing add loop
           foreach (var (label, table) in breakdownMetrics)
           {
             var item = new TableSelectorItem { Label = label, TableName = table };
             cmbTableSelector.Items.Add(item);
           }
+          var addEnd = DateTime.Now; // timing add loop end
 
-          // Set default selection
-          if (cmbTableSelector.Items.Count > 0)
+          // Try to restore the previously selected table if it still exists
+          bool restored = false; // track whether restored
+          var restoreStart = DateTime.Now; // timing restore
+          if (!string.IsNullOrWhiteSpace(previousTableName))
           {
-            cmbTableSelector.SelectedIndex = 0;
+            for (int i = 0; i < cmbTableSelector.Items.Count; i++)
+            {
+              if (cmbTableSelector.Items[i] is TableSelectorItem it &&
+                  string.Equals(it.TableName, previousTableName, StringComparison.OrdinalIgnoreCase))
+              {
+                cmbTableSelector.SelectedIndex = i; // restore previous selection
+                restored = true;
+                break;
+              }
+            }
           }
+          var restoreEnd = DateTime.Now; // timing restore end
+
+          // If nothing restored, ensure we have a valid selection when items exist
+          if (!restored && cmbTableSelector.Items.Count > 0 && cmbTableSelector.SelectedIndex < 0)
+          {
+            cmbTableSelector.SelectedIndex = 0; // default to first item only when needed
+          }
+
+          // Log timing details for diagnostics
+          var overallEnd = DateTime.Now; // end timing
+          Program.Log($"PopulateTableSelector: end, items={cmbTableSelector.Items.Count}, restored={restored}, selectedIndex={cmbTableSelector.SelectedIndex}, clearMs={(clearEnd - clearStart).TotalMilliseconds:F0}, addMs={(addEnd - addStart).TotalMilliseconds:F0}, restoreMs={(restoreEnd - restoreStart).TotalMilliseconds:F0}, totalMs={(overallEnd - overallStart).TotalMilliseconds:F0}");
         }
         finally { suppressTableSelectorChanged = false; }
       }
@@ -984,6 +1140,9 @@ namespace WorkOrderBlender
 
         // Ensure the loading indicator stays visible by forcing a UI update
         Application.DoEvents();
+
+        // Update fronts filter button state immediately
+        UpdateFrontsFilterButtonState();
 
         RequestRefreshMetricsGrid();
       }
@@ -1069,6 +1228,7 @@ namespace WorkOrderBlender
             Program.Log($"Found {sourcePaths.Count} source paths for table '{selectedTable.TableName}'");
             Program.Log($"Source paths: {string.Join(", ", sourcePaths.Select(p => Path.GetFileName(Path.GetDirectoryName(p))))}");
             currentSourcePaths = sourcePaths.ToList();
+            ClearVirtualColumnCaches(); // Clear caches when source data changes
 
             // No dialog reuse; data is loaded directly in MainForm now
             bool canReuseDialog = false;
@@ -1081,16 +1241,51 @@ namespace WorkOrderBlender
               var buildStart = DateTime.Now;
               Program.Log($"Building data table for '{selectedTable.TableName}' from {sourcePaths.Count} source(s)");
               var data = BuildDataTableFromSources(selectedTable.TableName, sourcePaths);
+              var buildEnd = DateTime.Now;
+              Program.Log($"BuildDataTableFromSources completed in {(buildEnd - buildStart).TotalMilliseconds:F0}ms");
+
               var bindStart = DateTime.Now;
               metricsGrid.SuspendLayout();
               var prevVisible = metricsGrid.Visible;
               metricsGrid.Visible = false;
+
+              // Reduce binding cost by disabling autosizing and autosize calculations during bind
+              var prevAutoSizeRows = metricsGrid.AutoSizeRowsMode;
+              var prevAutoSizeCols = metricsGrid.AutoSizeColumnsMode;
+              var prevRowHeadersWidthSizeMode = metricsGrid.RowHeadersWidthSizeMode;
+              var prevColumnHeadersHeightSizeMode = metricsGrid.ColumnHeadersHeightSizeMode;
+              metricsGrid.AutoSizeRowsMode = DataGridViewAutoSizeRowsMode.None;
+              metricsGrid.RowHeadersWidthSizeMode = DataGridViewRowHeadersWidthSizeMode.DisableResizing;
+              metricsGrid.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
+              // Note: AutoSizeColumnsMode may be set elsewhere; keep it None during binding
+              try { metricsGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None; } catch { }
+              // Also set applying layout to suppress any visual/style work in handlers
+              var prevApplyingLayout = isApplyingLayout;
               try
               {
+                Program.Log("Setting DataSource and starting virtual column operations");
+
+                // Strong suppression: prevent order persistence while binding
+                isSuppressingOrderPersistence = true;
+                Program.Log("RefreshMetricsGrid: suppressing order persistence during binding");
+
+                isApplyingLayout = true;
+
                 metricsGrid.AutoGenerateColumns = true;
                 metricsGrid.DataSource = new BindingSource { DataSource = data };
+                var dataSourceSet = DateTime.Now;
+                Program.Log($"DataSource set in {(dataSourceSet - bindStart).TotalMilliseconds:F0}ms");
+
+                var virtualStart = DateTime.Now;
                 ApplyVirtualColumnsAndLayout(selectedTable.TableName, data);
+                var virtualEnd = DateTime.Now;
+                Program.Log($"ApplyVirtualColumnsAndLayout completed in {(virtualEnd - virtualStart).TotalMilliseconds:F0}ms");
+
+                var configStart = DateTime.Now;
                 ApplyUserConfigToMetricsGrid(selectedTable.TableName);
+                var configEnd = DateTime.Now;
+                Program.Log($"ApplyUserConfigToMetricsGrid completed in {(configEnd - configStart).TotalMilliseconds:F0}ms");
+
                 // Ensure events and context menus are wired after binding
                 WireUpGridEvents();
                 AddGridContextMenu();
@@ -1100,6 +1295,18 @@ namespace WorkOrderBlender
               }
               finally
               {
+                // Re-enable persistence after binding completes
+                isSuppressingOrderPersistence = false;
+                Program.Log("RefreshMetricsGrid: re-enabled order persistence after binding");
+                // Restore applying layout flag
+                isApplyingLayout = prevApplyingLayout;
+
+                // Restore autosize settings
+                try { metricsGrid.AutoSizeColumnsMode = prevAutoSizeCols; } catch { }
+                metricsGrid.AutoSizeRowsMode = prevAutoSizeRows;
+                metricsGrid.RowHeadersWidthSizeMode = prevRowHeadersWidthSizeMode;
+                metricsGrid.ColumnHeadersHeightSizeMode = prevColumnHeadersHeightSizeMode;
+
                 metricsGrid.Visible = prevVisible;
                 metricsGrid.ResumeLayout();
                 metricsGrid.Refresh();
@@ -1115,6 +1322,7 @@ namespace WorkOrderBlender
             // No sources selected – clear the metrics grid
             Program.Log("No work orders selected; clearing metrics grid");
             currentSourcePaths = new List<string>();
+            ClearVirtualColumnCaches(); // Clear caches when clearing source data
             metricsGrid.SuspendLayout();
             var prevVisible = metricsGrid.Visible;
             metricsGrid.Visible = false;
@@ -1155,6 +1363,35 @@ namespace WorkOrderBlender
         isRefreshingMetrics = false;
         Program.Log($"RefreshMetricsGrid: isRefreshingMetrics set to false");
       }
+    }
+
+    // Quickly clear the metrics grid when no work orders are selected
+    private void ClearMetricsGridFast()
+    {
+      try
+      {
+        Program.Log("ClearMetricsGridFast: clearing metrics grid due to no selection");
+        currentSourcePaths = new List<string>();
+        ClearVirtualColumnCaches(); // Clear caches when clearing source data
+        if (metricsGrid == null) return;
+        metricsGrid.SuspendLayout();
+        var prevVisible = metricsGrid.Visible;
+        metricsGrid.Visible = false;
+        try
+        {
+          metricsGrid.DataSource = null;
+          metricsGrid.Rows.Clear();
+        }
+        catch { }
+        finally
+        {
+          metricsGrid.Visible = prevVisible;
+          metricsGrid.ResumeLayout();
+          metricsGrid.Refresh();
+          panelMetricsBorder.Refresh();
+        }
+      }
+      catch { }
     }
 
     private void WireUpGridEvents()
@@ -1219,6 +1456,10 @@ namespace WorkOrderBlender
         metricsGrid.CurrentCellChanged -= MetricsGrid_CurrentCellChanged;
         metricsGrid.CurrentCellChanged += MetricsGrid_CurrentCellChanged;
 
+        // Reapply excluded styling when user sorts or reorders columns
+        metricsGrid.Sorted -= MetricsGrid_Sorted;
+        metricsGrid.Sorted += MetricsGrid_Sorted;
+
         // Debounced order persistence setup
         if (orderPersistTimer == null)
         {
@@ -1230,6 +1471,7 @@ namespace WorkOrderBlender
             if ((DateTime.UtcNow - lastOrderChangeUtc).TotalMilliseconds >= orderPersistTimer.Interval)
             {
               orderPersistTimer.Stop();
+              Program.Log("Order persistence timer fired, calling PersistCurrentOrderSafely");
               PersistCurrentOrderSafely();
             }
           };
@@ -1284,6 +1526,8 @@ namespace WorkOrderBlender
     {
       try
       {
+        // Suppress persistence while applying layout programmatically or during filtered rebinds
+        if (isApplyingLayout || isSuppressingOrderPersistence) return;
         if (e?.Column == null || string.IsNullOrWhiteSpace(currentSelectedTable)) return;
         var key = !string.IsNullOrEmpty(e.Column.DataPropertyName) ? e.Column.DataPropertyName : e.Column.Name;
         Program.Log($"ColumnWidthChanged: table={currentSelectedTable}, column={key}, newWidth={e.Column.Width}");
@@ -1307,7 +1551,8 @@ namespace WorkOrderBlender
       try
       {
         if (metricsGrid == null || string.IsNullOrWhiteSpace(currentSelectedTable)) return;
-        if (isApplyingLayout)
+        // Skip persistence during programmatic layout changes (like initial binding or column reordering)
+        if (isApplyingLayout || isSuppressingOrderPersistence)
         {
           return;
         }
@@ -1315,12 +1560,35 @@ namespace WorkOrderBlender
         lastOrderChangeUtc = DateTime.UtcNow;
         if (orderPersistTimer != null)
         {
-          if (!orderPersistTimer.Enabled) orderPersistTimer.Start();
+          if (!orderPersistTimer.Enabled)
+          {
+            // Don't start the timer while suppression is active
+            if (!isSuppressingOrderPersistence)
+            {
+              orderPersistTimer.Start();
+              Program.Log($"ColumnDisplayIndexChanged: started order persistence timer for column '{e.Column.Name}'");
+            }
+          }
         }
+        // Reapply excluded styling after reordering
+        try { ApplyDisabledRowStyling(); } catch { }
       }
       catch (Exception ex)
       {
         Program.Log("MetricsGrid_ColumnDisplayIndexChanged error", ex);
+      }
+    }
+
+    private void MetricsGrid_Sorted(object sender, EventArgs e)
+    {
+      try
+      {
+        // Reapply excluded styling after sort changed
+        ApplyDisabledRowStyling();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("MetricsGrid_Sorted error", ex);
       }
     }
 
@@ -1380,8 +1648,21 @@ namespace WorkOrderBlender
       {
         if (metricsGrid == null) return;
 
-        var cfg = UserConfig.LoadOrDefault();
-        Program.Log($"ApplyUserConfig: table={tableName}, cols={metricsGrid.Columns.Count}");
+        // Suppress event-driven persistence while applying layout programmatically
+        var prevApplying = isApplyingLayout; isApplyingLayout = true;
+
+        // Stop any pending order persistence timer to prevent saving during programmatic layout
+        if (orderPersistTimer != null && orderPersistTimer.Enabled)
+        {
+          orderPersistTimer.Stop();
+          Program.Log("ApplyUserConfig: stopped pending order persistence timer");
+        }
+
+        try
+        {
+          var cfg = UserConfig.LoadOrDefault();
+          Program.Log($"ApplyUserConfig: table={tableName}, cols={metricsGrid.Columns.Count}");
+          var t0 = DateTime.Now;
 
         // Apply column widths
         foreach (DataGridViewColumn col in metricsGrid.Columns)
@@ -1395,6 +1676,8 @@ namespace WorkOrderBlender
           }
           col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
         }
+
+        var t1 = DateTime.Now; Program.Log($"ApplyUserConfig: widths applied in {(t1 - t0).TotalMilliseconds:F0}ms");
 
         // Apply visibility
         foreach (DataGridViewColumn col in metricsGrid.Columns)
@@ -1415,44 +1698,50 @@ namespace WorkOrderBlender
           }
         }
 
-        // Apply header overrides and tooltips
-        metricsGrid.ShowCellToolTips = true; // enable tooltips generally
-        foreach (DataGridViewColumn col in metricsGrid.Columns)
-        {
-          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
-          var headerText = cfg.TryGetColumnHeaderText(tableName, key);
-          if (!string.IsNullOrWhiteSpace(headerText))
-          {
-            col.HeaderText = headerText;
-          }
-          var headerTip = cfg.TryGetColumnHeaderToolTip(tableName, key);
-          if (!string.IsNullOrWhiteSpace(headerTip))
-          {
-            // DataGridView does not natively show header tooltips unless set on HeaderCell
-            col.HeaderCell.ToolTipText = headerTip;
-          }
-        }
+          var t2 = DateTime.Now; Program.Log($"ApplyUserConfig: visibility applied in {(t2 - t1).TotalMilliseconds:F0}ms");
 
-        // Apply column colors
-        foreach (DataGridViewColumn col in metricsGrid.Columns)
-        {
-          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
-          var backColor = cfg.TryGetColumnBackColor(tableName, key);
-          if (backColor.HasValue)
+          // Apply header overrides and tooltips
+          metricsGrid.ShowCellToolTips = true; // enable tooltips generally
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
           {
-            col.DefaultCellStyle.BackColor = backColor.Value;
-            col.HeaderCell.Style.BackColor = backColor.Value;
-          }
-          var foreColor = cfg.TryGetColumnForeColor(tableName, key);
-          if (foreColor.HasValue)
-          {
-            col.DefaultCellStyle.ForeColor = foreColor.Value;
-            col.HeaderCell.Style.ForeColor = foreColor.Value;
+            var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+            var headerText = cfg.TryGetColumnHeaderText(tableName, key);
+            if (!string.IsNullOrWhiteSpace(headerText))
+            {
+              col.HeaderText = headerText;
+            }
+            var headerTip = cfg.TryGetColumnHeaderToolTip(tableName, key);
+            if (!string.IsNullOrWhiteSpace(headerTip))
+            {
+              // DataGridView does not natively show header tooltips unless set on HeaderCell
+              col.HeaderCell.ToolTipText = headerTip;
+            }
           }
 
-          // Ensure header styles are synchronized
-          ApplyHeaderStyles(col);
-        }
+          var t3 = DateTime.Now; Program.Log($"ApplyUserConfig: headers/tooltips applied in {(t3 - t2).TotalMilliseconds:F0}ms");
+
+          // Apply column colors
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
+          {
+            var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+            var backColor = cfg.TryGetColumnBackColor(tableName, key);
+            if (backColor.HasValue)
+            {
+              col.DefaultCellStyle.BackColor = backColor.Value;
+              col.HeaderCell.Style.BackColor = backColor.Value;
+            }
+            var foreColor = cfg.TryGetColumnForeColor(tableName, key);
+            if (foreColor.HasValue)
+            {
+              col.DefaultCellStyle.ForeColor = foreColor.Value;
+              col.HeaderCell.Style.ForeColor = foreColor.Value;
+            }
+
+            // Ensure header styles are synchronized
+            ApplyHeaderStyles(col);
+          }
+
+        var t4 = DateTime.Now; Program.Log($"ApplyUserConfig: colors applied in {(t4 - t3).TotalMilliseconds:F0}ms");
 
         // Style virtual columns with defaults (only if no custom colors are set)
         foreach (var def in virtualColumnDefs)
@@ -1502,6 +1791,8 @@ namespace WorkOrderBlender
           }
         }
 
+        var t5 = DateTime.Now; Program.Log($"ApplyUserConfig: virtual column styling applied in {(t5 - t4).TotalMilliseconds:F0}ms");
+
         // Apply order (build a sensible default when none is saved)
         var order = cfg.TryGetColumnOrder(tableName);
         if (order == null || order.Count == 0)
@@ -1536,26 +1827,40 @@ namespace WorkOrderBlender
           Program.Log($"ApplyUserConfig: built default order with virtuals after LinkID: [{string.Join(", ", order)}]");
         }
 
-        if (order != null && order.Count > 0)
-        {
-          Program.Log($"ApplyUserConfig: applying order [{string.Join(", ", order)}]");
-          var prev = isApplyingLayout; isApplyingLayout = true;
-          int idx = 0;
-          foreach (var name in order)
+          if (order != null && order.Count > 0)
           {
-            DataGridViewColumn col = null;
-            foreach (DataGridViewColumn c in metricsGrid.Columns)
+            Program.Log($"ApplyUserConfig: applying order [{string.Join(", ", order)}]");
+            int idx = 0;
+            foreach (var name in order)
             {
-              var key2 = !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name;
-              if (string.Equals(key2, name, StringComparison.OrdinalIgnoreCase)) { col = c; break; }
-            }
-            if (col != null)
-            {
-              col.DisplayIndex = idx++;
+              DataGridViewColumn col = null;
+              foreach (DataGridViewColumn c in metricsGrid.Columns)
+              {
+                var key2 = !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name;
+                if (string.Equals(key2, name, StringComparison.OrdinalIgnoreCase)) { col = c; break; }
+              }
+              if (col != null)
+              {
+                Program.Log($"ApplyUserConfig: setting DisplayIndex for column '{col.Name}' to {idx}");
+                col.DisplayIndex = idx++;
+              }
             }
           }
-          isApplyingLayout = prev;
+          var t6 = DateTime.Now; Program.Log($"ApplyUserConfig: column order applied in {(t6 - t5).TotalMilliseconds:F0}ms");
         }
+        finally
+        {
+          isApplyingLayout = prevApplying;
+
+          // If we stopped the timer due to programmatic layout, don't restart it
+          // The user will need to manually change column order to trigger persistence
+          if (prevApplying == false && orderPersistTimer != null && !orderPersistTimer.Enabled)
+          {
+            Program.Log("ApplyUserConfig: order persistence timer remains stopped after programmatic layout");
+          }
+        }
+
+        var t6b = DateTime.Now;
 
         // Style built-in _SourceFile column if present
         if (metricsGrid.Columns.Contains("_SourceFile"))
@@ -1569,18 +1874,30 @@ namespace WorkOrderBlender
           col.HeaderText = "Work Order";
         }
 
+        var t7 = DateTime.Now; Program.Log($"ApplyUserConfig: _SourceFile styling in {(t7 - t6b).TotalMilliseconds:F0}ms");
+
         // Enable user reordering and resizing
         metricsGrid.AllowUserToOrderColumns = true;
         metricsGrid.AllowUserToResizeColumns = true;
 
+        var t8 = DateTime.Now; Program.Log($"ApplyUserConfig: ordering/resizing toggles set in {(t8 - t7).TotalMilliseconds:F0}ms");
+
         // Enable custom header styling (disable visual styles for headers)
         metricsGrid.EnableHeadersVisualStyles = false;
+
+        var t9 = DateTime.Now; Program.Log($"ApplyUserConfig: header visual styles applied in {(t9 - t8).TotalMilliseconds:F0}ms");
 
         // Initialize edit mode visuals/state
         ApplyMainGridEditState();
 
+        var t10 = DateTime.Now; Program.Log($"ApplyUserConfig: edit state applied in {(t10 - t9).TotalMilliseconds:F0}ms");
+
         // Ensure all column headers have proper styling
         RefreshAllColumnHeaderStyles();
+        var t11 = DateTime.Now; Program.Log($"ApplyUserConfig: header styles refreshed in {(t11 - t10).TotalMilliseconds:F0}ms");
+
+        // Update fronts filter button state
+        UpdateFrontsFilterButtonState();
       }
       catch (Exception ex)
       {
@@ -1753,17 +2070,20 @@ namespace WorkOrderBlender
 
     private void LoadVirtualColumnDefinitions(string tableName)
     {
-      try
-      {
-        var cfg = UserConfig.LoadOrDefault();
-        virtualColumnDefs = cfg.GetVirtualColumnsForTable(tableName) ?? new List<UserConfig.VirtualColumnDef>();
-        virtualColumnNames.Clear();
-        Program.Log($"MainForm: Loading virtual columns for '{tableName}': {virtualColumnDefs.Count} defs");
-        foreach (var def in virtualColumnDefs)
+              try
         {
-          if (!string.IsNullOrWhiteSpace(def.ColumnName)) virtualColumnNames.Add(def.ColumnName);
+          var t0 = DateTime.Now;
+          var cfg = UserConfig.LoadOrDefault();
+          virtualColumnDefs = cfg.GetVirtualColumnsForTable(tableName) ?? new List<UserConfig.VirtualColumnDef>();
+          virtualColumnNames.Clear();
+          Program.Log($"MainForm: Loading virtual columns for '{tableName}': {virtualColumnDefs.Count} defs");
+          foreach (var def in virtualColumnDefs)
+          {
+            if (!string.IsNullOrWhiteSpace(def.ColumnName)) virtualColumnNames.Add(def.ColumnName);
+          }
+          var t1 = DateTime.Now;
+          Program.Log($"LoadVirtualColumnDefinitions: completed in {(t1 - t0).TotalMilliseconds:F0}ms");
         }
-      }
       catch (Exception ex)
       {
         Program.Log("MainForm: LoadVirtualColumnDefinitions failed", ex);
@@ -1774,10 +2094,24 @@ namespace WorkOrderBlender
 
     private void BuildVirtualLookupCaches(string tableName)
     {
-      try
-      {
-        virtualLookupCacheByColumn.Clear();
-        foreach (var def in virtualColumnDefs)
+              try
+        {
+          var t0 = DateTime.Now;
+
+          // Create a cache key based on table name and source paths
+          var newCacheKey = $"{tableName}:{string.Join("|", currentSourcePaths?.OrderBy(p => p)?.ToArray() ?? new string[0])}";
+
+          // If cache key hasn't changed, we can reuse existing caches
+          if (virtualCacheKey == newCacheKey && virtualLookupCacheByColumn.Count > 0)
+          {
+            Program.Log($"BuildVirtualLookupCaches: reusing existing caches for key '{newCacheKey}' (saved {(DateTime.Now - t0).TotalMilliseconds:F0}ms)");
+            return;
+          }
+
+          Program.Log($"BuildVirtualLookupCaches: building new caches for key '{newCacheKey}'");
+          virtualLookupCacheByColumn.Clear();
+
+          foreach (var def in virtualColumnDefs)
         {
           if (!def.IsLookupColumn) continue;
           if (string.IsNullOrWhiteSpace(def.TargetTableName) ||
@@ -1819,9 +2153,14 @@ namespace WorkOrderBlender
           {
             Program.Log($"MainForm: BuildVirtualLookupCaches failed for {def.ColumnName}", ex);
           }
-          virtualLookupCacheByColumn[def.ColumnName] = lookup;
+                      virtualLookupCacheByColumn[def.ColumnName] = lookup;
+          }
+
+          // Update cache key after successful build
+          virtualCacheKey = newCacheKey;
+          var t1 = DateTime.Now;
+          Program.Log($"BuildVirtualLookupCaches: completed in {(t1 - t0).TotalMilliseconds:F0}ms for {virtualLookupCacheByColumn.Count} columns");
         }
-      }
       catch (Exception ex)
       {
         Program.Log("MainForm: BuildVirtualLookupCaches failed", ex);
@@ -1867,17 +2206,32 @@ namespace WorkOrderBlender
           }
         }
 
-        // Force DataGridView to recognize any new columns after DataSource set
+        // Notify grid of new columns without full rebind to avoid heavy rebuild cost
         if (metricsGrid != null && newlyAdded.Count > 0)
         {
-          Program.Log($"MainForm: Refreshing grid after adding virtual columns: {string.Join(", ", newlyAdded)}");
+          Program.Log($"MainForm: Refreshing grid after adding virtual columns (lightweight): {string.Join(", ", newlyAdded)}");
           var bs = metricsGrid.DataSource as BindingSource;
-          var ds = bs?.DataSource;
-          metricsGrid.DataSource = null;
-          metricsGrid.Refresh();
-          Application.DoEvents();
-          metricsGrid.DataSource = bs ?? new BindingSource { DataSource = ds ?? data };
-          metricsGrid.Refresh();
+          metricsGrid.SuspendLayout();
+          try
+          {
+            metricsGrid.AutoGenerateColumns = true; // ensure autogen picks up new DataTable columns
+            if (bs != null)
+            {
+              bs.RaiseListChangedEvents = false;
+              bs.RaiseListChangedEvents = true;
+              bs.ResetBindings(false);
+            }
+            else
+            {
+              // Fallback: bind through a BindingSource if grid isn't already using one
+              metricsGrid.DataSource = new BindingSource { DataSource = data };
+            }
+          }
+          finally
+          {
+            metricsGrid.ResumeLayout();
+            metricsGrid.Invalidate();
+          }
         }
       }
       catch (Exception ex)
@@ -2759,7 +3113,14 @@ namespace WorkOrderBlender
       {
         if (string.IsNullOrEmpty(currentSelectedTable)) return;
         Program.Edits.SelectAll(currentSelectedTable);
-        RefreshMetricsGrid();
+        // Lightweight restyle only
+        if (metricsGrid != null)
+        {
+          metricsGrid.SuspendLayout();
+          ApplyDisabledRowStyling();
+          metricsGrid.ResumeLayout();
+          metricsGrid.Refresh();
+        }
       }
       catch (Exception ex)
       {
@@ -2774,11 +3135,13 @@ namespace WorkOrderBlender
       {
         if (string.IsNullOrEmpty(currentSelectedTable)) return;
         Program.Edits.ClearAll(currentSelectedTable);
-        RefreshMetricsGrid();
-        // Also clear when no work orders selected
-        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        // Lightweight restyle only
+        if (metricsGrid != null)
         {
-          RequestRefreshMetricsGrid();
+          metricsGrid.SuspendLayout();
+          ApplyDisabledRowStyling();
+          metricsGrid.ResumeLayout();
+          metricsGrid.Refresh();
         }
       }
       catch (Exception ex)
@@ -2881,10 +3244,20 @@ namespace WorkOrderBlender
           catch { }
         }
 
-        // Refresh grid to reflect selection changes; clear if nothing selected
+        // Lightweight refresh: update styling only; avoid full rebuild
         if (changed > 0)
         {
-          try { RefreshMetricsGrid(); } catch { }
+          try
+          {
+            if (metricsGrid != null)
+            {
+              metricsGrid.SuspendLayout();
+              ApplyDisabledRowStyling();
+              metricsGrid.ResumeLayout();
+              metricsGrid.Refresh();
+            }
+          }
+          catch { }
           if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
           {
             RequestRefreshMetricsGrid();
@@ -2939,13 +3312,144 @@ namespace WorkOrderBlender
 
         if (changed > 0)
         {
-          try { RefreshMetricsGrid(); } catch { }
+          try
+          {
+            if (metricsGrid != null)
+            {
+              metricsGrid.SuspendLayout();
+              ApplyDisabledRowStyling();
+              metricsGrid.ResumeLayout();
+              metricsGrid.Refresh();
+            }
+          }
+          catch { }
         }
       }
       catch (Exception ex)
       {
         Program.Log("Error including selected rows", ex);
         MessageBox.Show("Error including selected rows: " + ex.Message, "Selection Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Fronts filter functionality for Parts table
+    private bool isFrontsFilterActive = false;
+    private DataTable originalPartsData = null;
+
+    private void btnFilterFronts_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        // Only enable when Parts table is selected
+        if (string.IsNullOrEmpty(currentSelectedTable) || !string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase))
+        {
+          return;
+        }
+
+        if (isFrontsFilterActive)
+        {
+          // Reset filter - restore original data
+          if (originalPartsData != null && metricsGrid?.DataSource is BindingSource bs)
+          {
+            Program.Log("Fronts filter: Resetting to show all parts");
+
+            RebindBindingSourceSafely(bs, originalPartsData);
+
+            ApplyDisabledRowStyling();
+            isFrontsFilterActive = false;
+            originalPartsData = null;
+            btnFilterFronts.Text = "Fronts";
+            btnFilterFronts.BackColor = System.Drawing.SystemColors.Control;
+          }
+        }
+        else
+        {
+          // Apply filter - show only front parts
+          if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataTable data)
+          {
+            // Validate data before filtering
+            if (data == null || data.Rows.Count == 0)
+            {
+              Program.Log("Fronts filter: No data to filter");
+              return;
+            }
+
+            Program.Log("Fronts filter: Filtering to show only front parts");
+
+            // Store original data if not already stored
+            if (originalPartsData == null)
+            {
+              originalPartsData = data.Copy();
+            }
+
+            // Create filtered data table with front parts only
+            // Start with a copy of the original data to preserve all columns and their data
+            var frontParts = data.Copy();
+            var frontKeywords = new[] { "door", "slab", "drawer front", "appliance front", "false front", "face frame"};
+
+            // Validate required columns exist
+            var requiredColumns = new[] { "Name", "Comments", "Comments1", "Comments2", "Comments3" };
+            foreach (var colName in requiredColumns)
+            {
+              if (!data.Columns.Contains(colName))
+              {
+                Program.Log($"Fronts filter: Required column '{colName}' not found in data");
+                MessageBox.Show($"Required column '{colName}' not found in data. Cannot apply filter.", "Filter Error",
+                  MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+              }
+            }
+
+            // Filter by removing rows that don't match front criteria
+            // Work backwards to avoid index shifting issues
+            for (int i = frontParts.Rows.Count - 1; i >= 0; i--)
+            {
+              var row = frontParts.Rows[i];
+              var name = row["Name"]?.ToString() ?? "";
+              var comments = row["Comments"]?.ToString() ?? "";
+              var comments1 = row["Comments1"]?.ToString() ?? "";
+              var comments2 = row["Comments2"]?.ToString() ?? "";
+              var comments3 = row["Comments3"]?.ToString() ?? "";
+
+              // Combine all text fields for searching
+              var searchText = $"{name} {comments} {comments1} {comments2} {comments3}".ToLowerInvariant();
+
+              // Check if any front keywords are found
+              bool isFrontPart = false;
+              foreach (var keyword in frontKeywords)
+              {
+                if (searchText.Contains(keyword.ToLowerInvariant()))
+                {
+                  isFrontPart = true;
+                  break;
+                }
+              }
+
+              if (!isFrontPart)
+              {
+                frontParts.Rows.RemoveAt(i);
+              }
+            }
+
+
+            // Rebind safely to avoid CurrencyManager index errors
+            RebindBindingSourceSafely(bs, frontParts);
+
+            ApplyDisabledRowStyling();
+
+            isFrontsFilterActive = true;
+            btnFilterFronts.Text = "Show All";
+            btnFilterFronts.BackColor = System.Drawing.Color.LightGreen;
+
+            Program.Log($"Fronts filter: Filtered from {data.Rows.Count} to {frontParts.Rows.Count} parts");
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error applying fronts filter", ex);
+        MessageBox.Show("Error applying fronts filter: " + ex.Message, "Filter Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
     }
@@ -3671,6 +4175,34 @@ namespace WorkOrderBlender
         metricsGrid.Refresh();
       }
       catch { }
+    }
+
+    // Update fronts filter button state based on selected table
+    private void UpdateFrontsFilterButtonState()
+    {
+      try
+      {
+        if (btnFilterFronts != null)
+        {
+          bool isPartsTable = !string.IsNullOrEmpty(currentSelectedTable) &&
+                             string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase);
+
+          btnFilterFronts.Enabled = isPartsTable;
+
+          if (!isPartsTable)
+          {
+            // Reset button state when not on Parts table
+            btnFilterFronts.Text = "Fronts";
+            btnFilterFronts.BackColor = System.Drawing.SystemColors.Control;
+            isFrontsFilterActive = false;
+            originalPartsData = null;
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error updating fronts filter button state", ex);
+      }
     }
   }
 
