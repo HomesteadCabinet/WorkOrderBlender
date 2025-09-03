@@ -904,6 +904,9 @@ namespace WorkOrderBlender
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+      table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       dlg.Controls.Add(table);
@@ -933,7 +936,31 @@ namespace WorkOrderBlender
 
       // Hide Purchasing option
       var cfg = UserConfig.LoadOrDefault();
-      var chkHidePurchasing = new CheckBox { Text = "Hide Purchasing", AutoSize = true, Checked = cfg.HidePurchasing, Anchor = AnchorStyles.Left };
+      var chkHidePurchasing = new CheckBox {
+        Text = "Hide Purchasing",
+        AutoSize = true,
+        Checked = cfg.HidePurchasing,
+        Anchor = AnchorStyles.Left,
+        Tag = "HidePurchasing"
+      };
+      // Add tooltip for Hide Purchasing checkbox
+      var toolTipHidePurchasing = new ToolTip();
+      toolTipHidePurchasing.SetToolTip(chkHidePurchasing, "Hide purchasing work orders from the list.");
+
+      var chkDynamicSheetCosts = new CheckBox {
+        Text = "Dynamic Sheet Costs",
+        AutoSize = true,
+        Checked = cfg.DynamicSheetCosts,
+        Anchor = AnchorStyles.Left,
+        Tag = "DynamicSheetCosts"
+      };
+      // Add tooltip for Dynamic Sheet Costs checkbox
+      var toolTipDynamicSheetCosts = new ToolTip();
+      toolTipDynamicSheetCosts.SetToolTip(
+        chkDynamicSheetCosts,
+        "If checked, dynamic sheet costs will be calculated based on the width, length, " +
+        "and thickness of the sheet. This will replace values we may have added in the database."
+      );
 
       // Layout rows
       table.Controls.Add(lblRoot, 0, 0);
@@ -946,8 +973,12 @@ namespace WorkOrderBlender
       table.SetColumnSpan(txtSdfLocal, 2);
 
       // Add Hide Purchasing on its own row spanning available columns
-      table.Controls.Add(chkHidePurchasing, 0, 2);
+      table.Controls.Add(chkHidePurchasing, 0, 3);
       table.SetColumnSpan(chkHidePurchasing, 3);
+
+      // Add Dynamic Sheet Costs on its own row spanning available columns
+      table.Controls.Add(chkDynamicSheetCosts, 0, 4);
+      table.SetColumnSpan(chkDynamicSheetCosts, 3);
 
       // Buttons row with Check Updates on left, OK/Cancel on right
       var btnCheckUpdates = new Button
@@ -988,6 +1019,7 @@ namespace WorkOrderBlender
           if (!string.IsNullOrEmpty(newRoot)) cfgNow.DefaultRoot = newRoot;
           if (!string.IsNullOrEmpty(newSdf)) cfgNow.SdfFileName = newSdf;
           cfgNow.HidePurchasing = chkHidePurchasing.Checked; // persist Hide Purchasing
+          cfgNow.DynamicSheetCosts = chkDynamicSheetCosts.Checked; // persist Dynamic Sheet Costs
           cfgNow.Save();
           FilterWorkOrders(); // apply filter immediately if changed
         }
@@ -1964,11 +1996,11 @@ namespace WorkOrderBlender
           if (!dataTable.Columns.Contains(colName)) dataTable.Columns.Add(colName, dataType);
         }
 
-        // Set a primary key if LinkID or ID exists
-        var pk = dataTable.Columns.Contains("LinkID") ? dataTable.Columns["LinkID"] : (dataTable.Columns.Contains("ID") ? dataTable.Columns["ID"] : null);
-        if (pk != null) dataTable.PrimaryKey = new[] { pk };
+        // Don't set primary key for metrics grid - we want to show all rows from all work orders
+        // Primary key would cause merging of rows with same ID, hiding data from different work orders
 
         // Load rows from all sources
+        int totalRowsLoaded = 0;
         foreach (var path in sourcePaths)
         {
           if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
@@ -1987,6 +2019,7 @@ namespace WorkOrderBlender
                 var readerSchema = reader.GetSchemaTable();
                 srcCols = readerSchema.Rows.Cast<DataRow>().Select(r => Convert.ToString(r["ColumnName"]).Trim()).ToList();
 
+                int rowsFromThisSource = 0;
                 while (reader.Read())
                 {
                   var row = dataTable.NewRow();
@@ -2017,26 +2050,16 @@ namespace WorkOrderBlender
                   }
                   catch { }
 
-                  // Add or merge by PK if set
-                  if (dataTable.PrimaryKey != null && dataTable.PrimaryKey.Length == 1)
-                  {
-                    var keyCol = dataTable.PrimaryKey[0];
-                    var keyVal = row[keyCol];
-                    if (keyVal != null && keyVal != DBNull.Value)
-                    {
-                      var existing = dataTable.Rows.Find(new object[] { keyVal });
-                      if (existing != null)
-                      {
-                        foreach (DataColumn c in dataTable.Columns)
-                        {
-                          var v = row[c]; if (v != DBNull.Value && v != null) existing[c] = v;
-                        }
-                        continue;
-                      }
-                    }
-                  }
+                  // For metrics grid display, always add rows (don't merge by PK)
+                  // This ensures we see all rows from all work orders, even with duplicate IDs
                   dataTable.Rows.Add(row);
+                  rowsFromThisSource++;
+                  totalRowsLoaded++;
                 }
+
+                // Log how many rows were loaded from this source
+                string workOrderName = GetWorkOrderName(path);
+                Program.Log($"Loaded {rowsFromThisSource} rows from work order '{workOrderName}' for table '{tableName}'");
               }
             }
             catch { }
@@ -2044,6 +2067,9 @@ namespace WorkOrderBlender
         }
 
         dataTable.AcceptChanges();
+
+        // Log summary of data loading
+        Program.Log($"BuildDataTableFromSources completed for table '{tableName}': {totalRowsLoaded} total rows loaded from {sourcePaths.Count} source(s)");
       }
       finally
       {
@@ -3782,6 +3808,42 @@ namespace WorkOrderBlender
     }
 
     // removed legacy prefixed consolidation path
+
+        // Helper method to check if a sheet already exists in the destination database
+    private static bool SheetExistsInDestination(SqlCeConnection dest, string name, object width, object length, object thickness)
+    {
+      try
+      {
+        // Convert values to strings for comparison to avoid SQL CE NULL handling issues
+        string nameStr = string.IsNullOrWhiteSpace(name) ? "" : name;
+        string widthStr = width == null || width == DBNull.Value ? "" : width.ToString();
+        string lengthStr = length == null || length == DBNull.Value ? "" : length.ToString();
+        string thicknessStr = thickness == null || thickness == DBNull.Value ? "" : thickness.ToString();
+
+        using (var cmd = new SqlCeCommand(
+          "SELECT COUNT(*) FROM [Sheets] WHERE " +
+          "COALESCE([Name], '') = @name AND " +
+          "COALESCE(CAST([Width] AS NVARCHAR), '') = @width AND " +
+          "COALESCE(CAST([Length] AS NVARCHAR), '') = @length AND " +
+          "COALESCE(CAST([Thickness] AS NVARCHAR), '') = @thickness",
+          dest))
+        {
+          cmd.Parameters.AddWithValue("@name", nameStr);
+          cmd.Parameters.AddWithValue("@width", widthStr);
+          cmd.Parameters.AddWithValue("@length", lengthStr);
+          cmd.Parameters.AddWithValue("@thickness", thicknessStr);
+
+          var count = Convert.ToInt32(cmd.ExecuteScalar());
+          return count > 0;
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error checking for duplicate sheet: {ex.Message}", ex);
+        return false; // If we can't check, allow the insert to proceed
+      }
+    }
+
     private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
     {
       // Get virtual columns to exclude from consolidation
@@ -3872,6 +3934,119 @@ namespace WorkOrderBlender
                 }
               }
               catch { }
+
+              // Check for duplicate sheets before inserting
+              if (tableName.Equals("Sheets", StringComparison.OrdinalIgnoreCase))
+              {
+                try
+                {
+                  // Get the values for duplicate checking
+                  string name = null;
+                  object width = null;
+                  object length = null;
+                  object thickness = null;
+
+                  // Find the column indices for the duplicate check fields
+                  int nameIndex = allColNames.IndexOf("Name");
+                  int widthIndex = allColNames.IndexOf("Width");
+                  int lengthIndex = allColNames.IndexOf("Length");
+                  int thicknessIndex = allColNames.IndexOf("Thickness");
+
+                  if (nameIndex >= 0) name = reader.GetValue(nameIndex)?.ToString();
+                  if (widthIndex >= 0) width = reader.GetValue(widthIndex);
+                  if (lengthIndex >= 0) length = reader.GetValue(lengthIndex);
+                  if (thicknessIndex >= 0) thickness = reader.GetValue(thicknessIndex);
+
+                  // Check if this sheet already exists
+                  if (SheetExistsInDestination(dest, name, width, length, thickness))
+                  {
+                    Program.Log($"Skipping duplicate sheet: Name='{name}', Width={width}, Length={length}, Thickness={thickness}");
+                    rowIndex++;
+                    continue; // Skip this row
+                  }
+                }
+                catch (Exception ex)
+                {
+                  Program.Log($"Error checking for duplicate sheet: {ex.Message}", ex);
+                  // Continue with insert if duplicate check fails
+                }
+              }
+
+              // Apply dynamic sheet cost calculation if enabled
+              if (tableName.Equals("Sheets", StringComparison.OrdinalIgnoreCase))
+              {
+                try
+                {
+                  var userConfig = UserConfig.LoadOrDefault();
+                  if (userConfig.DynamicSheetCosts)
+                  {
+                    // Get the values for cost calculation
+                    object width = null;
+                    object length = null;
+                    object thickness = null;
+
+                    // Find the column indices for the cost calculation fields
+                    int widthIndex = allColNames.IndexOf("Width");
+                    int lengthIndex = allColNames.IndexOf("Length");
+                    int thicknessIndex = allColNames.IndexOf("Thickness");
+
+                    if (widthIndex >= 0) width = reader.GetValue(widthIndex);
+                    if (lengthIndex >= 0) length = reader.GetValue(lengthIndex);
+                    if (thicknessIndex >= 0) thickness = reader.GetValue(thicknessIndex);
+
+                    // Calculate dynamic cost: (width * length * thickness) / 10
+                    if (width != null && width != DBNull.Value &&
+                        length != null && length != DBNull.Value &&
+                        thickness != null && thickness != DBNull.Value)
+                    {
+                      try
+                      {
+                        double widthVal = Convert.ToDouble(width);
+                        double lengthVal = Convert.ToDouble(length);
+                        double thicknessVal = Convert.ToDouble(thickness);
+                        double calculatedCost = (widthVal * lengthVal * thicknessVal) / 10.0;
+
+                        // Find Material Estimate Cost column and update its value
+                        int materialCostIndex = allColNames.IndexOf("MaterialCost");
+                        if (materialCostIndex >= 0)
+                        {
+                          var materialCostParam = insert.Parameters["@MaterialCost"];
+                          if (materialCostParam != null)
+                          {
+                            materialCostParam.Value = calculatedCost;
+                            Program.Log($"Applied dynamic cost calculation: Width={widthVal}, Length={lengthVal}, Thickness={thicknessVal}, Cost={calculatedCost}");
+                          }
+                        }
+
+                        // Calculate WeightedSelectionValue: (width * length * thickness) rounded to nearest 100
+                        double weightedSelectionValue = Math.Round((widthVal * lengthVal * thicknessVal) / 100.0) * 100.0;
+
+                        // Find WeightedSelectionValue column and update its value
+                        int weightedSelectionIndex = allColNames.IndexOf("WeightedSelectionValue");
+                        if (weightedSelectionIndex >= 0)
+                        {
+                          var weightedSelectionParam = insert.Parameters["@WeightedSelectionValue"];
+                          if (weightedSelectionParam != null)
+                          {
+                            weightedSelectionParam.Value = weightedSelectionValue;
+                            Program.Log($"Applied weighted selection value calculation: Width={widthVal}, Length={lengthVal}, Thickness={thicknessVal}, WeightedSelectionValue={weightedSelectionValue}");
+                          }
+                        }
+                      }
+                      catch (Exception calcEx)
+                      {
+                        Program.Log($"Error calculating dynamic sheet cost: {calcEx.Message}", calcEx);
+                        // Continue with original values if calculation fails
+                      }
+                    }
+                  }
+                }
+                catch (Exception ex)
+                {
+                  Program.Log($"Error applying dynamic sheet costs: {ex.Message}", ex);
+                  // Continue with original values if dynamic cost application fails
+                }
+              }
 
               insert.ExecuteNonQuery();
             }

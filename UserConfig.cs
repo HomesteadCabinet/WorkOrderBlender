@@ -18,6 +18,7 @@ namespace WorkOrderBlender
     public int MainWindowX { get; set; } = -1; // -1 = center/start default
     public int MainWindowY { get; set; } = -1; // -1 = center/start default
     public bool HidePurchasing { get; set; } = true; // default to true
+    public bool DynamicSheetCosts { get; set; } = false; // default to false
 
     [Serializable]
     public sealed class ColumnWidthEntry
