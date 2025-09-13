@@ -137,6 +137,10 @@ namespace WorkOrderBlender
       this.listWorkOrders.MouseDown += listWorkOrders_MouseDown;
       this.listWorkOrders.KeyDown += listWorkOrders_KeyDown;
       this.metricsGrid.DataError += metricsGrid_DataError;
+      // Add context menu support and right-click handlers for grid
+      this.metricsGrid.MouseDown += MetricsGrid_MouseDown;
+      this.metricsGrid.Sorted += MetricsGrid_Sorted;
+      this.metricsGrid.CurrentCellChanged += MetricsGrid_CurrentCellChanged;
       this.Shown += (s, e) =>
       {
         try
@@ -2432,6 +2436,54 @@ namespace WorkOrderBlender
         manageVirtual.Click += (s, e) => OpenVirtualColumnsDialog();
         menu.Items.Add(manageVirtual);
 
+        // Reset to defaults options
+        menu.Items.Add(new ToolStripSeparator());
+        var resetThisTable = new ToolStripMenuItem("Reset Columns to Defaults (This Table)");
+        resetThisTable.Click += (s, e) =>
+        {
+          try
+          {
+            if (string.IsNullOrWhiteSpace(currentSelectedTable)) return;
+            var cfg = UserConfig.LoadOrDefault();
+            // Reset only column-related preferences for this table
+            cfg.ResetColumnsToDefaultsForTable(currentSelectedTable);
+            cfg.Save();
+            // Reapply layout to reflect defaults
+            ApplyUserConfigToMetricsGrid(currentSelectedTable);
+            metricsGrid?.Refresh();
+            Program.Log($"Columns reset to defaults for table '{currentSelectedTable}'");
+          }
+          catch (Exception ex)
+          {
+            Program.Log("Reset columns for table failed", ex);
+            MessageBox.Show("Failed to reset columns: " + ex.Message);
+          }
+        };
+
+        var resetAllTables = new ToolStripMenuItem("Reset Columns to Defaults (All Tables)");
+        resetAllTables.Click += (s, e) =>
+        {
+          try
+          {
+            var cfg = UserConfig.LoadOrDefault();
+            cfg.ResetColumnsToDefaultsAllTables();
+            cfg.Save();
+            if (!string.IsNullOrWhiteSpace(currentSelectedTable))
+            {
+              ApplyUserConfigToMetricsGrid(currentSelectedTable);
+              metricsGrid?.Refresh();
+            }
+            Program.Log("Columns reset to defaults for all tables");
+          }
+          catch (Exception ex)
+          {
+            Program.Log("Reset columns for all tables failed", ex);
+            MessageBox.Show("Failed to reset columns for all tables: " + ex.Message);
+          }
+        };
+        menu.Items.Add(resetThisTable);
+        menu.Items.Add(resetAllTables);
+
         menu.Show(metricsGrid, clientLocation);
       }
       catch { }
@@ -2711,7 +2763,21 @@ namespace WorkOrderBlender
     private void MetricsGrid_CurrentCellDirtyStateChanged_Edit(object sender, EventArgs e)
     {
       if (!isEditModeMainGrid || metricsGrid.ReadOnly) return;
-      // defer commit to CellEndEdit
+      try
+      {
+        if (metricsGrid.IsCurrentCellDirty)
+        {
+          var cell = metricsGrid.CurrentCell;
+          if (cell is DataGridViewCheckBoxCell || cell is DataGridViewComboBoxCell)
+          {
+            // For checkbox/combo, commit immediately and end edit to trigger CellEndEdit
+            metricsGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
+            metricsGrid.EndEdit();
+          }
+          // For text cells, do nothing here; wait for CellEndEdit so typing isn't interrupted
+        }
+      }
+      catch { }
     }
 
     private void MetricsGrid_CellEndEdit_Edit(object sender, DataGridViewCellEventArgs e)
@@ -2727,7 +2793,7 @@ namespace WorkOrderBlender
     private void MetricsGrid_CellValueChanged_Edit(object sender, DataGridViewCellEventArgs e)
     {
       if (!isEditModeMainGrid || e.RowIndex < 0 || e.ColumnIndex < 0) return;
-      try { TrySaveSingleCellChange_MainGrid(e.RowIndex, e.ColumnIndex, false); } catch { }
+      // No-op: we commit on CellEndEdit after CommitEdit to avoid double-processing
     }
 
     private void ApplyMainGridEditState()
@@ -2931,8 +2997,11 @@ namespace WorkOrderBlender
               }
             }
 
-            // Mark row clean so subsequent edits diff against new baseline
-            try { dataRow.AcceptChanges(); } catch { }
+            // Mark row clean only after the edit is finalized
+            if (isEndEdit)
+            {
+              try { dataRow.AcceptChanges(); } catch { }
+            }
           }
         }
       }
@@ -4216,9 +4285,6 @@ namespace WorkOrderBlender
           // Execute the action based on type
           switch (actionDef.ActionType?.ToLowerInvariant())
           {
-            case "3dviewer":
-              Open3DViewer(keyValue);
-              break;
             case "weblink":
               OpenWebLink(keyValue);
               break;
@@ -4235,48 +4301,6 @@ namespace WorkOrderBlender
       {
         Program.Log($"Error executing action {actionDef.ActionType}", ex);
         MessageBox.Show($"Error executing action: {ex.Message}", "Action Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-      }
-    }
-
-    private void Open3DViewer(object keyValue)
-    {
-      if (keyValue == null || keyValue == DBNull.Value)
-      {
-        MessageBox.Show("No valid ID found for 3D viewer.", "Cannot Open 3D Viewer", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        return;
-      }
-
-      try
-      {
-        string dbPathToUse;
-
-        if (currentSourcePaths != null && currentSourcePaths.Count > 0)
-        {
-          // Use first available source SDF path
-          dbPathToUse = currentSourcePaths.FirstOrDefault(path =>
-            !string.IsNullOrWhiteSpace(path) && File.Exists(path));
-
-          if (string.IsNullOrWhiteSpace(dbPathToUse))
-          {
-            MessageBox.Show("No valid database file found for 3D viewer.", "Database Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-          }
-        }
-        else
-        {
-          MessageBox.Show("No database available for 3D viewer.", "Database Not Available", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-          return;
-        }
-
-        using (var viewer = new Product3DViewer(keyValue.ToString(), dbPathToUse, currentSelectedTable))
-        {
-          viewer.ShowDialog(this);
-        }
-      }
-      catch (Exception ex)
-      {
-        Program.Log("Error opening 3D viewer", ex);
-        MessageBox.Show($"Error opening 3D viewer: {ex.Message}", "3D Viewer Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
     }
 

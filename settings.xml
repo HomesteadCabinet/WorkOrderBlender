@@ -3,13 +3,14 @@
   <DefaultRoot>M:\Homestead_Library\Work Orders</DefaultRoot>
   <DefaultOutput>M:\Homestead_Library\Work Orders</DefaultOutput>
   <SdfFileName>MicrovellumWorkOrder.sdf</SdfFileName>
-  <WorkOrderName>TEST</WorkOrderName>
+  <WorkOrderName>TEST4</WorkOrderName>
   <MainSplitterDistance>305</MainSplitterDistance>
-  <MainWindowWidth>1824</MainWindowWidth>
-  <MainWindowHeight>860</MainWindowHeight>
-  <MainWindowX>37</MainWindowX>
-  <MainWindowY>108</MainWindowY>
+  <MainWindowWidth>1403</MainWindowWidth>
+  <MainWindowHeight>750</MainWindowHeight>
+  <MainWindowX>199</MainWindowX>
+  <MainWindowY>97</MainWindowY>
   <HidePurchasing>true</HidePurchasing>
+  <DynamicSheetCosts>true</DynamicSheetCosts>
   <ColumnWidths>
     <ColumnWidthEntry>
       <TableName>Products</TableName>
@@ -59,7 +60,7 @@
     <ColumnWidthEntry>
       <TableName>Products</TableName>
       <ColumnName>_SourceFile</ColumnName>
-      <Width>201</Width>
+      <Width>354</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Parts</TableName>
@@ -389,16 +390,13 @@
         <string>Product</string>
         <string>#</string>
         <string>Name</string>
-        <string>ActivityPath</string>
-        <string>ActivityPathShort</string>
+        <string>PerfectGrainCaption</string>
         <string>Width</string>
         <string>Quantity</string>
-        <string>Angle</string>
-        <string>BayPosition</string>
-        <string>Comments</string>
-        <string>Comments1</string>
         <string>Depth</string>
         <string>Height</string>
+        <string>Comments</string>
+        <string>Comments1</string>
         <string>Comments2</string>
         <string>Comments3</string>
         <string>ContainsSubassemblies</string>
@@ -415,7 +413,6 @@
         <string>LinkIDWorkOrder</string>
         <string>Modified</string>
         <string>ModifiedRowID</string>
-        <string>PerfectGrainCaption</string>
         <string>ScanCode</string>
         <string>TiffName</string>
         <string>TiffStream</string>
@@ -427,6 +424,10 @@
         <string>Y</string>
         <string>Z</string>
         <string>ID</string>
+        <string>ActivityPath</string>
+        <string>ActivityPathShort</string>
+        <string>Angle</string>
+        <string>BayPosition</string>
       </Columns>
     </ColumnOrderEntry>
     <ColumnOrderEntry>
@@ -747,5 +748,5 @@
     </VirtualColumnDef>
   </VirtualColumns>
   <SkippedVersion />
-  <LastUpdateCheck>2025-08-27T11:38:51.4775604-06:00</LastUpdateCheck>
+  <LastUpdateCheck>2025-09-12T14:42:12.4022974-06:00</LastUpdateCheck>
 </UserConfig>

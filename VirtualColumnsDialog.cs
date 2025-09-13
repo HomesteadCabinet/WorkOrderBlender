@@ -563,7 +563,8 @@ namespace WorkOrderBlender
 
       table.Controls.Add(new Label { Text = "Action type:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
       cboActionType = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Anchor = AnchorStyles.Left | AnchorStyles.Right };
-      cboActionType.Items.AddRange(new[] { "3DViewer", "WebLink", "Export", "Custom" });
+      // Removed 3DViewer option
+      cboActionType.Items.AddRange(new[] { "WebLink", "Export", "Custom" });
       table.Controls.Add(cboActionType, 1, 0);
 
       table.Controls.Add(new Label { Text = "Button text:", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 1);
@@ -598,9 +599,6 @@ namespace WorkOrderBlender
       {
         switch (cboActionType.SelectedItem?.ToString())
         {
-          case "3DViewer":
-            txtButtonText.Text = "🎯 3D View";
-            break;
           case "WebLink":
             txtButtonText.Text = "🔗 Link";
             break;
