@@ -583,6 +583,81 @@ namespace WorkOrderBlender
       return Path.Combine(GetConfigDirectory(), "settings.xml");
     }
 
+    // Path to a preserved default baseline settings file
+    private static string GetDefaultConfigPath()
+    {
+      try
+      {
+        var userDir = GetUserConfigDirectory();
+        if (!Directory.Exists(userDir)) Directory.CreateDirectory(userDir);
+      }
+      catch { }
+      return Path.Combine(GetUserConfigDirectory(), "settings.default.xml");
+    }
+
+    // Ensure we have a copy of the original default settings to revert to
+    public static void EnsureDefaultBaseline()
+    {
+      lock (configFileLock)
+      {
+        try
+        {
+          var baselinePath = GetDefaultConfigPath();
+          if (File.Exists(baselinePath)) return; // already preserved
+
+          // Prefer the shipped settings.xml alongside the executable
+          var originalPath = Path.Combine(GetOriginalConfigDirectory(), "settings.xml");
+          if (File.Exists(originalPath))
+          {
+            File.Copy(originalPath, baselinePath, true);
+            Program.Log("EnsureDefaultBaseline: copied shipped settings.xml to baseline");
+            return;
+          }
+
+          // Fallback: create a baseline from hardcoded defaults
+          Program.Log("EnsureDefaultBaseline: creating baseline from default layout");
+          var def = new UserConfig();
+          def.EnsureDefaultMetricsLayout();
+          var ser = new XmlSerializer(typeof(UserConfig));
+          using (var fs = File.Create(baselinePath))
+          {
+            ser.Serialize(fs, def);
+          }
+        }
+        catch (Exception ex)
+        {
+          Program.Log("EnsureDefaultBaseline failed", ex);
+        }
+      }
+    }
+
+    // Load the preserved default baseline configuration
+    public static UserConfig LoadDefaultBaseline()
+    {
+      try
+      {
+        EnsureDefaultBaseline();
+        var baselinePath = GetDefaultConfigPath();
+        if (File.Exists(baselinePath))
+        {
+          var ser = new XmlSerializer(typeof(UserConfig));
+          using (var fs = File.OpenRead(baselinePath))
+          {
+            var cfg = (UserConfig)ser.Deserialize(fs);
+            cfg.EnsureDefaultMetricsLayout();
+            return cfg;
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("LoadDefaultBaseline failed", ex);
+      }
+      var fallback = new UserConfig();
+      fallback.EnsureDefaultMetricsLayout();
+      return fallback;
+    }
+
     // Static cached instance to avoid repeated loading
     private static UserConfig cachedInstance;
     private static readonly object cacheLock = new object();
@@ -646,6 +721,8 @@ namespace WorkOrderBlender
         {
           try
           {
+            // Ensure we have a baseline default file preserved for resets
+            EnsureDefaultBaseline();
             var path = GetConfigPath();
             if (File.Exists(path))
             {
@@ -697,6 +774,65 @@ namespace WorkOrderBlender
           cachedInstance = created;
           return created;
         }
+      }
+    }
+
+    // Reset only the column-related preferences for a single table to defaults
+    public void ResetColumnsToDefaultsForTable(string tableName)
+    {
+      if (string.IsNullOrWhiteSpace(tableName)) return;
+      try
+      {
+        var def = LoadDefaultBaseline();
+
+        // Replace widths for this table
+        this.ColumnWidths.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+        this.ColumnWidths.AddRange(def.ColumnWidths.FindAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)));
+
+        // Replace order for this table
+        this.ColumnOrders.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+        var defOrder = def.ColumnOrders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+        if (defOrder != null)
+        {
+          this.ColumnOrders.Add(new ColumnOrderEntry
+          {
+            TableName = defOrder.TableName,
+            Columns = new List<string>(defOrder.Columns ?? new List<string>())
+          });
+        }
+
+        // Visibility: clear to default (only hidden columns are persisted)
+        this.ColumnVisibilities.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+
+        // Headers: replace with defaults for this table
+        this.ColumnHeaders.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+        this.ColumnHeaders.AddRange(def.ColumnHeaders.FindAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)));
+
+        // Colors: replace with defaults for this table
+        this.ColumnColors.RemoveAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+        this.ColumnColors.AddRange(def.ColumnColors.FindAll(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)));
+      }
+      catch (Exception ex)
+      {
+        Program.Log("ResetColumnsToDefaultsForTable failed", ex);
+      }
+    }
+
+    // Reset column-related preferences for all tables to defaults
+    public void ResetColumnsToDefaultsAllTables()
+    {
+      try
+      {
+        var def = LoadDefaultBaseline();
+        this.ColumnWidths = new List<ColumnWidthEntry>(def.ColumnWidths ?? new List<ColumnWidthEntry>());
+        this.ColumnOrders = new List<ColumnOrderEntry>(def.ColumnOrders ?? new List<ColumnOrderEntry>());
+        this.ColumnVisibilities = new List<ColumnVisibilityEntry>(def.ColumnVisibilities ?? new List<ColumnVisibilityEntry>());
+        this.ColumnHeaders = new List<ColumnHeaderEntry>(def.ColumnHeaders ?? new List<ColumnHeaderEntry>());
+        this.ColumnColors = new List<ColumnColorEntry>(def.ColumnColors ?? new List<ColumnColorEntry>());
+      }
+      catch (Exception ex)
+      {
+        Program.Log("ResetColumnsToDefaultsAllTables failed", ex);
       }
     }
 
