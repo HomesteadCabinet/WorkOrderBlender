@@ -1,0 +1,75 @@
+---
+globs: *Update*.cs,*Deploy*.cs
+description: Update and deployment management
+---
+
+# Update and Deployment Management Rules
+
+## Portable Update Architecture
+- Use [PortableUpdateManager.cs](mdc:PortableUpdateManager.cs) for update checking
+- [PortableUpdateDialog.cs](mdc:PortableUpdateDialog.cs) handles update UI
+- Support for portable (no-install) application updates
+- Git-based update mechanism for version control
+
+## Update Process Flow
+1. Check for updates on startup (with delay to avoid UI blocking)
+2. Compare current version with available version
+3. Respect user's skipped version preferences
+4. Show update dialog with download and install options
+5. Handle update installation and application restart
+
+## Version Management
+- Version information stored in [WorkOrderBlender.csproj](mdc:WorkOrderBlender.csproj)
+- Use semantic versioning (Major.Minor.Build)
+- Track last update check time in user configuration
+- Support skipping specific versions
+
+## Deployment Key Management
+- [DeployKeyManager.cs](mdc:DeployKeyManager.cs) handles deployment authentication
+- Embedded deployment key in resources
+- SSH configuration for secure deployment
+- Support for automated deployment pipelines
+
+## Update Configuration
+```csharp
+// Update checking configuration
+public static async void CheckForUpdates(bool silent = false, bool isStartupCheck = false)
+{
+    // Check for updates using portable update manager
+    var updateInfo = await PortableUpdateManager.CheckForUpdatesAsync();
+
+    if (updateInfo?.IsUpdateAvailable == true)
+    {
+        // Show update dialog
+        using (var updateDialog = new PortableUpdateDialog(updateInfo))
+        {
+            updateDialog.ShowDialog();
+        }
+    }
+}
+```
+
+## Build and Distribution
+- Portable builds in `dist/` directory
+- Include all necessary dependencies (SQL CE, Git tools)
+- Bundle native libraries for x64 platform
+- Create ZIP archives for distribution
+
+## Error Handling for Updates
+- Gracefully handle network connectivity issues
+- Provide fallback when update servers are unavailable
+- Log update check failures
+- Allow users to disable automatic update checking
+
+## Security Considerations
+- Verify update integrity before installation
+- Use secure protocols for update downloads
+- Validate deployment keys and signatures
+- Protect against malicious update sources
+
+## User Experience
+- Non-blocking update checks
+- Clear progress indicators during updates
+- Option to skip updates
+- Automatic restart after successful updates
+- Preserve user settings during updates

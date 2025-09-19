@@ -1,0 +1,67 @@
+---
+globs: *.cs,*.Designer.cs
+description: Windows Forms UI and dialog components
+---
+
+# Windows Forms UI Development Rules
+
+## Form Design Patterns
+- All forms should inherit from `System.Windows.Forms.Form`
+- Use partial classes with separate `.cs` and `.Designer.cs` files
+- Designer files should only contain UI layout and control declarations
+- Business logic should be in the main `.cs` file
+
+## MainForm Structure
+- [MainForm.cs](mdc:MainForm.cs) contains the primary application logic
+- [MainForm.Designer.cs](mdc:MainForm.Designer.cs) contains UI layout
+- MainForm includes: work order tree view, metrics grid, filtering controls
+- Use proper event handling for UI interactions
+
+## Dialog Forms
+- [SettingsDialog.cs](mdc:SettingsDialog.cs) - Application settings configuration
+- [PendingChangesDialog.cs](mdc:PendingChangesDialog.cs) - Preview pending changes before consolidation
+- [VirtualColumnsDialog.cs](mdc:VirtualColumnsDialog.cs) - Manage virtual column definitions
+- [PortableUpdateDialog.cs](mdc:PortableUpdateDialog.cs) - Handle application updates
+
+## DataGridView Best Practices
+- Use `DataGridView` for displaying tabular data (metrics, work orders)
+- Implement proper column width persistence using [UserConfig.cs](mdc:UserConfig.cs)
+- Support column reordering and visibility toggles
+- Handle virtual columns for computed/derived data
+- Use proper data binding with `BindingSource` when appropriate
+
+## UI State Management
+- Persist window size, position, and splitter distances in user configuration
+- Save column widths, orders, and visibility states per table
+- Implement proper UI updates when data changes
+- Use timers for debounced operations (filtering, refresh)
+
+## Event Handling Patterns
+```csharp
+// Proper event handler pattern
+private void Control_Event(object sender, EventArgs e)
+{
+    try
+    {
+        // Handle event logic
+        Program.Log($"Event handled: {sender.GetType().Name}");
+    }
+    catch (Exception ex)
+    {
+        Program.Log($"Event error: {ex.Message}", ex);
+        MessageBox.Show($"Error: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+}
+```
+
+## Threading and UI Updates
+- Use `Control.Invoke()` for cross-thread UI updates
+- Implement proper cancellation tokens for long-running operations
+- Use background threads for database operations
+- Show progress indicators for lengthy operations
+
+## Layout and Responsiveness
+- Use `TableLayoutPanel` and `SplitContainer` for complex layouts
+- Implement proper anchoring and docking
+- Support window resizing and state restoration
+- Use appropriate minimum/maximum sizes

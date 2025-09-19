@@ -1,16 +1,32 @@
 ---
 alwaysApply: true
 ---
-Use native .NET Framework 4.8 components and libraries as much as possible.
 
-Never allow modification of the source databases, only ever use the databases for reading.
-Schema for destination database is in resources/wo_schema.xml.
+# WorkOrderBlender - Core Development Rules
 
-Project is called WorkOrderBlender.
+## Essential Project Constraints
+- **Project Name**: WorkOrderBlender - Work Order SDF Consolidator
+- **Framework**: .NET Framework 4.8 Windows Forms application (x64 only)
+- **Database Rule**: NEVER modify source databases - READ-ONLY access only
+- **Schema**: Destination database schema in [resources/wo_schema.xml](mdc:resources/wo_schema.xml)
 
-The project is a Windows Forms application written in C# using .NET Framework 4.8.
+## Critical Development Standards
+- **Use native .NET Framework 4.8 components** whenever possible
+- **DEBUG logging is enabled** - use [Program.Log()](mdc:Program.cs) extensively
+- **Single-line comments** are required for code understanding
+- **Keep code DRY and robust** - eliminate redundant code
+- **Reuse existing functionality** over implementing new features
+- **Remove unused functions** - clean up dead code
 
-DEBUG Logging is enabled.
-Use single line comments for code often, not just for me but for you to best understand.
+## Code Organization Principles
+- Shared functionality goes in utility libraries
+- Main application logic in [MainForm.cs](mdc:MainForm.cs)
+- Configuration management via [UserConfig.cs](mdc:UserConfig.cs)
+- Database utilities in [SqlCeUtils.cs](mdc:SqlCeUtils.cs)
+- Edit tracking in [InMemoryEditStore.cs](mdc:InMemoryEditStore.cs)
 
-Methods or functions with shared functionality should be in a utility library.
+## Error Handling Mandate
+- All operations wrapped in try-catch blocks
+- Graceful degradation - never crash the application
+- User-friendly error messages via MessageBox
+- Comprehensive logging of all errors and debug information

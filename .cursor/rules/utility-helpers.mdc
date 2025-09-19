@@ -1,0 +1,78 @@
+---
+globs: *Utils.cs,*Helper.cs,*Manager.cs
+description: Utility classes and helper methods
+---
+
+# Utility Classes and Helper Methods Rules
+
+## Utility Class Organization
+- Place shared functionality in utility classes with descriptive names
+- Use static methods for stateless utility functions
+- Group related functionality in the same utility class
+
+## Existing Utility Classes
+- [SqlCeUtils.cs](mdc:SqlCeUtils.cs) - Database connection and management utilities
+- [InMemoryEditStore.cs](mdc:InMemoryEditStore.cs) - In-memory data editing and tracking
+- [PortableUpdateManager.cs](mdc:PortableUpdateManager.cs) - Application update management
+- [DeployKeyManager.cs](mdc:DeployKeyManager.cs) - Deployment key management
+
+## Utility Method Patterns
+```csharp
+// Static utility methods
+public static class UtilityClassName
+{
+    public static ReturnType MethodName(parameters)
+    {
+        try
+        {
+            // Implementation
+            Program.Log($"UtilityClassName.MethodName: operation completed");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"UtilityClassName.MethodName error: {ex.Message}", ex);
+            throw; // Re-throw or return default value
+        }
+    }
+}
+```
+
+## Error Handling in Utilities
+- Always wrap utility methods in try-catch blocks
+- Log errors using `Program.Log()` with context
+- Provide meaningful error messages
+- Consider whether to re-throw exceptions or return safe defaults
+
+## Thread Safety
+- Use `lock` statements for shared state access
+- Document thread safety requirements
+- Use `ConcurrentDictionary` or similar for thread-safe collections
+- Avoid static mutable state when possible
+
+## Performance Considerations
+- Cache expensive operations when appropriate
+- Use `StringBuilder` for string concatenation
+- Implement proper disposal patterns for resources
+- Consider using `async/await` for I/O operations
+
+## Validation and Input Checking
+```csharp
+// Input validation pattern
+public static void ValidateInput(string parameter)
+{
+    if (string.IsNullOrWhiteSpace(parameter))
+        throw new ArgumentException("Parameter cannot be null or empty", nameof(parameter));
+}
+```
+
+## Resource Management
+- Implement `IDisposable` for classes that manage resources
+- Use `using` statements for proper disposal
+- Handle file system operations with proper cleanup
+- Manage database connections with appropriate lifecycle
+
+## Extension Methods
+- Use extension methods sparingly and only when they improve readability
+- Place extension methods in clearly named static classes
+- Follow .NET naming conventions for extension method classes

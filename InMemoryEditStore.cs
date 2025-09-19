@@ -35,6 +35,10 @@ namespace WorkOrderBlender
     {
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
       if (linkId == null) linkId = string.Empty;
+
+      // Add debug logging
+      Program.Log($"InMemoryEditStore.UpsertOverride: tableName={tableName}, linkId={linkId}, columnName={columnName}, value={value}");
+
       lock (sync)
       {
         if (!tableToEdits.TryGetValue(tableName, out var linkMap))

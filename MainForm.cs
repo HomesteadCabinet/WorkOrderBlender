@@ -40,6 +40,26 @@ namespace WorkOrderBlender
     private bool gridEventsWired = false;
     // Suppress order persistence and related work during heavy programmatic updates/binding
     private bool isSuppressingOrderPersistence = false;
+    // Apply layout again after binding completes to ensure DisplayIndex sticks
+    private bool applyLayoutAfterBinding = false;
+
+    // Helper: dump current grid columns for diagnostics
+    private void LogCurrentGridColumns(string label)
+    {
+      try
+      {
+        if (metricsGrid == null) return;
+        var cols = metricsGrid.Columns.Cast<DataGridViewColumn>()
+          .OrderBy(c => c.DisplayIndex)
+          .Select(c =>
+          {
+            var key = !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name;
+            return $"{c.DisplayIndex}:{key} (Name='{c.Name}',DP='{c.DataPropertyName}',Vis={(c.Visible ? "T" : "F")})";
+          });
+        Program.Log($"GridColumns[{label}]: " + string.Join(" | ", cols));
+      }
+      catch { }
+    }
     private bool isEditModeMainGrid = false; // tracks edit mode for metricsGrid
     private System.Windows.Forms.Timer orderPersistTimer;
     private DateTime lastOrderChangeUtc;
@@ -50,6 +70,8 @@ namespace WorkOrderBlender
     // Refresh coalescing
     private System.Windows.Forms.Timer metricsRefreshTimer;
     private DateTime lastRefreshRequestUtc;
+    private System.Windows.Forms.Timer metricsFilterTimer; // debounce timer for live filtering
+    private DateTime lastFilterRequestUtc;
     private bool isRefreshingMetrics;
     private bool suppressTableSelectorChanged;
     private bool isScanningWorkOrders;
@@ -68,27 +90,9 @@ namespace WorkOrderBlender
     public MainForm()
     {
       InitializeComponent();
-      // Wire toolbar selection buttons
-      try
-      {
-        if (btnTableSelectAll != null) btnTableSelectAll.Click += btnTableSelectAll_Click;
-        if (btnTableClearAll != null) btnTableClearAll.Click += btnTableClearAll_Click;
-      }
-      catch { }
-
       // Set window title with version number
       var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
       this.Text = $"Work Order Blender v{version.Major}.{version.Minor}.{version.Build}";
-
-      // // Force the first column width of mainLayoutTable to 300px
-      // if (mainLayoutTable.ColumnStyles.Count > 0)
-      // {
-      //   mainLayoutTable.ColumnStyles[0].Width = 30;
-      // }
-      // else
-      // {
-      //   mainLayoutTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 30));
-      // }
 
       // Set the application icon
       try
@@ -299,6 +303,26 @@ namespace WorkOrderBlender
         }
       };
 
+      // Setup metrics filter debounce so we don't filter on every keystroke
+      metricsFilterTimer = new System.Windows.Forms.Timer();
+      metricsFilterTimer.Interval = 300; // ms debounce for typing
+      metricsFilterTimer.Tick += (s, e2) =>
+      {
+        try
+        {
+          if ((DateTime.UtcNow - lastFilterRequestUtc).TotalMilliseconds >= metricsFilterTimer.Interval)
+          {
+            metricsFilterTimer.Stop();
+            Program.Log($"metricsFilterTimer.Tick: applying filter '{currentMetricsFilter}'");
+            ApplyMetricsFilterLive();
+          }
+        }
+        catch (Exception ex)
+        {
+          Program.Log("metricsFilterTimer error", ex);
+        }
+      };
+
       // Subscribe to changes in the edit store
       Program.Edits.ChangesUpdated += (s, e) =>
       {
@@ -471,6 +495,9 @@ namespace WorkOrderBlender
           if (checkedDirs.Contains(dir)) checkedDirs.Remove(dir); else checkedDirs.Add(dir);
           listWorkOrders.Invalidate(hit.Item.Bounds);
           RequestRefreshMetricsGrid();
+
+          // Update work order name based on selection
+          UpdateWorkOrderNameFromSelection();
         }
       }
     }
@@ -487,6 +514,10 @@ namespace WorkOrderBlender
         }
         listWorkOrders.Invalidate();
         RequestRefreshMetricsGrid();
+
+        // Update work order name based on selection
+        UpdateWorkOrderNameFromSelection();
+
         e.Handled = true;
       }
     }
@@ -663,6 +694,10 @@ namespace WorkOrderBlender
         }
         listWorkOrders.Invalidate(); // Refresh the display
         RequestRefreshMetricsGrid(); // Update metrics if needed
+
+        // Update work order name based on selection
+        UpdateWorkOrderNameFromSelection();
+
         Program.Log($"Selected all {filteredWorkOrders.Count} work orders");
       }
       catch (Exception ex)
@@ -679,6 +714,10 @@ namespace WorkOrderBlender
         checkedDirs.Clear();
         listWorkOrders.Invalidate(); // Refresh the display
         RequestRefreshMetricsGrid(); // Update metrics if needed
+
+        // Update work order name based on selection (will clear if no selection)
+        UpdateWorkOrderNameFromSelection();
+
         Program.Log("Cleared all work order selections");
       }
       catch (Exception ex)
@@ -883,154 +922,23 @@ namespace WorkOrderBlender
 
     private void OpenSettingsDialog()
     {
-      var dlg = new Form
+      try
       {
-        Text = "Settings",
-        StartPosition = FormStartPosition.CenterParent,
-        Width = 700,
-        Height = 250,
-        MinimizeBox = false,
-        MaximizeBox = false,
-        FormBorderStyle = FormBorderStyle.FixedDialog
-      };
-
-      var table = new TableLayoutPanel
-      {
-        Dock = DockStyle.Top,
-        ColumnCount = 4,
-        RowCount = 4,
-        Padding = new Padding(10, 10, 10, 10),
-        Height = 150,
-      };
-      table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-      table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-      table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      dlg.Controls.Add(table);
-
-      var lblRoot = new Label { Text = "Work Order Directory:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var txtRootLocal = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400, Text = DefaultRoot };
-      var btnBrowseRoot = new Button { Text = "Browse...", AutoSize = true };
-      btnBrowseRoot.Click += (s, e) =>
-      {
-        using (var fbd = new FolderBrowserDialog())
+        using (var dlg = new SettingsDialog())
         {
-          fbd.SelectedPath = txtRootLocal.Text;
-          if (fbd.ShowDialog(dlg) == DialogResult.OK)
+          // Subscribe to the Check for Updates event
+          dlg.CheckForUpdatesRequested += (s, e) => CheckForUpdates_Click(s, e);
+
+          if (dlg.ShowDialog(this) == DialogResult.OK)
           {
-            txtRootLocal.Text = fbd.SelectedPath;
+            dlg.SaveSettings();
+            FilterWorkOrders(); // apply filter immediately if changed
           }
         }
-      };
-
-      var lblSdf = new Label { Text = ".sdf File Name:", AutoSize = true, Anchor = AnchorStyles.Left };
-      var txtSdfLocal = new TextBox
+      }
+      catch (Exception ex)
       {
-        Anchor = AnchorStyles.Left | AnchorStyles.Right,
-        Width = 400,
-        Text = GetSdfFileName()
-      };
-
-      // Hide Purchasing option
-      var cfg = UserConfig.LoadOrDefault();
-      var chkHidePurchasing = new CheckBox {
-        Text = "Hide Purchasing",
-        AutoSize = true,
-        Checked = cfg.HidePurchasing,
-        Anchor = AnchorStyles.Left,
-        Tag = "HidePurchasing"
-      };
-      // Add tooltip for Hide Purchasing checkbox
-      var toolTipHidePurchasing = new ToolTip();
-      toolTipHidePurchasing.SetToolTip(chkHidePurchasing, "Hide purchasing work orders from the list.");
-
-      var chkDynamicSheetCosts = new CheckBox {
-        Text = "Dynamic Sheet Costs",
-        AutoSize = true,
-        Checked = cfg.DynamicSheetCosts,
-        Anchor = AnchorStyles.Left,
-        Tag = "DynamicSheetCosts"
-      };
-      // Add tooltip for Dynamic Sheet Costs checkbox
-      var toolTipDynamicSheetCosts = new ToolTip();
-      toolTipDynamicSheetCosts.SetToolTip(
-        chkDynamicSheetCosts,
-        "If checked, dynamic sheet costs will be calculated based on the width, length, " +
-        "and thickness of the sheet. This will replace values we may have added in the database."
-      );
-
-      // Layout rows
-      table.Controls.Add(lblRoot, 0, 0);
-      table.Controls.Add(txtRootLocal, 1, 0);
-      table.Controls.Add(btnBrowseRoot, 2, 0);
-      table.SetColumnSpan(txtRootLocal, 1);
-
-      table.Controls.Add(lblSdf, 0, 1);
-      table.Controls.Add(txtSdfLocal, 1, 1);
-      table.SetColumnSpan(txtSdfLocal, 2);
-
-      // Add Hide Purchasing on its own row spanning available columns
-      table.Controls.Add(chkHidePurchasing, 0, 3);
-      table.SetColumnSpan(chkHidePurchasing, 3);
-
-      // Add Dynamic Sheet Costs on its own row spanning available columns
-      table.Controls.Add(chkDynamicSheetCosts, 0, 4);
-      table.SetColumnSpan(chkDynamicSheetCosts, 3);
-
-      // Buttons row with Check Updates on left, OK/Cancel on right
-      var btnCheckUpdates = new Button
-      {
-        Text = "Check for Updates",
-        AutoSize = true
-      };
-      btnCheckUpdates.Click += CheckForUpdates_Click;
-
-      var panelButtons = new TableLayoutPanel
-      {
-        Dock = DockStyle.Bottom,
-        ColumnCount = 4,
-        RowCount = 1,
-        Padding = new Padding(10, 5, 10, 5),
-        Height = 40,
-      };
-      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Check Updates
-      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // spacer
-      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // OK
-      panelButtons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Cancel
-
-      var btnOk = new Button { Text = "Close", DialogResult = DialogResult.OK, AutoSize = true };
-      panelButtons.Controls.Add(btnCheckUpdates, 0, 0); // Far left
-      panelButtons.Controls.Add(btnOk, 2, 0);
-
-      // Add panelButtons to dialog
-      panelButtons.Dock = DockStyle.Bottom;
-      dlg.Controls.Add(panelButtons);
-
-      if (dlg.ShowDialog(this) == DialogResult.OK)
-      {
-        try
-        {
-          var cfgNow = UserConfig.LoadOrDefault();
-          var newRoot = (txtRootLocal.Text ?? string.Empty).Trim();
-          var newSdf = (txtSdfLocal.Text ?? string.Empty).Trim();
-          if (!string.IsNullOrEmpty(newRoot)) cfgNow.DefaultRoot = newRoot;
-          if (!string.IsNullOrEmpty(newSdf)) cfgNow.SdfFileName = newSdf;
-          cfgNow.HidePurchasing = chkHidePurchasing.Checked; // persist Hide Purchasing
-          cfgNow.DynamicSheetCosts = chkDynamicSheetCosts.Checked; // persist Dynamic Sheet Costs
-          cfgNow.Save();
-          FilterWorkOrders(); // apply filter immediately if changed
-        }
-        catch (Exception ex)
-        {
-          Program.Log("Failed to save settings dialog changes", ex);
-        }
+        Program.Log("Failed to open settings dialog", ex);
       }
     }
 
@@ -1049,12 +957,26 @@ namespace WorkOrderBlender
       filteredWorkOrders = next;
       listWorkOrders.VirtualListSize = filteredWorkOrders.Count;
       listWorkOrders.Invalidate();
+
+      // If there are no work orders visible and none selected/checked, clear metrics grid
+      try
+      {
+        if ((filteredWorkOrders == null || filteredWorkOrders.Count == 0) && checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        {
+          Program.Log("FilterWorkOrders: no visible work orders; clearing metrics grid");
+          ClearMetricsGridFast();
+        }
+      }
+      catch { }
     }
 
     private void listWorkOrders_SelectedIndexChanged(object sender, EventArgs e)
     {
       try
       {
+        // Update work order name based on selection
+        UpdateWorkOrderNameFromSelection();
+
         // If no work orders are selected at all, clear the metrics grid and return early
         if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
         {
@@ -1079,6 +1001,18 @@ namespace WorkOrderBlender
       // Start timing to diagnose performance around refresh requests
       var reqStart = DateTime.Now; // capture start time
 
+      // If nothing is selected or checked, clear immediately and skip refresh
+      try
+      {
+        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        {
+          Program.Log("RequestRefreshMetricsGrid: no work orders selected or checked; clearing metrics grid and skipping refresh");
+          ClearMetricsGridFast();
+          return;
+        }
+      }
+      catch { }
+
       lastRefreshRequestUtc = DateTime.UtcNow; // record last request
       Program.Log($"RequestRefreshMetricsGrid: start, timerEnabled={metricsRefreshTimer.Enabled}, isRefreshingMetrics={isRefreshingMetrics}, isRefreshingTable={isRefreshingTable}, intervalMs={metricsRefreshTimer.Interval}");
       if (!metricsRefreshTimer.Enabled)
@@ -1088,6 +1022,126 @@ namespace WorkOrderBlender
       var reqEnd = DateTime.Now; // capture end time
       var reqDuration = reqEnd - reqStart; // compute duration
       Program.Log($"RequestRefreshMetricsGrid: completed in {reqDuration.TotalMilliseconds:F0}ms; timerEnabled={metricsRefreshTimer.Enabled}");
+    }
+
+    private string currentMetricsFilter = string.Empty; // stores active metrics filter text
+
+    private void txtMetricsSearch_TextChanged(object sender, EventArgs e)
+    {
+      try
+      {
+        currentMetricsFilter = (sender as TextBox)?.Text ?? string.Empty;
+        Program.Log($"txtMetricsSearch_TextChanged: filter='{currentMetricsFilter}'");
+        // Debounce: schedule filter apply after short delay
+        lastFilterRequestUtc = DateTime.UtcNow;
+        if (!metricsFilterTimer.Enabled) metricsFilterTimer.Start();
+      }
+      catch { }
+    }
+
+    // Apply a lightweight filter to the currently bound metrics grid without rebuilding data
+    private void ApplyMetricsFilterLive()
+    {
+      try
+      {
+        if (!(metricsGrid?.DataSource is BindingSource bs)) return;
+
+        // Resolve current data and view regardless of current binding state
+        DataTable data = null;
+        DataView view = null;
+        if (bs.DataSource is DataView curView)
+        {
+          view = curView;
+          data = curView.Table;
+        }
+        else if (bs.DataSource is DataTable curTable)
+        {
+          data = curTable;
+          view = curTable.DefaultView;
+        }
+        else
+        {
+          Program.Log($"ApplyMetricsFilterLive: unsupported bs.DataSource type {bs.DataSource?.GetType().FullName ?? "<null>"}");
+          return;
+        }
+
+        var needle = (currentMetricsFilter ?? string.Empty).Trim();
+        Program.Log($"ApplyMetricsFilterLive: enter filter='{needle}', dataRows={data?.Rows.Count ?? 0}, viewCount={view?.Count ?? 0}, bsType={bs.DataSource.GetType().Name}");
+
+        if (string.IsNullOrEmpty(needle))
+        {
+          // Prepare to re-apply layout BEFORE binding changes trigger DataBindingComplete
+          applyLayoutAfterBinding = true;
+          // Clear filter and keep binding to DataView for consistency
+          try { if (view != null) view.RowFilter = string.Empty; } catch { }
+          bs.DataSource = view ?? (object)data;
+          bs.ResetBindings(false);
+          Program.Log("ApplyMetricsFilterLive: scheduled layout reapply after clearing filter");
+          Program.Log("ApplyMetricsFilterLive: cleared filter");
+          ApplyDisabledRowStyling();
+          metricsGrid?.Invalidate();
+          metricsGrid?.Refresh();
+          return;
+        }
+
+        // Build a RowFilter that searches visible, non-binary columns for the substring
+        var safe = needle.Replace("'", "''");
+
+        // Discover a subset of columns to search: limited to string-like columns and those currently visible in the grid
+        var visibleCols = new List<string>();
+        foreach (DataGridViewColumn gc in metricsGrid.Columns)
+        {
+          if (!gc.Visible) continue;
+          var key = !string.IsNullOrEmpty(gc.DataPropertyName) ? gc.DataPropertyName : gc.Name;
+          if (string.IsNullOrWhiteSpace(key)) continue;
+          if (!data.Columns.Contains(key)) continue;
+          var dt = data.Columns[key].DataType;
+          if (dt == typeof(string)) visibleCols.Add(key);
+          else if (dt == typeof(int) || dt == typeof(long) || dt == typeof(short) || dt == typeof(decimal) || dt == typeof(double) || dt == typeof(float)) visibleCols.Add(key);
+        }
+
+        if (visibleCols.Count == 0)
+        {
+          foreach (DataColumn c in data.Columns) if (c.DataType == typeof(string)) visibleCols.Add(c.ColumnName);
+        }
+
+        // Compose RowFilter using LIKE across columns; use Convert to string for non-string numerics
+        var parts = new List<string>();
+        foreach (var col in visibleCols)
+        {
+          var isString = data.Columns[col].DataType == typeof(string);
+          var exprCol = isString ? ($"[{col}] LIKE '%{safe}%'") : ($"CONVERT([{col}], 'System.String') LIKE '%{safe}%'");
+          parts.Add(exprCol);
+        }
+        string filterExpr = parts.Count > 0 ? string.Join(" OR ", parts) : string.Empty;
+        string filterPreview = filterExpr.Length > 800 ? (filterExpr.Substring(0, 800) + " ...") : filterExpr;
+        Program.Log($"ApplyMetricsFilterLive: columnsConsidered={visibleCols.Count}, rowFilterPreview={filterPreview}");
+
+        // Prepare to re-apply layout BEFORE binding changes trigger DataBindingComplete
+        applyLayoutAfterBinding = true;
+        if (view != null)
+        {
+          view.RowFilter = filterExpr;
+          bs.DataSource = view;
+        }
+        else
+        {
+          var dv = data.DefaultView; dv.RowFilter = filterExpr; bs.DataSource = dv; view = dv;
+        }
+        bs.ResetBindings(false);
+        Program.Log("ApplyMetricsFilterLive: scheduled layout reapply after applying filter");
+
+        Program.Log($"ApplyMetricsFilterLive: after filter viewCount={view?.Count ?? 0}");
+
+        // Update styling and UI
+        ApplyDisabledRowStyling();
+        metricsGrid?.Invalidate();
+        metricsGrid?.Refresh();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("ApplyMetricsFilterLive error", ex);
+      }
     }
 
     private void PopulateTableSelector()
@@ -1178,7 +1232,7 @@ namespace WorkOrderBlender
         Application.DoEvents();
 
         // Update fronts filter button state immediately
-        UpdateFrontsFilterButtonState();
+        UpdateFilterButtonStates();
 
         RequestRefreshMetricsGrid();
       }
@@ -1308,26 +1362,34 @@ namespace WorkOrderBlender
                 isApplyingLayout = true;
 
                 metricsGrid.AutoGenerateColumns = true;
-                metricsGrid.DataSource = new BindingSource { DataSource = data };
-                var dataSourceSet = DateTime.Now;
-                Program.Log($"DataSource set in {(dataSourceSet - bindStart).TotalMilliseconds:F0}ms");
 
+                // Build virtual columns before binding so initial columns reflect settings.xml
                 var virtualStart = DateTime.Now;
                 ApplyVirtualColumnsAndLayout(selectedTable.TableName, data);
                 var virtualEnd = DateTime.Now;
                 Program.Log($"ApplyVirtualColumnsAndLayout completed in {(virtualEnd - virtualStart).TotalMilliseconds:F0}ms");
+                LogCurrentGridColumns("pre-bind (DataTable only)");
 
-                var configStart = DateTime.Now;
-                ApplyUserConfigToMetricsGrid(selectedTable.TableName);
-                var configEnd = DateTime.Now;
-                Program.Log($"ApplyUserConfigToMetricsGrid completed in {(configEnd - configStart).TotalMilliseconds:F0}ms");
+                // Ensure DataBindingComplete handler is attached before binding, so we can re-apply layout post-bind
+                try { metricsGrid.DataBindingComplete -= MetricsGrid_DataBindingComplete; } catch { }
+                metricsGrid.DataBindingComplete += MetricsGrid_DataBindingComplete;
+                applyLayoutAfterBinding = true;
+
+                // Bind to DataView to avoid re-generating columns during filtering
+                metricsGrid.DataSource = new BindingSource { DataSource = data.DefaultView };
+                var dataSourceSet = DateTime.Now;
+                Program.Log($"DataSource set in {(dataSourceSet - bindStart).TotalMilliseconds:F0}ms");
+
+                // Do not apply layout here; rely on DataBindingComplete to apply once post-bind
 
                 // Ensure events and context menus are wired after binding
                 WireUpGridEvents();
                 AddGridContextMenu();
                 Program.Log("Metrics grid events/context menu wired after binding");
-                // Apply disabled style to excluded rows
-                ApplyDisabledRowStyling();
+                // Apply filter if any text present (log prior to applying)
+                Program.Log($"RefreshMetricsGrid: applying live filter '{currentMetricsFilter}'");
+                ApplyMetricsFilterLive();
+                Program.Log("RefreshMetricsGrid: live filter applied");
               }
               finally
               {
@@ -1454,6 +1516,11 @@ namespace WorkOrderBlender
         metricsGrid.ColumnWidthChanged += MetricsGrid_ColumnWidthChanged;
         metricsGrid.ColumnDisplayIndexChanged -= MetricsGrid_ColumnDisplayIndexChanged;
         metricsGrid.ColumnDisplayIndexChanged += MetricsGrid_ColumnDisplayIndexChanged;
+        // Re-apply layout after the control reports binding complete
+        metricsGrid.DataBindingComplete -= MetricsGrid_DataBindingComplete;
+        metricsGrid.DataBindingComplete += MetricsGrid_DataBindingComplete;
+        Program.Log("WireUpGridEvents: DataBindingComplete handler attached");
+
         // Context-aware menus
         metricsGrid.MouseDown -= MetricsGrid_MouseDown;
         metricsGrid.MouseDown += MetricsGrid_MouseDown;
@@ -1718,10 +1785,11 @@ namespace WorkOrderBlender
         // Apply visibility
         foreach (DataGridViewColumn col in metricsGrid.Columns)
         {
-          var visibility = cfg.TryGetColumnVisibility(tableName, col.Name);
+          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          var visibility = cfg.TryGetColumnVisibility(tableName, key);
           if (visibility.HasValue)
           {
-            Program.Log($"ApplyUserConfig: set visibility column={col.Name} visible={visibility.Value}");
+            Program.Log($"ApplyUserConfig: set visibility column={key} visible={visibility.Value}");
             col.Visible = visibility.Value;
           }
           else
@@ -1858,29 +1926,60 @@ namespace WorkOrderBlender
             built.AddRange(nonVirtual);
           }
           order = built;
-          cfg.SetColumnOrder(tableName, order);
-          cfg.Save();
-          Program.Log($"ApplyUserConfig: built default order with virtuals after LinkID: [{string.Join(", ", order)}]");
+          // Do not persist auto-built default order; apply transiently only
+          Program.Log($"ApplyUserConfig: built transient default order with virtuals after LinkID: [{string.Join(", ", order)}]");
         }
 
           if (order != null && order.Count > 0)
           {
             Program.Log($"ApplyUserConfig: applying order [{string.Join(", ", order)}]");
+            LogCurrentGridColumns("before-apply-order");
             int idx = 0;
+            var matched = new HashSet<DataGridViewColumn>();
+            var unmatchedNames = new List<string>();
             foreach (var name in order)
             {
               DataGridViewColumn col = null;
               foreach (DataGridViewColumn c in metricsGrid.Columns)
               {
                 var key2 = !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name;
-                if (string.Equals(key2, name, StringComparison.OrdinalIgnoreCase)) { col = c; break; }
+                var keyNorm = (key2 ?? string.Empty).Trim();
+                var nameNorm = (name ?? string.Empty).Trim();
+                if (string.Equals(keyNorm, nameNorm, StringComparison.OrdinalIgnoreCase)) { col = c; break; }
               }
               if (col != null)
               {
-                Program.Log($"ApplyUserConfig: setting DisplayIndex for column '{col.Name}' to {idx}");
+                Program.Log($"ApplyUserConfig: setting DisplayIndex for column '{col.Name}' (DataPropertyName='{col.DataPropertyName}') to {idx}");
                 col.DisplayIndex = idx++;
+                matched.Add(col);
+                Program.Log($"ApplyUserConfig: column '{col.Name}' DisplayIndex is now {col.DisplayIndex}");
+              }
+              else
+              {
+                unmatchedNames.Add(name);
               }
             }
+
+            // Place any unspecified columns after the specified ones, preserving their relative order
+            var remaining = metricsGrid.Columns
+              .Cast<DataGridViewColumn>()
+              .Where(c => !matched.Contains(c))
+              .OrderBy(c => c.DisplayIndex)
+              .ToList();
+            foreach (var c in remaining)
+            {
+              Program.Log($"ApplyUserConfig: appending unspecified column '{c.Name}' at DisplayIndex {idx}");
+              c.DisplayIndex = idx++;
+            }
+
+            if (unmatchedNames.Count > 0)
+            {
+              Program.Log($"ApplyUserConfig: unmatched names from settings for table '{tableName}': [{string.Join(", ", unmatchedNames)}]");
+            }
+
+            LogCurrentGridColumns("after-apply-order");
+
+            // Avoid extra layout churn here; rely on DataBindingComplete re-apply
           }
           var t6 = DateTime.Now; Program.Log($"ApplyUserConfig: column order applied in {(t6 - t5).TotalMilliseconds:F0}ms");
         }
@@ -1933,7 +2032,7 @@ namespace WorkOrderBlender
         var t11 = DateTime.Now; Program.Log($"ApplyUserConfig: header styles refreshed in {(t11 - t10).TotalMilliseconds:F0}ms");
 
         // Update fronts filter button state
-        UpdateFrontsFilterButtonState();
+        UpdateFilterButtonStates();
       }
       catch (Exception ex)
       {
@@ -1954,6 +2053,136 @@ namespace WorkOrderBlender
       {
         return Path.GetFileNameWithoutExtension(sdfPath);
       }
+    }
+
+    // Extract work order name from directory path (same as GetDisplayPath but returns just the name)
+    private string GetWorkOrderNameFromPath(string directoryPath)
+    {
+      if (string.IsNullOrEmpty(directoryPath)) return string.Empty;
+      string root = string.Empty;
+      try { root = DefaultRoot; }
+      catch { }
+      if (string.IsNullOrEmpty(root)) return Path.GetFileName(directoryPath);
+      string absNorm = directoryPath.Replace('/', '\\');
+      string rootNorm = root.Replace('/', '\\').TrimEnd('\\');
+      if (absNorm.StartsWith(rootNorm, StringComparison.OrdinalIgnoreCase))
+      {
+        string rel = absNorm.Substring(rootNorm.Length).TrimStart('\\');
+        return rel;
+      }
+      return Path.GetFileName(directoryPath);
+    }
+
+    // Generate common prefix from selected work order names
+    private void UpdateWorkOrderNameFromSelection()
+    {
+      try
+      {
+        // Get all selected work order names
+        var selectedNames = new List<string>();
+
+        // Add checked work orders
+        foreach (var dir in checkedDirs)
+        {
+          var wo = filteredWorkOrders.FirstOrDefault(w => w.DirectoryPath == dir);
+          if (wo != null)
+          {
+            string name = GetWorkOrderNameFromPath(wo.DirectoryPath);
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+              selectedNames.Add(name);
+            }
+          }
+        }
+
+        // Add selected work orders (if any and not already checked)
+        foreach (int idx in listWorkOrders.SelectedIndices)
+        {
+          if (idx >= 0 && idx < filteredWorkOrders.Count)
+          {
+            var wo = filteredWorkOrders[idx];
+            if (!checkedDirs.Contains(wo.DirectoryPath))
+            {
+              string name = GetWorkOrderNameFromPath(wo.DirectoryPath);
+              if (!string.IsNullOrWhiteSpace(name))
+              {
+                selectedNames.Add(name);
+              }
+            }
+          }
+        }
+
+        if (selectedNames.Count == 0)
+        {
+          // No work orders selected, don't change txtOutput
+          return;
+        }
+
+        if (selectedNames.Count == 1)
+        {
+          // Single work order selected, use its name as-is
+          txtOutput.Text = selectedNames[0];
+          return;
+        }
+
+        // Multiple work orders selected, find common prefix
+        string commonPrefix = FindCommonPrefix(selectedNames);
+
+        // Remove trailing '_' and whitespace characters
+        commonPrefix = commonPrefix.TrimEnd('_', ' ', '\t', '\r', '\n');
+
+        // Only update if we found a meaningful common prefix
+        if (!string.IsNullOrWhiteSpace(commonPrefix))
+        {
+          txtOutput.Text = commonPrefix;
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("UpdateWorkOrderNameFromSelection error", ex);
+      }
+    }
+
+    // Find the longest common prefix from a list of strings
+    private string FindCommonPrefix(List<string> names)
+    {
+      if (names == null || names.Count == 0) return string.Empty;
+      if (names.Count == 1) return names[0];
+
+      // Start with the first name as the initial prefix
+      string prefix = names[0];
+
+      // Compare with each subsequent name and shorten prefix as needed
+      for (int i = 1; i < names.Count; i++)
+      {
+        string currentName = names[i];
+        int minLength = Math.Min(prefix.Length, currentName.Length);
+
+        // Find the position where they differ
+        int commonLength = 0;
+        for (int j = 0; j < minLength; j++)
+        {
+          if (prefix[j] == currentName[j])
+          {
+            commonLength++;
+          }
+          else
+          {
+            break;
+          }
+        }
+
+        // Update prefix to the common part
+        prefix = prefix.Substring(0, commonLength);
+
+        // If no common prefix found, return empty
+        if (commonLength == 0)
+        {
+          return string.Empty;
+        }
+      }
+
+      return prefix;
     }
 
     // Build a consolidated DataTable from multiple source SDF paths for the given table
@@ -2305,7 +2534,8 @@ namespace WorkOrderBlender
         hideColumn.Click += (s, e) =>
         {
           col.Visible = false;
-          SaveColumnVisibility(col.Name, false);
+          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          SaveColumnVisibility(key, false);
           panelMetricsBorder.Refresh();
         };
         menu.Items.Add(hideColumn);
@@ -2321,7 +2551,8 @@ namespace WorkOrderBlender
             showCol.Click += (s, e) =>
             {
               gridCol.Visible = true;
-              SaveColumnVisibility(gridCol.Name, true);
+              var key = !string.IsNullOrEmpty(gridCol.DataPropertyName) ? gridCol.DataPropertyName : gridCol.Name;
+              SaveColumnVisibility(key, true);
               panelMetricsBorder.Refresh();
             };
             showColumnsMenu.DropDownItems.Add(showCol);
@@ -2338,7 +2569,8 @@ namespace WorkOrderBlender
             foreach (DataGridViewColumn gridCol in metricsGrid.Columns)
             {
               gridCol.Visible = true;
-              SaveColumnVisibility(gridCol.Name, true);
+              var key = !string.IsNullOrEmpty(gridCol.DataPropertyName) ? gridCol.DataPropertyName : gridCol.Name;
+              SaveColumnVisibility(key, true);
               panelMetricsBorder.Refresh();
             }
           };
@@ -2569,8 +2801,9 @@ namespace WorkOrderBlender
         var key = !string.IsNullOrEmpty(column.DataPropertyName) ? column.DataPropertyName : column.Name;
         cfg.SetColumnHeaderText(currentSelectedTable, key, headerText);
         cfg.Save();
-        // Apply immediately
-        column.HeaderText = string.IsNullOrEmpty(headerText) ? key : headerText;
+
+        // Apply immediately - reset to original column name when clearing
+        column.HeaderText = string.IsNullOrWhiteSpace(headerText) ? column.Name : headerText;
       }
       catch (Exception ex)
       {
@@ -2587,6 +2820,9 @@ namespace WorkOrderBlender
         var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
         cfg.SetColumnHeaderToolTip(currentSelectedTable, key, toolTip);
         cfg.Save();
+
+        // Apply the tooltip immediately - clear when empty
+        col.HeaderCell.ToolTipText = string.IsNullOrWhiteSpace(toolTip) ? null : toolTip;
       }
       catch { }
     }
@@ -2765,29 +3001,39 @@ namespace WorkOrderBlender
       if (!isEditModeMainGrid || metricsGrid.ReadOnly) return;
       try
       {
+        Program.Log($"MetricsGrid_CurrentCellDirtyStateChanged_Edit: IsDirty={metricsGrid.IsCurrentCellDirty}, isEditMode={isEditModeMainGrid}, ReadOnly={metricsGrid.ReadOnly}");
         if (metricsGrid.IsCurrentCellDirty)
         {
           var cell = metricsGrid.CurrentCell;
+          Program.Log($"MetricsGrid_CurrentCellDirtyStateChanged_Edit: Cell type={cell?.GetType().Name}");
           if (cell is DataGridViewCheckBoxCell || cell is DataGridViewComboBoxCell)
           {
             // For checkbox/combo, commit immediately and end edit to trigger CellEndEdit
+            Program.Log("MetricsGrid_CurrentCellDirtyStateChanged_Edit: Committing and ending edit for checkbox/combo cell");
             metricsGrid.CommitEdit(DataGridViewDataErrorContexts.Commit);
             metricsGrid.EndEdit();
           }
           // For text cells, do nothing here; wait for CellEndEdit so typing isn't interrupted
         }
       }
-      catch { }
+      catch (Exception ex)
+      {
+        Program.Log("MetricsGrid_CurrentCellDirtyStateChanged_Edit error", ex);
+      }
     }
 
     private void MetricsGrid_CellEndEdit_Edit(object sender, DataGridViewCellEventArgs e)
     {
       try
       {
+        Program.Log($"MetricsGrid_CellEndEdit_Edit: rowIndex={e.RowIndex}, columnIndex={e.ColumnIndex}, isEditMode={isEditModeMainGrid}");
         if (!isEditModeMainGrid || e.RowIndex < 0 || e.ColumnIndex < 0) return;
         TrySaveSingleCellChange_MainGrid(e.RowIndex, e.ColumnIndex, true);
       }
-      catch { }
+      catch (Exception ex)
+      {
+        Program.Log("MetricsGrid_CellEndEdit_Edit error", ex);
+      }
     }
 
     private void MetricsGrid_CellValueChanged_Edit(object sender, DataGridViewCellEventArgs e)
@@ -2957,55 +3203,106 @@ namespace WorkOrderBlender
     {
       try
       {
-        if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataTable data)
+        Program.Log($"TrySaveSingleCellChange_MainGrid: rowIndex={rowIndex}, columnIndex={columnIndex}, isEndEdit={isEndEdit}, isEditMode={isEditModeMainGrid}");
+
+        if (metricsGrid?.DataSource is BindingSource bs)
         {
-          var row = metricsGrid.Rows[rowIndex];
-          if (row?.DataBoundItem is DataRowView drv)
+          // Handle both DataTable and DataView as the BindingSource's DataSource
+          DataTable data = null;
+          if (bs.DataSource is DataTable dataTable)
           {
-            var dataRow = drv.Row;
-            var column = metricsGrid.Columns[columnIndex];
-            var columnName = column.DataPropertyName ?? column.Name;
-            // Skip LinkID/ID key columns and virtual/action columns
-            if (string.Equals(columnName, "LinkID", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(columnName, "ID", StringComparison.OrdinalIgnoreCase) ||
-                (virtualColumnNames != null && virtualColumnNames.Contains(columnName)))
-              return;
-            var cellValue = row.Cells[columnIndex].Value;
-            var newValue = cellValue == DBNull.Value ? null : cellValue;
-            object orig = null;
-            if (dataRow.Table.Columns.Contains(columnName))
-            {
-              try { orig = dataRow.HasVersion(DataRowVersion.Original) ? dataRow[columnName, DataRowVersion.Original] : dataRow[columnName]; }
-              catch { orig = dataRow[columnName]; }
-            }
-            if (orig == DBNull.Value) orig = null;
+            data = dataTable;
+          }
+          else if (bs.DataSource is DataView dataView)
+          {
+            data = dataView.Table;
+          }
+          else
+          {
+            Program.Log($"TrySaveSingleCellChange_MainGrid: Unsupported BindingSource.DataSource type: {bs.DataSource?.GetType().Name ?? "null"}");
+            return;
+          }
 
-            var key = (dataRow.Table.Columns.Contains("LinkID") ? dataRow["LinkID"] : (dataRow.Table.Columns.Contains("ID") ? dataRow["ID"] : null));
-            string linkKey = key == null || key == DBNull.Value ? null : Convert.ToString(key);
-
-            if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+          if (data != null)
+          {
+            var row = metricsGrid.Rows[rowIndex];
+            if (row?.DataBoundItem is DataRowView drv)
             {
-              if (!object.Equals(newValue, orig))
+              var dataRow = drv.Row;
+              var column = metricsGrid.Columns[columnIndex];
+              var columnName = column.DataPropertyName ?? column.Name;
+
+              Program.Log($"TrySaveSingleCellChange_MainGrid: columnName={columnName}, currentSelectedTable={currentSelectedTable}");
+
+              // Skip LinkID/ID key columns and virtual/action columns
+              if (string.Equals(columnName, "LinkID", StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(columnName, "ID", StringComparison.OrdinalIgnoreCase) ||
+                  (virtualColumnNames != null && virtualColumnNames.Contains(columnName)))
               {
-                // Value changed from original - add to pending changes
-                Program.Edits.UpsertOverride(currentSelectedTable, linkKey, columnName, newValue);
+                Program.Log($"TrySaveSingleCellChange_MainGrid: Skipping column {columnName} (LinkID/ID or virtual column)");
+                return;
+              }
+
+              var cellValue = row.Cells[columnIndex].Value;
+              var newValue = cellValue == DBNull.Value ? null : cellValue;
+              object orig = null;
+              if (dataRow.Table.Columns.Contains(columnName))
+              {
+                try { orig = dataRow.HasVersion(DataRowVersion.Original) ? dataRow[columnName, DataRowVersion.Original] : dataRow[columnName]; }
+                catch { orig = dataRow[columnName]; }
+              }
+              if (orig == DBNull.Value) orig = null;
+
+              var key = (dataRow.Table.Columns.Contains("LinkID") ? dataRow["LinkID"] : (dataRow.Table.Columns.Contains("ID") ? dataRow["ID"] : null));
+              string linkKey = key == null || key == DBNull.Value ? null : Convert.ToString(key);
+
+              Program.Log($"TrySaveSingleCellChange_MainGrid: newValue={newValue}, orig={orig}, linkKey={linkKey}");
+
+              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
+              {
+                if (!object.Equals(newValue, orig))
+                {
+                  // Value changed from original - add to pending changes
+                  Program.Log($"TrySaveSingleCellChange_MainGrid: Adding change to InMemoryEditStore: table={currentSelectedTable}, linkKey={linkKey}, column={columnName}, value={newValue}");
+                  Program.Edits.UpsertOverride(currentSelectedTable, linkKey, columnName, newValue);
+                }
+                else
+                {
+                  // Value matches original - remove from pending changes if it exists
+                  Program.Log($"TrySaveSingleCellChange_MainGrid: Removing change from InMemoryEditStore: table={currentSelectedTable}, linkKey={linkKey}, column={columnName}");
+                  Program.Edits.RemoveOverride(currentSelectedTable, linkKey, columnName);
+                }
               }
               else
               {
-                // Value matches original - remove from pending changes if it exists
-                Program.Edits.RemoveOverride(currentSelectedTable, linkKey, columnName);
+                Program.Log($"TrySaveSingleCellChange_MainGrid: Skipping save - linkKey={linkKey}, currentSelectedTable={currentSelectedTable}");
+              }
+
+              // Mark row clean only after the edit is finalized
+              if (isEndEdit)
+              {
+                try { dataRow.AcceptChanges(); } catch { }
               }
             }
-
-            // Mark row clean only after the edit is finalized
-            if (isEndEdit)
+            else
             {
-              try { dataRow.AcceptChanges(); } catch { }
+              Program.Log($"TrySaveSingleCellChange_MainGrid: No DataRowView found for row {rowIndex}");
             }
           }
+          else
+          {
+            Program.Log($"TrySaveSingleCellChange_MainGrid: No DataTable found in BindingSource");
+          }
+        }
+        else
+        {
+          Program.Log($"TrySaveSingleCellChange_MainGrid: No BindingSource found");
         }
       }
-      catch { }
+      catch (Exception ex)
+      {
+        Program.Log("TrySaveSingleCellChange_MainGrid error", ex);
+      }
     }
 
     // Open virtual columns dialog implemented directly in MainForm
@@ -3101,51 +3398,8 @@ namespace WorkOrderBlender
       }
     }
 
-    // Visually indicate excluded rows (non-selected) with a disabled style
-    private void ApplyDisabledRowStyling()
-    {
-      try
-      {
-        if (metricsGrid == null || metricsGrid.Rows.Count == 0) return;
-        if (string.IsNullOrEmpty(currentSelectedTable)) return;
-        // Use a subtle gray forecolor and light background for excluded rows
-        var disabledFore = System.Drawing.Color.FromArgb(150, 150, 150);
-        var disabledBack = System.Drawing.Color.FromArgb(240, 240, 240);
-        foreach (DataGridViewRow row in metricsGrid.Rows)
-        {
-          try
-          {
-            if (row?.DataBoundItem is DataRowView drv)
-            {
-              var dataRow = drv.Row;
-              object keyObj = null;
-              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
-              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
-              bool include = true;
-              if (!string.IsNullOrEmpty(linkKey)) include = Program.Edits.ShouldInclude(currentSelectedTable, linkKey);
-
-              if (!include)
-              {
-                row.DefaultCellStyle.ForeColor = disabledFore;
-                row.DefaultCellStyle.BackColor = disabledBack;
-                row.DefaultCellStyle.SelectionForeColor = disabledFore;
-                row.DefaultCellStyle.SelectionBackColor = disabledBack;
-              }
-              else
-              {
-                // Clear row-level overrides so column-level colors apply
-                row.DefaultCellStyle.ForeColor = System.Drawing.Color.Empty;
-                row.DefaultCellStyle.BackColor = System.Drawing.Color.Empty;
-                row.DefaultCellStyle.SelectionForeColor = System.Drawing.Color.Empty;
-                row.DefaultCellStyle.SelectionBackColor = System.Drawing.Color.Empty;
-              }
-            }
-          }
-          catch { }
-        }
-      }
-      catch { }
-    }
+    // Exclude row styling removed; rely on filter results only
+    private void ApplyDisabledRowStyling() { }
 
     private void ShowBodyContextMenu(int rowIndex, int columnIndex, System.Drawing.Point clientLocation)
     {
@@ -3159,90 +3413,128 @@ namespace WorkOrderBlender
         exportWmf.Click += (s, e) => ExportStreamsForSelection("WMFStream");
         export.DropDownItems.Add(exportJpeg);
         export.DropDownItems.Add(exportWmf);
-        var include = new ToolStripMenuItem("Include Selected Rows");
-        include.Click += (s, e) => IncludeSelectedRows();
-        var delete = new ToolStripMenuItem("Exclude Selected Rows");
-        delete.Click += (s, e) => DeleteSelectedRows();
-        try
+
+        // Add sequence menu item for Parts and Subassemblies tables
+        ToolStripMenuItem sequenceMenuItem = null;
+        if (!string.IsNullOrEmpty(currentSelectedTable) &&
+            (string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase)))
         {
-          // Enable/disable based on current selection state
-          bool anyExcluded = false;
-          bool anyIncluded = false;
-          var rows = metricsGrid.SelectedRows.Cast<DataGridViewRow>().ToList();
-          if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
-          foreach (var r in rows)
-          {
-            if (r?.DataBoundItem is DataRowView drv)
-            {
-              var dataRow = drv.Row;
-              object keyObj = null;
-              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"];
-              else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
-              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
-              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
-              {
-                bool includeState = Program.Edits.ShouldInclude(currentSelectedTable, linkKey);
-                if (includeState) anyIncluded = true; else anyExcluded = true;
-              }
-            }
-          }
-          include.Enabled = anyExcluded;
-          delete.Enabled = anyIncluded;
+          sequenceMenuItem = new ToolStripMenuItem("Sequence Selected Rows...");
+          sequenceMenuItem.Click += (s, e) => SequenceSelectedRows();
         }
-        catch { }
+
+        // include/exclude functionality removed; rely on filters
         var refreshVirtual = new ToolStripMenuItem("Refresh Virtual Columns");
         refreshVirtual.Click += (s, e) => RefreshVirtualColumns();
+
+        // Add edit mode toggle
+        var editModeToggle = new ToolStripMenuItem(isEditModeMainGrid ? "Disable Edit Mode" : "Enable Edit Mode");
+        editModeToggle.Click += (s, e) => {
+          isEditModeMainGrid = !isEditModeMainGrid;
+          ApplyMainGridEditState();
+          Program.Log($"MainForm: Edit mode toggled to {isEditModeMainGrid} via context menu");
+        };
+
         menu.Items.Add(export);
-        menu.Items.Add(include);
-        menu.Items.Add(delete);
+        if (sequenceMenuItem != null)
+        {
+          menu.Items.Add(new ToolStripSeparator());
+          menu.Items.Add(sequenceMenuItem);
+        }
+        // include/exclude items removed
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(editModeToggle);
         menu.Items.Add(refreshVirtual);
         menu.Show(metricsGrid, clientLocation);
       }
       catch { }
     }
-    // Include all rows for current table
-    private void btnTableSelectAll_Click(object sender, EventArgs e)
+
+    // Sequence selected rows with custom sequence ID
+    private void SequenceSelectedRows()
     {
       try
       {
-        if (string.IsNullOrEmpty(currentSelectedTable)) return;
-        Program.Edits.SelectAll(currentSelectedTable);
-        // Lightweight restyle only
-        if (metricsGrid != null)
+        Program.Log("SequenceSelectedRows: enter");
+
+        // Check if we have selected rows
+        var selectedRows = GetSelectedRowIndices();
+        if (selectedRows.Count == 0)
         {
-          metricsGrid.SuspendLayout();
-          ApplyDisabledRowStyling();
-          metricsGrid.ResumeLayout();
-          metricsGrid.Refresh();
+          MessageBox.Show("Please select one or more rows to sequence.", "Sequence Error",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        Program.Log($"SequenceSelectedRows: {selectedRows.Count} rows selected");
+
+        // Show dialog to get sequence ID
+        using (var dialog = new SequenceDialog("Sequence Selected Rows",
+          $"Enter sequence ID for {selectedRows.Count} selected row(s):"))
+        {
+          if (dialog.ShowDialog(this) == DialogResult.OK)
+          {
+            string sequenceId = dialog.SequenceId;
+            if (!string.IsNullOrWhiteSpace(sequenceId))
+            {
+              Program.Log($"SequenceSelectedRows: Using sequence ID '{sequenceId}' for {selectedRows.Count} rows");
+
+              // Perform sequencing with custom ID
+              PerformAutoSequence(useAutomaticFiltering: false, selectedRowIndices: selectedRows, customSequenceId: sequenceId);
+            }
+          }
         }
       }
       catch (Exception ex)
       {
-        Program.Log("Error selecting all rows", ex);
+        Program.Log("Error in SequenceSelectedRows", ex);
+        MessageBox.Show("Error during sequence operation: " + ex.Message, "Sequence Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
     }
 
-    // Exclude all rows for current table
-    private void btnTableClearAll_Click(object sender, EventArgs e)
+    // Get currently selected row indices
+    private List<int> GetSelectedRowIndices()
     {
+      var selectedIndices = new List<int>();
+
       try
       {
-        if (string.IsNullOrEmpty(currentSelectedTable)) return;
-        Program.Edits.ClearAll(currentSelectedTable);
-        // Lightweight restyle only
-        if (metricsGrid != null)
+        if (metricsGrid == null) return selectedIndices;
+
+        // Check if we have selected rows
+        var selectedRows = metricsGrid.SelectedRows;
+        Program.Log($"GetSelectedRowIndices: metricsGrid.SelectedRows.Count = {selectedRows.Count}");
+
+        foreach (DataGridViewRow row in selectedRows)
         {
-          metricsGrid.SuspendLayout();
-          ApplyDisabledRowStyling();
-          metricsGrid.ResumeLayout();
-          metricsGrid.Refresh();
+          if (row.Index >= 0)
+          {
+            selectedIndices.Add(row.Index);
+            Program.Log($"GetSelectedRowIndices: Added row index {row.Index}");
+          }
         }
+
+        // If no rows are selected but we have a current cell, use that row
+        if (selectedIndices.Count == 0 && metricsGrid.CurrentCell != null)
+        {
+          int currentRowIndex = metricsGrid.CurrentCell.RowIndex;
+          if (currentRowIndex >= 0)
+          {
+            selectedIndices.Add(currentRowIndex);
+            Program.Log($"GetSelectedRowIndices: No selected rows, using current cell row index {currentRowIndex}");
+          }
+        }
+
+        Program.Log($"GetSelectedRowIndices: Final count = {selectedIndices.Count} selected rows");
       }
       catch (Exception ex)
       {
-        Program.Log("Error clearing all rows", ex);
+        Program.Log("Error getting selected row indices", ex);
       }
+
+      return selectedIndices;
     }
 
     // Export functionality for stream columns
@@ -3294,177 +3586,59 @@ namespace WorkOrderBlender
       }
     }
 
-    // Exclude functionality for selected rows (selection-based include model)
-    private void DeleteSelectedRows()
-    {
-      try
-      {
-        if (metricsGrid?.DataSource == null)
-        {
-          MessageBox.Show("No data loaded. Please select a table first.", "No Data",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
-          return;
-        }
-
-        // Collect rows to delete (selected, or current if none)
-        var rows = metricsGrid.SelectedRows.Cast<DataGridViewRow>().ToList();
-        if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
-        if (rows.Count == 0) { MessageBox.Show("No rows selected."); return; }
-
-        int changed = 0;
-        foreach (var row in rows)
-        {
-          try
-          {
-            if (row.IsNewRow) continue;
-            if (row?.DataBoundItem is DataRowView drv)
-            {
-              var dataRow = drv.Row;
-              // Determine key
-              object keyObj = null;
-              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
-              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
-              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
-              {
-                // Deselect this row (exclude from destination)
-                Program.Edits.DeselectRow(currentSelectedTable, linkKey);
-                changed++;
-              }
-            }
-            else
-            {
-              // If not a DataRow-bound item, just note the change; view will refresh below
-            }
-          }
-          catch { }
-        }
-
-        // Lightweight refresh: update styling only; avoid full rebuild
-        if (changed > 0)
-        {
-          try
-          {
-            if (metricsGrid != null)
-            {
-              metricsGrid.SuspendLayout();
-              ApplyDisabledRowStyling();
-              metricsGrid.ResumeLayout();
-              metricsGrid.Refresh();
-            }
-          }
-          catch { }
-          if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
-          {
-            RequestRefreshMetricsGrid();
-          }
-        }
-      }
-      catch (Exception ex)
-      {
-        Program.Log("Error excluding selected rows", ex);
-        MessageBox.Show("Error excluding selected rows: " + ex.Message, "Selection Error",
-          MessageBoxButtons.OK, MessageBoxIcon.Error);
-      }
-    }
-
-    // Include functionality for selected rows (undo exclusion)
-    private void IncludeSelectedRows()
-    {
-      try
-      {
-        if (metricsGrid?.DataSource == null)
-        {
-          MessageBox.Show("No data loaded. Please select a table first.", "No Data",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
-          return;
-        }
-
-        var rows = metricsGrid.SelectedRows.Cast<DataGridViewRow>().ToList();
-        if (rows.Count == 0 && metricsGrid.CurrentRow != null) rows.Add(metricsGrid.CurrentRow);
-        if (rows.Count == 0) { MessageBox.Show("No rows selected."); return; }
-
-        int changed = 0;
-        foreach (var row in rows)
-        {
-          try
-          {
-            if (row.IsNewRow) continue;
-            if (row?.DataBoundItem is DataRowView drv)
-            {
-              var dataRow = drv.Row;
-              object keyObj = null;
-              if (dataRow.Table.Columns.Contains("LinkID")) keyObj = dataRow["LinkID"]; else if (dataRow.Table.Columns.Contains("ID")) keyObj = dataRow["ID"];
-              var linkKey = keyObj == null || keyObj == DBNull.Value ? null : Convert.ToString(keyObj);
-              if (!string.IsNullOrEmpty(linkKey) && !string.IsNullOrEmpty(currentSelectedTable))
-              {
-                Program.Edits.SelectRow(currentSelectedTable, linkKey);
-                changed++;
-              }
-            }
-          }
-          catch { }
-        }
-
-        if (changed > 0)
-        {
-          try
-          {
-            if (metricsGrid != null)
-            {
-              metricsGrid.SuspendLayout();
-              ApplyDisabledRowStyling();
-              metricsGrid.ResumeLayout();
-              metricsGrid.Refresh();
-            }
-          }
-          catch { }
-        }
-      }
-      catch (Exception ex)
-      {
-        Program.Log("Error including selected rows", ex);
-        MessageBox.Show("Error including selected rows: " + ex.Message, "Selection Error",
-          MessageBoxButtons.OK, MessageBoxIcon.Error);
-      }
-    }
-
     // Fronts filter functionality for Parts table
     private bool isFrontsFilterActive = false;
-    private DataTable originalPartsData = null;
+    private string originalPartsData = null;
+    private bool isSubassemblyFilterActive = false;
+    private string originalSubassemblyData = null;
 
-    private void btnFilterFronts_Click(object sender, EventArgs e)
-    {
+    private void btnFilterFronts_Click(object sender, EventArgs e) {
+      Program.Log("btnFilterFronts_Click: enter");
       try
       {
         // Only enable when Parts table is selected
+        Program.Log($"btnFilterFronts_Click: currentSelectedTable='{currentSelectedTable ?? "<null>"}'");
         if (string.IsNullOrEmpty(currentSelectedTable) || !string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase))
         {
+          Program.Log($"btnFilterFronts_Click: returning early - table not Parts or null/empty");
           return;
         }
 
+        Program.Log($"btnFilterFronts_Click: isFrontsFilterActive={isFrontsFilterActive}");
         if (isFrontsFilterActive)
         {
           // Reset filter - restore original data
-          if (originalPartsData != null && metricsGrid?.DataSource is BindingSource bs)
+          Program.Log($"btnFilterFronts_Click: originalPartsData is {(originalPartsData != null ? "not null" : "null")}");
+          Program.Log($"btnFilterFronts_Click: metricsGrid?.DataSource is {(metricsGrid?.DataSource != null ? "not null" : "null")}");
+          if (originalPartsData != null && metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataView dataView)
           {
             Program.Log("Fronts filter: Resetting to show all parts");
 
-            RebindBindingSourceSafely(bs, originalPartsData);
-
-            ApplyDisabledRowStyling();
+            // Restore original filter
+            dataView.RowFilter = originalPartsData;
             isFrontsFilterActive = false;
             originalPartsData = null;
-            btnFilterFronts.Text = "Fronts";
-            btnFilterFronts.BackColor = System.Drawing.SystemColors.Control;
+            btnFilterFronts.Text = "Show Fronts";
+            btnFilterFronts.BackColor = System.Drawing.SystemColors.ButtonHighlight; // Set background to default
           }
         }
         else
         {
           // Apply filter - show only front parts
-          if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataTable data)
+          Program.Log($"btnFilterFronts_Click: metricsGrid?.DataSource is {(metricsGrid?.DataSource != null ? "not null" : "null")}");
+          if (metricsGrid?.DataSource != null)
           {
+            Program.Log($"btnFilterFronts_Click: metricsGrid.DataSource type = {metricsGrid.DataSource.GetType().Name}");
+            if (metricsGrid.DataSource is BindingSource bindingSource)
+            {
+              Program.Log($"btnFilterFronts_Click: bindingSource.DataSource type = {bindingSource.DataSource?.GetType().Name ?? "null"}");
+            }
+          }
+          if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataView dataView)
+          {
+            Program.Log($"btnFilterFronts_Click: DataView has {dataView?.Count ?? 0} rows");
             // Validate data before filtering
-            if (data == null || data.Rows.Count == 0)
+            if (dataView == null || dataView.Count == 0)
             {
               Program.Log("Fronts filter: No data to filter");
               return;
@@ -3472,64 +3646,37 @@ namespace WorkOrderBlender
 
             Program.Log("Fronts filter: Filtering to show only front parts");
 
-            // Store original data if not already stored
+            // Store original filter if not already stored
             if (originalPartsData == null)
             {
-              originalPartsData = data.Copy();
+              originalPartsData = dataView.RowFilter; // Store the original filter string
             }
 
-            // Create filtered data table with front parts only
-            // Start with a copy of the original data to preserve all columns and their data
-            var frontParts = data.Copy();
-            var frontKeywords = new[] { "door", "slab", "drawer front", "appliance front", "false front", "face frame"};
+            // Get configurable front filter keywords from settings
+            var cfg = UserConfig.LoadOrDefault();
+            var frontKeywords = cfg.FrontFilterKeywords ?? new List<string> { "Front", "Drawer Front", "RPE" };
 
-            // Validate required columns exist
-            var requiredColumns = new[] { "Name", "Comments", "Comments1", "Comments2", "Comments3" };
-            foreach (var colName in requiredColumns)
+            // Validate required Name column exists
+            if (!dataView.Table.Columns.Contains("Name"))
             {
-              if (!data.Columns.Contains(colName))
-              {
-                Program.Log($"Fronts filter: Required column '{colName}' not found in data");
-                MessageBox.Show($"Required column '{colName}' not found in data. Cannot apply filter.", "Filter Error",
-                  MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-              }
+              Program.Log("Fronts filter: Required column 'Name' not found in data");
+              MessageBox.Show("Required column 'Name' not found in data. Cannot apply filter.", "Filter Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+              return;
             }
 
-            // Filter by removing rows that don't match front criteria
-            // Work backwards to avoid index shifting issues
-            for (int i = frontParts.Rows.Count - 1; i >= 0; i--)
+            // Build filter expression for front parts
+            var filterParts = new List<string>();
+            foreach (var keyword in frontKeywords)
             {
-              var row = frontParts.Rows[i];
-              var name = row["Name"]?.ToString() ?? "";
-              var comments = row["Comments"]?.ToString() ?? "";
-              var comments1 = row["Comments1"]?.ToString() ?? "";
-              var comments2 = row["Comments2"]?.ToString() ?? "";
-              var comments3 = row["Comments3"]?.ToString() ?? "";
-
-              // Combine all text fields for searching
-              var searchText = $"{name} {comments} {comments1} {comments2} {comments3}".ToLowerInvariant();
-
-              // Check if any front keywords are found
-              bool isFrontPart = false;
-              foreach (var keyword in frontKeywords)
-              {
-                if (searchText.Contains(keyword.ToLowerInvariant()))
-                {
-                  isFrontPart = true;
-                  break;
-                }
-              }
-
-              if (!isFrontPart)
-              {
-                frontParts.Rows.RemoveAt(i);
-              }
+              // Escape single quotes in keyword and create LIKE condition
+              var escapedKeyword = keyword.Replace("'", "''");
+              filterParts.Add($"Name LIKE '%{escapedKeyword}%'");
             }
+            var frontFilter = string.Join(" OR ", filterParts);
 
-
-            // Rebind safely to avoid CurrencyManager index errors
-            RebindBindingSourceSafely(bs, frontParts);
+            // Apply the filter
+            dataView.RowFilter = frontFilter;
 
             ApplyDisabledRowStyling();
 
@@ -3537,7 +3684,7 @@ namespace WorkOrderBlender
             btnFilterFronts.Text = "Show All";
             btnFilterFronts.BackColor = System.Drawing.Color.LightGreen;
 
-            Program.Log($"Fronts filter: Filtered from {data.Rows.Count} to {frontParts.Rows.Count} parts");
+            Program.Log($"Fronts filter: Applied filter '{frontFilter}' - showing {dataView.Count} parts");
           }
         }
       }
@@ -3546,6 +3693,469 @@ namespace WorkOrderBlender
         Program.Log("Error applying fronts filter", ex);
         MessageBox.Show("Error applying fronts filter: " + ex.Message, "Filter Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    private void btnFilterSubassemblies_Click(object sender, EventArgs e) {
+      Program.Log("btnFilterSubassemblies_Click: enter");
+      try
+      {
+        // Only enable when Subassemblies table is selected
+        Program.Log($"btnFilterSubassemblies_Click: currentSelectedTable='{currentSelectedTable ?? "<null>"}'");
+        if (string.IsNullOrEmpty(currentSelectedTable) || !string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase))
+        {
+          Program.Log($"btnFilterSubassemblies_Click: returning early - table not Subassemblies or null/empty");
+          return;
+        }
+
+        Program.Log($"btnFilterSubassemblies_Click: isSubassemblyFilterActive={isSubassemblyFilterActive}");
+        if (isSubassemblyFilterActive)
+        {
+          // Reset filter - restore original data
+          Program.Log($"btnFilterSubassemblies_Click: originalSubassemblyData is {(originalSubassemblyData != null ? "not null" : "null")}");
+          Program.Log($"btnFilterSubassemblies_Click: metricsGrid?.DataSource is {(metricsGrid?.DataSource != null ? "not null" : "null")}");
+          if (originalSubassemblyData != null && metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataView dataView)
+          {
+            Program.Log("Subassembly filter: Resetting to show all subassemblies");
+
+            // Restore original filter
+            dataView.RowFilter = originalSubassemblyData;
+            isSubassemblyFilterActive = false;
+            originalSubassemblyData = null;
+            btnFilterSubassemblies.Text = "Show Fronts";
+            btnFilterSubassemblies.BackColor = System.Drawing.SystemColors.ButtonHighlight; // Set background to default
+          }
+        }
+        else
+        {
+          // Apply filter - show only front subassemblies
+          Program.Log($"btnFilterSubassemblies_Click: metricsGrid?.DataSource is {(metricsGrid?.DataSource != null ? "not null" : "null")}");
+          if (metricsGrid?.DataSource != null)
+          {
+            Program.Log($"btnFilterSubassemblies_Click: metricsGrid.DataSource type = {metricsGrid.DataSource.GetType().Name}");
+            if (metricsGrid.DataSource is BindingSource bindingSource)
+            {
+              Program.Log($"btnFilterSubassemblies_Click: bindingSource.DataSource type = {bindingSource.DataSource?.GetType().Name ?? "null"}");
+            }
+          }
+          if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataView dataView)
+          {
+            Program.Log($"btnFilterSubassemblies_Click: DataView has {dataView?.Count ?? 0} rows");
+            // Validate data before filtering
+            if (dataView == null || dataView.Count == 0)
+            {
+              Program.Log("Subassembly filter: No data to filter");
+              return;
+            }
+
+            Program.Log("Subassembly filter: Filtering to show only front subassemblies");
+
+            // Store original filter if not already stored
+            if (originalSubassemblyData == null)
+            {
+              originalSubassemblyData = dataView.RowFilter; // Store the original filter string
+            }
+
+            // Get configurable subassembly filter keywords from settings
+            var cfg = UserConfig.LoadOrDefault();
+            var subassemblyKeywords = cfg.SubassemblyFilterKeywords ?? new List<string> { "Front", "Drawer Front", "RPE" };
+
+            // Validate required Name column exists
+            if (!dataView.Table.Columns.Contains("Name"))
+            {
+              Program.Log("Subassembly filter: Required column 'Name' not found in data");
+              MessageBox.Show("Required column 'Name' not found in data. Cannot apply filter.", "Filter Error",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+              return;
+            }
+
+            // Build filter expression for front subassemblies
+            var filterParts = new List<string>();
+            foreach (var keyword in subassemblyKeywords)
+            {
+              // Escape single quotes in keyword and create LIKE condition
+              var escapedKeyword = keyword.Replace("'", "''");
+              filterParts.Add($"Name LIKE '%{escapedKeyword}%'");
+            }
+            var subassemblyFilter = string.Join(" OR ", filterParts);
+
+            // Apply the filter
+            dataView.RowFilter = subassemblyFilter;
+
+            ApplyDisabledRowStyling();
+
+            isSubassemblyFilterActive = true;
+            btnFilterSubassemblies.Text = "Show All";
+            btnFilterSubassemblies.BackColor = System.Drawing.Color.LightGreen;
+
+            Program.Log($"Subassembly filter: Applied filter '{subassemblyFilter}' - showing {dataView.Count} subassemblies");
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error applying subassembly filter", ex);
+        MessageBox.Show("Error applying subassembly filter: " + ex.Message, "Filter Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    private void btnAutoSequence_Click(object sender, EventArgs e)
+    {
+      Program.Log("btnAutoSequence_Click: enter");
+      try
+      {
+        // Only enable when Parts or Subassemblies table is selected
+        Program.Log($"btnAutoSequence_Click: currentSelectedTable='{currentSelectedTable ?? "<null>"}'");
+        if (string.IsNullOrEmpty(currentSelectedTable) ||
+            (!string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase)))
+        {
+          Program.Log($"btnAutoSequence_Click: returning early - table not Parts/Subassemblies or null/empty");
+          return;
+        }
+
+        // Use automatic filtering for the button click
+        PerformAutoSequence(useAutomaticFiltering: true, selectedRowIndices: null, customSequenceId: null);
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error in btnAutoSequence_Click", ex);
+        MessageBox.Show("Error during auto sequence: " + ex.Message, "Auto Sequence Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    private void PerformAutoSequence(bool useAutomaticFiltering, List<int> selectedRowIndices, string customSequenceId)
+    {
+      try
+      {
+        Program.Log($"PerformAutoSequence: useAutomaticFiltering={useAutomaticFiltering}, selectedRows={selectedRowIndices?.Count ?? 0}, customSequenceId='{customSequenceId}'");
+
+        // Check if we have data to work with
+        if (metricsGrid?.DataSource is BindingSource bs && bs.DataSource is DataView dataView)
+        {
+          Program.Log($"PerformAutoSequence: DataView has {dataView?.Count ?? 0} rows");
+          if (dataView == null || dataView.Count == 0)
+          {
+            Program.Log("Auto Sequence: No data to process");
+            MessageBox.Show("No data available to process.", "Auto Sequence", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+          }
+
+          // Check if required columns exist
+          if (!dataView.Table.Columns.Contains("_SourceFile"))
+          {
+            Program.Log("Auto Sequence: Required column '_SourceFile' not found");
+            MessageBox.Show("Required column '_SourceFile' not found in data.", "Auto Sequence Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+          }
+
+          if (!dataView.Table.Columns.Contains("#"))
+          {
+            Program.Log("Auto Sequence: Required column '#' not found");
+            MessageBox.Show("Required column '#' not found in data.", "Auto Sequence Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+          }
+
+          if (!dataView.Table.Columns.Contains("PerfectGrainCaption"))
+          {
+            Program.Log("Auto Sequence: Required column 'PerfectGrainCaption' not found");
+            MessageBox.Show("Required column 'PerfectGrainCaption' not found in data.", "Auto Sequence Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+          }
+
+          // Get appropriate filter keywords based on table type (for both automatic and manual filtering)
+          List<string> filterKeywords = null;
+          var cfg = UserConfig.LoadOrDefault();
+          bool isPartsTable = string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase);
+
+          if (isPartsTable)
+          {
+            // Use Parts front filter keywords
+            filterKeywords = cfg.FrontFilterKeywords ?? new List<string> { "Slab", "Drawer Front" };
+          }
+          else if (string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase))
+          {
+            // Use Subassembly filter keywords
+            filterKeywords = cfg.SubassemblyFilterKeywords ?? new List<string> { "Front", "Drawer Front", "RPE" };
+          }
+
+          int processedCount = 0;
+          int skippedCount = 0;
+
+          // Determine which rows to process
+          IEnumerable<DataRowView> rowsToProcess;
+          if (useAutomaticFiltering)
+          {
+            // Process all rows in current view with automatic filtering
+            rowsToProcess = dataView.Cast<DataRowView>();
+          }
+          else
+          {
+            // Process only selected rows
+            if (selectedRowIndices == null || selectedRowIndices.Count == 0)
+            {
+              MessageBox.Show("No rows selected for sequencing.", "Sequence Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+              return;
+            }
+            rowsToProcess = selectedRowIndices
+              .Where(index => index >= 0 && index < dataView.Count)
+              .Select(index => dataView[index]);
+          }
+
+          // Process each row
+          Program.Log($"PerformAutoSequence: About to process {rowsToProcess.Count()} rows");
+          foreach (DataRowView rowView in rowsToProcess)
+          {
+            var row = rowView.Row;
+            string name = row["Name"]?.ToString() ?? "";
+
+            Program.Log($"PerformAutoSequence: Processing row '{name}' (useAutomaticFiltering={useAutomaticFiltering})");
+
+            // Apply front filtering for both automatic and manual modes
+            // For manual mode (context menu), we still need to check if rows meet front filter requirements
+            if (filterKeywords != null)
+            {
+              bool matchesFilter = filterKeywords.Any(keyword =>
+                name.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
+
+              Program.Log($"PerformAutoSequence: Row '{name}' filter check - matchesFilter={matchesFilter}, keywords=[{string.Join(", ", filterKeywords)}]");
+
+              if (!matchesFilter)
+              {
+                skippedCount++;
+                if (!useAutomaticFiltering)
+                {
+                  // For manual mode, log why the row was skipped
+                  Program.Log($"Manual Sequence: Skipping row '{name}' - does not match front filter keywords");
+                }
+                continue;
+              }
+            }
+
+            // Process the PerfectGrainCaption
+            var result = ProcessPerfectGrainCaption(row, customSequenceId);
+            if (result.Processed)
+            {
+              processedCount++;
+
+              // Register the change in InMemoryEditStore so it gets included in consolidation
+              string linkId = row["LinkID"]?.ToString() ?? "";
+              if (!string.IsNullOrWhiteSpace(linkId))
+              {
+                Program.Edits.UpsertOverride(currentSelectedTable, linkId, "PerfectGrainCaption", result.NewValue);
+                Program.Log($"Auto Sequence: Registered PerfectGrainCaption change in InMemoryEditStore for LinkID '{linkId}'");
+              }
+            }
+            else
+            {
+              skippedCount++;
+              Program.Log($"PerformAutoSequence: Row '{name}' was not processed");
+            }
+          }
+
+          // Refresh the grid to show changes
+          metricsGrid.Refresh();
+
+          string message = $"Auto Sequence completed.\nProcessed: {processedCount} rows\nSkipped: {skippedCount} rows";
+          Program.Log($"Auto Sequence: {message}");
+          MessageBox.Show(message, "Auto Sequence Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        else
+        {
+          Program.Log("Auto Sequence: No data source available");
+          MessageBox.Show("No data source available.", "Auto Sequence Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error in PerformAutoSequence", ex);
+        MessageBox.Show("Error during auto sequence: " + ex.Message, "Auto Sequence Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    private (bool Processed, string NewValue) ProcessPerfectGrainCaption(DataRow row, string customSequenceId)
+    {
+      try
+      {
+        string currentGrainCaption = row["PerfectGrainCaption"]?.ToString() ?? "";
+        string perfectGrainCaption = "";
+        string name = row["Name"]?.ToString() ?? "";
+
+        Program.Log($"ProcessPerfectGrainCaption: Processing row '{name}', currentGrainCaption='{currentGrainCaption}', customSequenceId='{customSequenceId}'");
+
+        if (!string.IsNullOrWhiteSpace(currentGrainCaption))
+        {
+          // Existing value - check if it needs '#' prefix
+          if (!currentGrainCaption.StartsWith("#"))
+          {
+            perfectGrainCaption = "#" + currentGrainCaption;
+            Program.Log($"Auto Sequence: Adding '#' prefix to existing PerfectGrainCaption for '{name}': '{currentGrainCaption}' -> '{perfectGrainCaption}'");
+          }
+          else
+          {
+            Program.Log($"Auto Sequence: Skipping row '{name}' - already has '#' prefix");
+            return (false, currentGrainCaption); // Already has '#' prefix, skip
+          }
+        }
+        else
+        {
+          // No existing value - generate new one
+          if (!string.IsNullOrWhiteSpace(customSequenceId))
+          {
+            // Use custom sequence ID
+            perfectGrainCaption = "#" + customSequenceId;
+            Program.Log($"Auto Sequence: Using custom sequence ID for '{name}': '{perfectGrainCaption}'");
+          }
+          else
+          {
+            // Generate based on work order name and # column
+            string workOrderName = row["_SourceFile"]?.ToString() ?? "";
+            string numberValue = row["#"]?.ToString() ?? "";
+
+            if (string.IsNullOrWhiteSpace(workOrderName) || string.IsNullOrWhiteSpace(numberValue))
+            {
+              Program.Log($"Auto Sequence: Skipping row '{name}' - missing workOrderName or numberValue");
+              return (false, "");
+            }
+
+            perfectGrainCaption = GeneratePerfectGrainCaption(workOrderName, numberValue);
+            if (!string.IsNullOrWhiteSpace(perfectGrainCaption))
+            {
+              Program.Log($"Auto Sequence: Generated new PerfectGrainCaption for '{name}': '{perfectGrainCaption}'");
+            }
+            else
+            {
+              Program.Log($"Auto Sequence: Failed to generate PerfectGrainCaption for '{name}'");
+              return (false, "");
+            }
+          }
+        }
+
+        // Update the row if we have a new value
+        if (!string.IsNullOrWhiteSpace(perfectGrainCaption))
+        {
+          row["PerfectGrainCaption"] = perfectGrainCaption;
+          Program.Log($"ProcessPerfectGrainCaption: Successfully updated row '{name}' with '{perfectGrainCaption}'");
+          return (true, perfectGrainCaption);
+        }
+
+        Program.Log($"ProcessPerfectGrainCaption: No update needed for row '{name}'");
+        return (false, "");
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error processing PerfectGrainCaption for row: {ex.Message}", ex);
+        return (false, "");
+      }
+    }
+
+    private string GeneratePerfectGrainCaption(string workOrderName, string numberValue)
+    {
+      try
+      {
+        // Example: (03-03) 23079-Reese B1_Primary Tall -> #RBPT4
+        // Extract first non-numeric character from each section
+
+        // Remove parentheses and split by common delimiters
+        string cleanName = workOrderName.Trim();
+        if (cleanName.StartsWith("(") && cleanName.Contains(")"))
+        {
+          int endParen = cleanName.IndexOf(")");
+          if (endParen > 0)
+          {
+            cleanName = cleanName.Substring(endParen + 1).Trim();
+          }
+        }
+
+        // Split by common delimiters: space, dash, underscore
+        string[] sections = cleanName.Split(new char[] { ' ', '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
+
+        StringBuilder result = new StringBuilder("#");
+
+        foreach (string section in sections)
+        {
+          if (string.IsNullOrWhiteSpace(section)) continue;
+
+          // Find first non-numeric character in this section
+          for (int i = 0; i < section.Length; i++)
+          {
+            char c = section[i];
+            if (!char.IsDigit(c))
+            {
+              result.Append(char.ToUpper(c));
+              break; // Only take the first non-numeric character
+            }
+          }
+        }
+
+        // If the last part of _SourceFile is numeric, append it to the results
+        string lastNumericPart = ExtractLastNumericPart(workOrderName);
+        if (!string.IsNullOrEmpty(lastNumericPart))
+        {
+          result.Append(lastNumericPart);
+        }
+
+        result.Append("_");
+        // Append the number value
+        result.Append(numberValue);
+
+        return result.ToString();
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error generating PerfectGrainCaption for '{workOrderName}', '{numberValue}': {ex.Message}");
+        return "";
+      }
+    }
+
+    private string ExtractLastNumericPart(string workOrderName)
+    {
+      try
+      {
+        if (string.IsNullOrWhiteSpace(workOrderName))
+          return "";
+
+        // Remove parentheses and split by common delimiters
+        string cleanName = workOrderName.Trim();
+        if (cleanName.StartsWith("(") && cleanName.Contains(")"))
+        {
+          int endParen = cleanName.IndexOf(")");
+          if (endParen > 0)
+          {
+            cleanName = cleanName.Substring(endParen + 1).Trim();
+          }
+        }
+
+        // Check if the string ends with numeric characters
+        // Find the start of the trailing numeric sequence
+        int numericStartIndex = -1;
+        for (int i = cleanName.Length - 1; i >= 0; i--)
+        {
+          if (char.IsDigit(cleanName[i]))
+          {
+            numericStartIndex = i;
+          }
+          else
+          {
+            break; // Stop when we hit a non-numeric character
+          }
+        }
+
+        // If we found numeric characters at the end, extract them
+        if (numericStartIndex >= 0)
+        {
+          return cleanName.Substring(numericStartIndex);
+        }
+
+        return "";
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error extracting last numeric part from '{workOrderName}': {ex.Message}");
+        return "";
       }
     }
 
@@ -4376,8 +4986,8 @@ namespace WorkOrderBlender
       catch { }
     }
 
-    // Update fronts filter button state based on selected table
-    private void UpdateFrontsFilterButtonState()
+    // Update filter button states based on selected table
+    private void UpdateFilterButtonStates()
     {
       try
       {
@@ -4386,21 +4996,75 @@ namespace WorkOrderBlender
           bool isPartsTable = !string.IsNullOrEmpty(currentSelectedTable) &&
                              string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase);
 
-          btnFilterFronts.Enabled = isPartsTable;
+          // Show/hide button based on table selection - only visible for Parts table
+          btnFilterFronts.Visible = isPartsTable;
 
           if (!isPartsTable)
           {
             // Reset button state when not on Parts table
-            btnFilterFronts.Text = "Fronts";
-            btnFilterFronts.BackColor = System.Drawing.SystemColors.Control;
+            btnFilterFronts.Text = "Show Fronts";
             isFrontsFilterActive = false;
             originalPartsData = null;
           }
         }
+
+        if (btnFilterSubassemblies != null)
+        {
+          bool isSubassembliesTable = !string.IsNullOrEmpty(currentSelectedTable) &&
+                                     string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase);
+
+          // Show/hide button based on table selection - only visible for Subassemblies table
+          btnFilterSubassemblies.Visible = isSubassembliesTable;
+
+          if (!isSubassembliesTable)
+          {
+            // Reset button state when not on Subassemblies table
+            btnFilterSubassemblies.Text = "Show Fronts";
+            isSubassemblyFilterActive = false;
+            originalSubassemblyData = null;
+          }
+        }
+
+        if (btnAutoSequence != null)
+        {
+          bool isPartsOrSubassembliesTable = !string.IsNullOrEmpty(currentSelectedTable) &&
+                                           (string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase) ||
+                                            string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase));
+
+          // Show/hide button based on table selection - visible for Parts and Subassemblies tables
+          btnAutoSequence.Visible = isPartsOrSubassembliesTable;
+        }
       }
       catch (Exception ex)
       {
-        Program.Log("Error updating fronts filter button state", ex);
+        Program.Log("Error updating filter button states", ex);
+      }
+    }
+
+    private void MetricsGrid_DataBindingComplete(object sender, DataGridViewBindingCompleteEventArgs e)
+    {
+      try
+      {
+      Program.Log("MetricsGrid_DataBindingComplete: fired");
+      LogCurrentGridColumns("on-DataBindingComplete entry");
+        if (!applyLayoutAfterBinding) return;
+        if (string.IsNullOrWhiteSpace(currentSelectedTable)) return;
+        Program.Log($"MetricsGrid_DataBindingComplete: applying persisted layout for '{currentSelectedTable}' after bind");
+        var prev = isApplyingLayout; isApplyingLayout = true;
+        try
+        {
+          ApplyUserConfigToMetricsGrid(currentSelectedTable);
+        }
+        finally
+        {
+          isApplyingLayout = prev;
+          applyLayoutAfterBinding = false;
+        }
+      LogCurrentGridColumns("on-DataBindingComplete exit");
+      }
+      catch (Exception ex)
+      {
+        Program.Log("MetricsGrid_DataBindingComplete error", ex);
       }
     }
   }

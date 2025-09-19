@@ -42,7 +42,7 @@ namespace WorkOrderBlender
       this.lblLoading = new System.Windows.Forms.Label();
       this.panelTableSelector = new System.Windows.Forms.Panel();
       this.panelLeftColumn = new System.Windows.Forms.FlowLayoutPanel(); // Fixed: should be FlowLayoutPanel, not TableLayoutPanel
-      this.panelToolbar = new System.Windows.Forms.FlowLayoutPanel();
+      this.filterColumn = new System.Windows.Forms.FlowLayoutPanel();
       this.btnPreviewChanges = new System.Windows.Forms.Button();
       this.tableWorkOrder = new System.Windows.Forms.TableLayoutPanel();
       this.loadingLayout = new System.Windows.Forms.TableLayoutPanel();
@@ -51,7 +51,7 @@ namespace WorkOrderBlender
       this.mainLayoutTable.SuspendLayout();
       this.bottomLayout.SuspendLayout();
       this.panelLeftColumn.SuspendLayout();
-      this.panelToolbar.SuspendLayout();
+      this.filterColumn.SuspendLayout();
       this.SuspendLayout();
 
       //
@@ -91,13 +91,15 @@ namespace WorkOrderBlender
       //
       this.btnConsolidate.Dock = System.Windows.Forms.DockStyle.Fill;
       this.btnConsolidate.Name = "btnConsolidate";
-      this.btnConsolidate.Size = new System.Drawing.Size(75, 40);
+      this.btnConsolidate.Size = new System.Drawing.Size(175, 36);
       this.btnConsolidate.TabIndex = 5;
-      this.btnConsolidate.Text = "Run";
+      this.btnConsolidate.Text = "Run Consolidation";
       this.btnConsolidate.UseVisualStyleBackColor = true;
       this.btnConsolidate.Margin = new System.Windows.Forms.Padding(3, 0, 0, 0);
+      this.btnConsolidate.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; // Text on the center
       this.btnConsolidate.Click += new System.EventHandler(this.btnConsolidate_Click);
       this.toolTip1.SetToolTip(this.btnConsolidate, "Run Consolidation");
+
       //
       // txtOutput
       //
@@ -146,7 +148,7 @@ namespace WorkOrderBlender
       this.tableWorkOrder.Dock = System.Windows.Forms.DockStyle.Top; // Fill horizontally at the top
       this.tableWorkOrder.Height = 48;
       this.tableWorkOrder.Padding = new System.Windows.Forms.Padding(6,0,6,0);
-      this.tableWorkOrder.ColumnCount = 2; // 2 columns: left (label+textbox), right (toolbar)
+      this.tableWorkOrder.ColumnCount = 3; // 2 columns: left (label+textbox), right (toolbar)
       this.tableWorkOrder.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
       // this.tableWorkOrder.CellBorderStyle = System.Windows.Forms.TableLayoutPanelCellBorderStyle.Single;
 
@@ -169,61 +171,103 @@ namespace WorkOrderBlender
       this.panelLeftColumn.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight; // Horizontal layout for buttons
       this.panelLeftColumn.WrapContents = false; // Prevent wrapping to next line
 
-      this.panelToolbar.Dock = System.Windows.Forms.DockStyle.Fill;
       // Add label and textbox to left column panel
       this.panelLeftColumn.Controls.Add(this.btnSettings);
       this.panelLeftColumn.Controls.Add(this.labelOutput);
       this.panelLeftColumn.Controls.Add(this.txtOutput);
-      this.panelToolbar.AutoSize = true;
-      this.panelToolbar.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-      this.panelToolbar.FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft; // Stack toolbar buttons vertically
 
-      // Add controls to tableWorkOrder - left column with label and textbox, right column with toolbar
+
+      this.filterColumn.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.filterColumn.AutoSize = true;
+      this.filterColumn.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+      this.filterColumn.FlowDirection = System.Windows.Forms.FlowDirection.RightToLeft; // Stack toolbar buttons vertically
+
+      // Create FlowLayoutPanel for context actions column (middle column)
+      this.contextActionsColumn = new System.Windows.Forms.FlowLayoutPanel();
+      this.contextActionsColumn.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.contextActionsColumn.AutoSize = true;
+      this.contextActionsColumn.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+      this.contextActionsColumn.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
+      this.contextActionsColumn.WrapContents = false;
+      this.contextActionsColumn.Name = "contextActionsColumn";
+      this.contextActionsColumn.TabIndex = 18;
+      this.contextActionsColumn.SuspendLayout();
+
+      // Add controls to tableWorkOrder - left column with label and textbox, middle column with context actions, right column with toolbar
       this.tableWorkOrder.Controls.Add(this.panelLeftColumn, 0, 0);
-      this.tableWorkOrder.Controls.Add(this.panelToolbar, 1, 0);
+      this.tableWorkOrder.Controls.Add(this.contextActionsColumn, 1, 0);
+      this.tableWorkOrder.Controls.Add(this.filterColumn, 2, 0);
 
 
     // Add buttons to toolbar panel
       // Align toolbar panel's content to the right
-      this.panelToolbar.Anchor = System.Windows.Forms.AnchorStyles.Right | System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom;
-      this.panelToolbar.AutoSize = true;
-      this.panelToolbar.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+      this.filterColumn.Anchor = System.Windows.Forms.AnchorStyles.Right | System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom;
+      this.filterColumn.AutoSize = true;
+      this.filterColumn.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
 
 
       this.btnFilterFronts = new System.Windows.Forms.Button();
-      this.btnFilterFronts.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
-      this.btnFilterFronts.Text = "Fronts";
+      // this.btnFilterFronts.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
+      this.btnFilterFronts.Text = "Parts Fronts";
       this.btnFilterFronts.Height = 26;
-      this.btnFilterFronts.Width = 90;
+      this.btnFilterFronts.Width = 110;
       this.btnFilterFronts.UseVisualStyleBackColor = true;
-      this.btnFilterFronts.Enabled = false; // Disabled by default
-      this.toolTip1.SetToolTip(this.btnFilterFronts, "Show only front parts (doors, drawer fronts, false fronts, applicance fronts, etc.) ");
+      this.btnFilterFronts.BackColor = System.Drawing.SystemColors.ButtonHighlight; // Set background to default
+      this.btnFilterFronts.Visible = false; // Hidden by default - only visible for Parts table
+      this.btnFilterFronts.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
+
+      this.toolTip1.SetToolTip(this.btnFilterFronts, "Show only parts with names containing configurable front keywords (Slab, Drawer Front, etc.)");
       this.btnFilterFronts.Click += new System.EventHandler(this.btnFilterFronts_Click);
-      this.panelToolbar.Controls.Add(this.btnFilterFronts);
+
+      this.btnFilterSubassemblies = new System.Windows.Forms.Button();
+      this.btnFilterSubassemblies.Text = "Subassembly Fronts";
+      this.btnFilterSubassemblies.Height = 26;
+      this.btnFilterSubassemblies.Width = 140;
+      this.btnFilterSubassemblies.UseVisualStyleBackColor = true;
+      this.btnFilterSubassemblies.BackColor = System.Drawing.SystemColors.ButtonHighlight; // Set background to default
+      this.btnFilterSubassemblies.Visible = false; // Hidden by default - only visible for Subassemblies table
+      this.btnFilterSubassemblies.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
+
+      this.toolTip1.SetToolTip(this.btnFilterSubassemblies, "Show only subassemblies with names containing configurable front keywords (Front, Drawer Front, RPE, etc.)");
+      this.btnFilterSubassemblies.Click += new System.EventHandler(this.btnFilterSubassemblies_Click);
+
+      this.btnAutoSequence = new System.Windows.Forms.Button();
+      this.btnAutoSequence.Text = "Auto Sequence";
+      this.btnAutoSequence.Height = 26;
+      this.btnAutoSequence.Width = 120;
+      this.btnAutoSequence.UseVisualStyleBackColor = true;
+      this.btnAutoSequence.BackColor = System.Drawing.SystemColors.ButtonHighlight; // Set background to default
+      this.btnAutoSequence.Visible = false; // Hidden by default - only visible for Parts and Subassemblies tables
+      this.btnAutoSequence.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
+
+      this.toolTip1.SetToolTip(this.btnAutoSequence, "Auto-populate PerfectGrainCaption for filtered parts/subassemblies based on work order name and # column");
+      this.btnAutoSequence.Click += new System.EventHandler(this.btnAutoSequence_Click);
+
+      this.contextActionsColumn.Controls.Add(this.btnFilterFronts);
+      this.contextActionsColumn.Controls.Add(this.btnFilterSubassemblies);
+      this.contextActionsColumn.Controls.Add(this.btnAutoSequence);
+
+      // this.filterColumn.Controls.Add(this.btnFilterFronts);
 
 
-      // Toolbar selection buttons for current table (rows include/exclude)
-      this.btnTableSelectAll = new System.Windows.Forms.Button();
-      this.btnTableSelectAll.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
-      this.btnTableSelectAll.Text = "Select All";
-      this.btnTableSelectAll.Height = 26;
-      this.btnTableSelectAll.Width = 90;
-      this.btnTableSelectAll.UseVisualStyleBackColor = true;
-      // click handler wired in constructor
-      this.toolTip1.SetToolTip(this.btnTableSelectAll, "Include all rows in current table");
-      this.panelToolbar.Controls.Add(this.btnTableSelectAll);
+      // Metrics search label and textbox
+      this.labelMetricsSearch = new System.Windows.Forms.Label();
+      this.labelMetricsSearch.AutoSize = true;
+      this.labelMetricsSearch.Margin = new System.Windows.Forms.Padding(0, 2, 4, 0);
+      this.labelMetricsSearch.Text = "Filter:";
+      this.labelMetricsSearch.Name = "labelMetricsSearch";
+      this.labelMetricsSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 11F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
+      this.filterColumn.Controls.Add(this.labelMetricsSearch);
 
-      this.btnTableClearAll = new System.Windows.Forms.Button();
-      this.btnTableClearAll.Margin = new System.Windows.Forms.Padding(6, 0, 0, 0);
-      this.btnTableClearAll.Text = "Clear All";
-      this.btnTableClearAll.Height = 26;
-      this.btnTableClearAll.Width = 90;
-      this.btnTableClearAll.UseVisualStyleBackColor = true;
-      // click handler wired in constructor
-      this.toolTip1.SetToolTip(this.btnTableClearAll, "Exclude all rows in current table");
-      this.panelToolbar.Controls.Add(this.btnTableClearAll);
-
-
+      this.txtMetricsSearch = new System.Windows.Forms.TextBox();
+      this.txtMetricsSearch.Width = 180;
+      this.txtMetricsSearch.Height = 26;
+      this.txtMetricsSearch.Name = "txtMetricsSearch";
+      this.txtMetricsSearch.Margin = new System.Windows.Forms.Padding(4, 0, 0, 0);
+      this.txtMetricsSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 11F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
+      this.toolTip1.SetToolTip(this.txtMetricsSearch, "Filter rows in the metrics table");
+      this.txtMetricsSearch.TextChanged += new System.EventHandler(this.txtMetricsSearch_TextChanged);
+      this.filterColumn.Controls.Add(this.txtMetricsSearch);
 
       //
       // progress
@@ -263,9 +307,12 @@ namespace WorkOrderBlender
 
             // mainLayoutTable - 2x2 grid layout
       //
-      this.mainLayoutTable.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
-      | System.Windows.Forms.AnchorStyles.Left)
-      | System.Windows.Forms.AnchorStyles.Right)));
+      // Anchor mainLayoutTable to all sides for responsive resizing
+      this.mainLayoutTable.Anchor =
+        System.Windows.Forms.AnchorStyles.Top
+        | System.Windows.Forms.AnchorStyles.Bottom
+        | System.Windows.Forms.AnchorStyles.Left
+        | System.Windows.Forms.AnchorStyles.Right;
       this.mainLayoutTable.Location = new System.Drawing.Point(15, 50);
       this.mainLayoutTable.Name = "mainLayoutTable";
       this.mainLayoutTable.ColumnCount = 1;
@@ -294,13 +341,13 @@ namespace WorkOrderBlender
       this.panelLeftColumn.WrapContents = false;
 
       // Create FlowLayoutPanel for right column toolbar (reuse existing instance created above)
-      this.panelToolbar.Dock = System.Windows.Forms.DockStyle.Fill;
-      this.panelToolbar.Name = "panelToolbar";
-      this.panelToolbar.TabIndex = 16;
-      this.panelToolbar.Padding = new System.Windows.Forms.Padding(5);
-      this.panelToolbar.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
-      this.panelToolbar.AutoSize = true;
-      this.panelToolbar.WrapContents = false;
+      this.filterColumn.Dock = System.Windows.Forms.DockStyle.Fill;
+      this.filterColumn.Name = "filterColumn";
+      this.filterColumn.TabIndex = 16;
+      this.filterColumn.Padding = new System.Windows.Forms.Padding(5);
+      this.filterColumn.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
+      this.filterColumn.AutoSize = true;
+      this.filterColumn.WrapContents = false;
 
       this.panelTableSelector = new System.Windows.Forms.Panel();
       this.panelTableSelector.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -529,10 +576,6 @@ namespace WorkOrderBlender
       this.btnPreviewChanges.Width = 140; // Set explicit width for consistency
       this.btnPreviewChanges.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0); // Increase right margin
 
-      this.btnConsolidate.Anchor = System.Windows.Forms.AnchorStyles.None;
-      this.btnConsolidate.Height = 36; // Increase button height
-      this.btnConsolidate.Width = 80; // Set explicit width for consistency
-
       // Add controls into actionsLayout cells: [0]=progress, [1]=spacer, [2]=preview, [3]=consolidate
       this.actionsLayout.Controls.Add(this.progress, 0, 0);
       // spacer is implicit by percent column at index 1
@@ -575,7 +618,8 @@ namespace WorkOrderBlender
       this.splitMain.ResumeLayout(false);
       this.bottomLayout.ResumeLayout(false);
       this.panelLeftColumn.ResumeLayout(false);
-      this.panelToolbar.ResumeLayout(false);
+      this.contextActionsColumn.ResumeLayout(false);
+      this.filterColumn.ResumeLayout(false);
       ((System.ComponentModel.ISupportInitialize)(this.metricsGrid)).EndInit();
       this.ResumeLayout(false);
       this.PerformLayout();
@@ -587,9 +631,12 @@ namespace WorkOrderBlender
     private Button btnConsolidate;
     private Button btnPreviewChanges;
     private Button btnSettings;
-    private Button btnTableSelectAll;
-    private Button btnTableClearAll;
+    // removed legacy btnTableSelectAll and btnTableClearAll
     private Button btnFilterFronts;
+    private Button btnFilterSubassemblies;
+    private Button btnAutoSequence;
+    private TextBox txtMetricsSearch;
+    private Label labelMetricsSearch;
     private TextBox txtOutput;
     private Label labelOutput;
     private ProgressBar progress;
@@ -604,7 +651,8 @@ namespace WorkOrderBlender
     private Label lblTableSelector;
     private Panel panelTableSelector;
     private FlowLayoutPanel panelLeftColumn;
-    private FlowLayoutPanel panelToolbar;
+    private FlowLayoutPanel contextActionsColumn;
+    private FlowLayoutPanel filterColumn;
     private DataGridView metricsGrid;
     private Panel panelMetricsBorder;
     private Panel panelSearchLeft;

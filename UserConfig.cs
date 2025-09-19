@@ -20,6 +20,12 @@ namespace WorkOrderBlender
     public bool HidePurchasing { get; set; } = true; // default to true
     public bool DynamicSheetCosts { get; set; } = false; // default to false
 
+    // Configurable front filter keywords for parts filtering
+    public List<string> FrontFilterKeywords { get; set; } = new List<string> { "Slab", "Drawer Front" };
+
+    // Configurable subassembly filter keywords for subassembly filtering
+    public List<string> SubassemblyFilterKeywords { get; set; } = new List<string> { "Door", "Drawer Front", "RPE" };
+
     [Serializable]
     public sealed class ColumnWidthEntry
     {
@@ -387,12 +393,24 @@ namespace WorkOrderBlender
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
       var entry = ColumnHeaders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
         && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
-      if (entry == null)
+
+      if (string.IsNullOrWhiteSpace(headerText))
       {
-        entry = new ColumnHeaderEntry { TableName = tableName, ColumnName = columnName };
-        ColumnHeaders.Add(entry);
+        // Remove entry if no header text is set to keep settings.xml clean
+        if (entry != null)
+        {
+          ColumnHeaders.Remove(entry);
+        }
       }
-      entry.HeaderText = headerText ?? string.Empty;
+      else
+      {
+        if (entry == null)
+        {
+          entry = new ColumnHeaderEntry { TableName = tableName, ColumnName = columnName };
+          ColumnHeaders.Add(entry);
+        }
+        entry.HeaderText = headerText;
+      }
     }
 
     public string TryGetColumnHeaderToolTip(string tableName, string columnName)
@@ -409,12 +427,24 @@ namespace WorkOrderBlender
       if (string.IsNullOrWhiteSpace(tableName) || string.IsNullOrWhiteSpace(columnName)) return;
       var entry = ColumnHeaders.Find(e => string.Equals(e.TableName, tableName, StringComparison.OrdinalIgnoreCase)
         && string.Equals(e.ColumnName, columnName, StringComparison.OrdinalIgnoreCase));
-      if (entry == null)
+
+      if (string.IsNullOrWhiteSpace(toolTip))
       {
-        entry = new ColumnHeaderEntry { TableName = tableName, ColumnName = columnName };
-        ColumnHeaders.Add(entry);
+        // Remove entry if no tooltip is set to keep settings.xml clean
+        if (entry != null)
+        {
+          ColumnHeaders.Remove(entry);
+        }
       }
-      entry.ToolTip = toolTip ?? string.Empty;
+      else
+      {
+        if (entry == null)
+        {
+          entry = new ColumnHeaderEntry { TableName = tableName, ColumnName = columnName };
+          ColumnHeaders.Add(entry);
+        }
+        entry.ToolTip = toolTip;
+      }
     }
 
     // Column color management methods

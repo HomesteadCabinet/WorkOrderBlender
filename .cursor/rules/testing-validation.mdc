@@ -1,0 +1,197 @@
+---
+globs: *.cs
+description: Testing and validation practices
+---
+
+# Testing and Validation Rules
+
+## Input Validation Patterns
+```csharp
+// String validation
+private void ValidateStringInput(string input, string parameterName)
+{
+    if (string.IsNullOrWhiteSpace(input))
+        throw new ArgumentException($"{parameterName} cannot be null or empty", parameterName);
+}
+
+// File path validation
+private void ValidateFilePath(string filePath)
+{
+    if (string.IsNullOrWhiteSpace(filePath))
+        throw new ArgumentException("File path cannot be null or empty");
+
+    if (!File.Exists(filePath))
+        throw new FileNotFoundException($"File not found: {filePath}");
+}
+
+// Database path validation
+private void ValidateDatabasePath(string dbPath)
+{
+    ValidateFilePath(dbPath);
+
+    if (!dbPath.EndsWith(".sdf", StringComparison.OrdinalIgnoreCase))
+        throw new ArgumentException("Database file must have .sdf extension");
+}
+```
+
+## Data Validation
+```csharp
+// Configuration validation
+private void ValidateConfiguration(UserConfig config)
+{
+    if (config == null)
+        throw new ArgumentNullException(nameof(config));
+
+    if (string.IsNullOrWhiteSpace(config.DefaultRoot))
+        throw new InvalidOperationException("DefaultRoot path is required");
+
+    if (!Directory.Exists(config.DefaultRoot))
+        throw new DirectoryNotFoundException($"DefaultRoot directory not found: {config.DefaultRoot}");
+}
+```
+
+## Error Recovery Patterns
+```csharp
+// Graceful degradation
+private void SafeOperation()
+{
+    try
+    {
+        PerformPrimaryOperation();
+    }
+    catch (Exception ex)
+    {
+        Program.Log($"Primary operation failed: {ex.Message}", ex);
+
+        try
+        {
+            PerformFallbackOperation();
+            Program.Log("Fallback operation succeeded");
+        }
+        catch (Exception fallbackEx)
+        {
+            Program.Log($"Fallback operation also failed: {fallbackEx.Message}", fallbackEx);
+            ShowUserError("Operation failed. Please try again.");
+        }
+    }
+}
+```
+
+## State Validation
+```csharp
+// UI state validation
+private void ValidateUIState()
+{
+    if (metricsGrid == null)
+    {
+        Program.Log("Warning: metricsGrid is null");
+        return;
+    }
+
+    if (currentSelectedTable == null)
+    {
+        Program.Log("Warning: No table selected");
+        return;
+    }
+
+    // Validate grid state
+    if (metricsGrid.DataSource == null)
+    {
+        Program.Log("Warning: Grid has no data source");
+    }
+}
+```
+
+## Data Consistency Checks
+```csharp
+// Database consistency validation
+private void ValidateDatabaseConsistency(string dbPath)
+{
+    try
+    {
+        using (var connection = SqlCeUtils.CreateReadOnlyConnection(dbPath))
+        {
+            connection.Open();
+
+            // Check for required tables
+            var requiredTables = new[] { "Products", "Parts", "Subassemblies", "Hardware" };
+            foreach (var table in requiredTables)
+            {
+                if (!TableExists(connection, table))
+                {
+                    throw new InvalidDataException($"Required table '{table}' not found in database");
+                }
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Program.Log($"Database validation failed for {dbPath}: {ex.Message}", ex);
+        throw;
+    }
+}
+```
+
+## User Input Validation
+```csharp
+// Form input validation
+private bool ValidateFormInputs()
+{
+    var errors = new List<string>();
+
+    if (string.IsNullOrWhiteSpace(txtWorkOrderName.Text))
+        errors.Add("Work Order Name is required");
+
+    if (string.IsNullOrWhiteSpace(txtOutputPath.Text))
+        errors.Add("Output Path is required");
+
+    if (!Directory.Exists(txtOutputPath.Text))
+        errors.Add("Output Path does not exist");
+
+    if (errors.Count > 0)
+    {
+        MessageBox.Show(string.Join("\n", errors), "Validation Errors",
+                       MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        return false;
+    }
+
+    return true;
+}
+```
+
+## Performance Validation
+```csharp
+// Operation timing validation
+private void ValidateOperationTiming(string operationName, Action operation)
+{
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+    try
+    {
+        operation();
+        stopwatch.Stop();
+
+        var elapsed = stopwatch.ElapsedMilliseconds;
+        Program.Log($"{operationName} completed in {elapsed}ms");
+
+        if (elapsed > 5000) // 5 seconds
+        {
+            Program.Log($"Warning: {operationName} took longer than expected ({elapsed}ms)");
+        }
+    }
+    catch (Exception ex)
+    {
+        stopwatch.Stop();
+        Program.Log($"{operationName} failed after {stopwatch.ElapsedMilliseconds}ms: {ex.Message}", ex);
+        throw;
+    }
+}
+```
+
+## Testing Considerations
+- Validate all user inputs before processing
+- Check file and directory existence before operations
+- Verify database schema consistency
+- Test error recovery mechanisms
+- Validate UI state transitions
+- Monitor performance of critical operations

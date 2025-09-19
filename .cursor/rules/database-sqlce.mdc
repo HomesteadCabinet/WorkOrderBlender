@@ -1,0 +1,46 @@
+---
+globs: *.cs
+description: Database and SQL CE related functionality
+---
+
+# SQL Server Compact Edition (SQL CE) Database Rules
+
+## Database Access Patterns
+- **Source databases are READ-ONLY** - never modify them directly
+- Use [SqlCeUtils.cs](mdc:SqlCeUtils.cs) for all database connection management
+- Always use `SqlCeUtils.CreateReadOnlyConnection()` for reading source data
+- Use `SqlCeUtils.OpenWithFallback()` when source files might be locked
+
+## Connection Management
+```csharp
+// Correct pattern for reading source databases
+using (var connection = SqlCeUtils.CreateReadOnlyConnection(sourcePath))
+{
+    connection.Open();
+    // Perform read operations
+}
+```
+
+## Database Schema
+- Destination database schema is defined in [resources/wo_schema.xml](mdc:resources/wo_schema.xml)
+- Key tables include: Products, Parts, Subassemblies, Hardware, DrillsHorizontal, DrillsVertical
+- All tables have LinkID columns for relationship tracking
+- Common columns: LinkID, LinkIDWorkOrder, Modified, Name
+
+## Data Consolidation Rules
+- Use [InMemoryEditStore.cs](mdc:InMemoryEditStore.cs) for tracking pending changes
+- Changes are stored as table -> linkID -> column -> value mappings
+- Support row selection state (include/exclude with exceptions)
+- All edits are stored in memory until consolidation
+
+## Error Handling for Database Operations
+- Always wrap database operations in try-catch blocks
+- Log database errors using `Program.Log()`
+- Handle SQL CE specific exceptions (file locks, corruption, etc.)
+- Provide fallback mechanisms when source files are unavailable
+
+## Performance Considerations
+- Use connection pooling patterns where appropriate
+- Cache frequently accessed data structures
+- Implement proper disposal patterns for database connections
+- Consider using temporary file copies for locked source databases
