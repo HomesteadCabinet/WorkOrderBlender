@@ -1,0 +1,83 @@
+---
+globs: *.cs
+description: Logging and debugging practices
+---
+
+# Logging and Debugging Rules
+
+## Logging Infrastructure
+- Use [Program.Log()](mdc:Program.cs) for all application logging
+- Logs are written to `logs/WorkOrderBlender.log` in the application directory
+- Log format: `[yyyy-MM-dd HH:mm:ss] message`
+- Exception logging includes full stack traces
+
+## Logging Levels and Usage
+```csharp
+// Information logging
+Program.Log("Operation started successfully");
+
+// Error logging with exception
+Program.Log("Database operation failed", ex);
+
+// Debug logging for troubleshooting
+Program.Log($"Processing {count} items, current item: {itemName}");
+```
+
+## Debug Logging Best Practices
+- **DEBUG logging is enabled** throughout the application
+- Log method entry/exit for complex operations
+- Log parameter values for troubleshooting
+- Log database query results and timing
+- Log UI state changes and user interactions
+
+## Exception Handling and Logging
+```csharp
+try
+{
+    // Risky operation
+    PerformDatabaseOperation();
+}
+catch (Exception ex)
+{
+    Program.Log($"Database operation failed: {ex.Message}", ex);
+    // Handle gracefully - don't crash the application
+    ShowUserFriendlyError(ex);
+}
+```
+
+## Performance Logging
+- Log timing for long-running operations
+- Log memory usage for large data operations
+- Log database connection times and query execution
+- Monitor file I/O operations
+
+## User Action Logging
+- Log user interactions (button clicks, form navigation)
+- Log configuration changes
+- Log file operations (open, save, consolidate)
+- Log filtering and search operations
+
+## Debug Output Patterns
+```csharp
+// Grid state debugging
+private void LogCurrentGridColumns(string label)
+{
+    if (metricsGrid == null) return;
+    var cols = metricsGrid.Columns.Cast<DataGridViewColumn>()
+        .OrderBy(c => c.DisplayIndex)
+        .Select(c => $"{c.DisplayIndex}:{c.Name}");
+    Program.Log($"GridColumns[{label}]: " + string.Join(" | ", cols));
+}
+```
+
+## Log File Management
+- Clear previous session log on application startup
+- Handle log file rotation if needed
+- Ensure log directory exists before writing
+- Gracefully handle logging failures (don't crash app)
+
+## Conditional Logging
+- Use constants for debug switches: `private const bool EnableCopyDebug = true;`
+- Allow runtime toggling of verbose logging
+- Consider performance impact of extensive logging
+- Use meaningful log message prefixes for filtering

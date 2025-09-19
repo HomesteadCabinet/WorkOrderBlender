@@ -1,0 +1,163 @@
+---
+globs: *.cs
+description: Code style and common patterns
+---
+
+# Code Style and Common Patterns
+
+## C# Coding Standards
+- Follow standard C# naming conventions (PascalCase for public, camelCase for private)
+- Use meaningful variable and method names
+- Prefer explicit types over `var` when type isn't immediately obvious
+- Use `string.IsNullOrWhiteSpace()` for string validation
+
+## Comment Standards
+- **Single-line comments** are required for complex logic
+- Explain the "why" not just the "what"
+- Use comments to document business logic and requirements
+- Comment database operations and data transformations
+
+## Method Organization
+```csharp
+// Standard method pattern
+private ReturnType MethodName(parameters)
+{
+    try
+    {
+        // Input validation
+        if (string.IsNullOrWhiteSpace(parameter))
+            throw new ArgumentException("Parameter cannot be null", nameof(parameter));
+
+        // Log method entry
+        Program.Log($"MethodName: Starting operation with {parameter}");
+
+        // Implementation logic
+        var result = PerformOperation(parameter);
+
+        // Log success
+        Program.Log($"MethodName: Operation completed successfully");
+        return result;
+    }
+    catch (Exception ex)
+    {
+        Program.Log($"MethodName error: {ex.Message}", ex);
+        throw; // Or return default value
+    }
+}
+```
+
+## Exception Handling Patterns
+```csharp
+// Standard exception handling
+try
+{
+    // Risky operation
+    RiskyOperation();
+}
+catch (SpecificException ex)
+{
+    Program.Log($"Specific error in operation: {ex.Message}", ex);
+    // Handle specific case
+}
+catch (Exception ex)
+{
+    Program.Log($"Unexpected error in operation: {ex.Message}", ex);
+    // Handle general case
+    throw; // Or handle gracefully
+}
+```
+
+## Resource Management
+```csharp
+// Proper disposal pattern
+using (var connection = SqlCeUtils.CreateReadOnlyConnection(path))
+{
+    connection.Open();
+    // Use connection
+} // Automatically disposed
+
+// For complex resources
+var resource = CreateResource();
+try
+{
+    // Use resource
+}
+finally
+{
+    resource?.Dispose();
+}
+```
+
+## Configuration Access Pattern
+```csharp
+// Load configuration with defaults
+var config = UserConfig.LoadOrDefault();
+
+// Modify configuration
+config.PropertyName = newValue;
+
+// Save changes
+config.Save();
+```
+
+## UI Update Patterns
+```csharp
+// Thread-safe UI updates
+if (this.InvokeRequired)
+{
+    this.Invoke(new Action(() => UpdateUI()));
+}
+else
+{
+    UpdateUI();
+}
+
+// Async UI updates
+private async Task UpdateUIAsync()
+{
+    try
+    {
+        // Perform async operation
+        var data = await LoadDataAsync();
+
+        // Update UI on UI thread
+        this.Invoke(new Action(() =>
+        {
+            PopulateGrid(data);
+        }));
+    }
+    catch (Exception ex)
+    {
+        Program.Log($"UpdateUIAsync error: {ex.Message}", ex);
+    }
+}
+```
+
+## Data Processing Patterns
+```csharp
+// Safe data processing
+private void ProcessData(IEnumerable<DataItem> items)
+{
+    if (items == null) return;
+
+    foreach (var item in items)
+    {
+        try
+        {
+            ProcessItem(item);
+        }
+        catch (Exception ex)
+        {
+            Program.Log($"Error processing item {item.Id}: {ex.Message}", ex);
+            // Continue processing other items
+        }
+    }
+}
+```
+
+## Performance Considerations
+- Use `StringBuilder` for string concatenation in loops
+- Cache expensive calculations and database queries
+- Use appropriate data structures (HashSet for lookups, List for iteration)
+- Implement proper disposal for large objects
+- Use `async/await` for I/O operations

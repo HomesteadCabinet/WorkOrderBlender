@@ -1,0 +1,69 @@
+---
+globs: *.cs,*.xml
+description: Configuration and settings management
+---
+
+# Configuration and Settings Management Rules
+
+## Configuration Architecture
+- Primary configuration: [UserConfig.cs](mdc:UserConfig.cs) - Serializable settings class
+- Settings persistence: [settings.xml](mdc:settings.xml) - XML serialization format
+- Schema definition: [resources/wo_schema.xml](mdc:resources/wo_schema.xml) - Database schema
+
+## UserConfig Class Structure
+- Inherit from `Serializable` attribute
+- Use public properties with get/set accessors
+- Provide sensible defaults for all configuration values
+- Support nested classes for complex configuration objects
+
+## Configuration Categories
+### Window and Layout Settings
+- `MainWindowWidth`, `MainWindowHeight`, `MainWindowX`, `MainWindowY`
+- `MainSplitterDistance` for panel sizing
+- Column widths, orders, and visibility per table
+
+### Application Behavior
+- `DefaultRoot`, `DefaultOutput` paths
+- `SdfFileName` for database file naming
+- `WorkOrderName` for output naming
+- `HidePurchasing`, `DynamicSheetCosts` feature toggles
+
+### Filtering Configuration
+- `FrontFilterKeywords` - Configurable front filter keywords
+- `SubassemblyFilterKeywords` - Subassembly filtering keywords
+
+### Virtual Columns
+- `VirtualColumnDefs` - User-defined virtual column definitions
+- Support for lookup tables and computed columns
+- Caching mechanisms for virtual column data
+
+## Serialization Patterns
+```csharp
+// Load configuration with fallback to defaults
+var config = UserConfig.LoadOrDefault();
+
+// Save configuration changes
+config.Save();
+
+// XML serialization attributes
+[XmlElement("PropertyName")]
+public string PropertyName { get; set; } = "DefaultValue";
+```
+
+## Settings Persistence
+- Use XML serialization for human-readable configuration
+- Implement proper error handling for corrupted settings files
+- Provide default values when settings are missing
+- Support migration between configuration versions
+
+## Configuration Validation
+- Validate file paths exist and are accessible
+- Check for reasonable value ranges
+- Provide user feedback for invalid configurations
+- Gracefully handle missing or corrupted settings files
+
+## Feature Toggles
+- Use boolean properties for feature enable/disable
+- Default to safe/stable values
+- Support runtime toggling where appropriate
+- Document feature toggle effects
