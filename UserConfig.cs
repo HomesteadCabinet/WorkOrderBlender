@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Xml.Serialization;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WorkOrderBlender
 {
@@ -28,10 +29,24 @@ namespace WorkOrderBlender
     public bool MssqlEnabled { get; set; } = true; // Enable/disable MSSQL validation
 
     // Configurable front filter keywords for parts filtering
-    public List<string> FrontFilterKeywords { get; set; } = new List<string> { "Slab", "Drawer Front" };
+    [XmlArray("FrontFilterKeywords")]
+    [XmlArrayItem("string")]
+    public List<string> FrontFilterKeywords
+    {
+        get => _frontFilterKeywords ?? (_frontFilterKeywords = new List<string> { "Slab", "Drawer Front" });
+        set => _frontFilterKeywords = value?.Distinct().ToList() ?? new List<string> { "Slab", "Drawer Front" };
+    }
+    private List<string> _frontFilterKeywords;
 
     // Configurable subassembly filter keywords for subassembly filtering
-    public List<string> SubassemblyFilterKeywords { get; set; } = new List<string> { "Door", "Drawer Front", "RPE" };
+    [XmlArray("SubassemblyFilterKeywords")]
+    [XmlArrayItem("string")]
+    public List<string> SubassemblyFilterKeywords
+    {
+        get => _subassemblyFilterKeywords ?? (_subassemblyFilterKeywords = new List<string> { "Door", "Drawer Front", "RPE" });
+        set => _subassemblyFilterKeywords = value?.Distinct().ToList() ?? new List<string> { "Door", "Drawer Front", "RPE" };
+    }
+    private List<string> _subassemblyFilterKeywords;
 
     [Serializable]
     public sealed class ColumnWidthEntry
@@ -203,6 +218,59 @@ namespace WorkOrderBlender
       AddWidth("Parts", "_SourceFile", 120);
       AddWidth("Subassemblies", "_SourceFile", 120);
     }
+
+    private static void CleanupDuplicatesAfterDeserialization(UserConfig cfg)
+    {
+      bool hasDuplicates = false;
+
+      // Clean up FrontFilterKeywords duplicates in the backing field
+      if (cfg._frontFilterKeywords != null && cfg._frontFilterKeywords.Count != cfg._frontFilterKeywords.Distinct().Count())
+      {
+        hasDuplicates = true;
+        cfg._frontFilterKeywords = cfg._frontFilterKeywords.Distinct().ToList();
+        Program.Log("UserConfig: Cleaned up duplicate FrontFilterKeywords after XML deserialization");
+      }
+
+      // Clean up SubassemblyFilterKeywords duplicates in the backing field
+      if (cfg._subassemblyFilterKeywords != null && cfg._subassemblyFilterKeywords.Count != cfg._subassemblyFilterKeywords.Distinct().Count())
+      {
+        hasDuplicates = true;
+        cfg._subassemblyFilterKeywords = cfg._subassemblyFilterKeywords.Distinct().ToList();
+        Program.Log("UserConfig: Cleaned up duplicate SubassemblyFilterKeywords after XML deserialization");
+      }
+
+      // Save the cleaned configuration if duplicates were found
+      if (hasDuplicates)
+      {
+        try
+        {
+          cfg.Save();
+          Program.Log("UserConfig: Saved cleaned configuration to remove duplicates after deserialization");
+        }
+        catch (IOException ex) when (ex.Message.Contains("being used by another process"))
+        {
+          Program.Log("UserConfig: Could not save cleaned configuration immediately due to file lock, will retry later");
+          // Schedule a delayed save to retry when the file is no longer locked
+          System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ =>
+          {
+            try
+            {
+              cfg.Save();
+              Program.Log("UserConfig: Successfully saved cleaned configuration on retry");
+            }
+            catch (Exception retryEx)
+            {
+              Program.Log("UserConfig: Retry save also failed", retryEx);
+            }
+          });
+        }
+        catch (Exception ex)
+        {
+          Program.Log("UserConfig: Failed to save cleaned configuration", ex);
+        }
+      }
+    }
+
 
     private void EnsureBuiltInSourceFileColumn()
     {
@@ -779,6 +847,10 @@ namespace WorkOrderBlender
                   {
                     var cfg = (UserConfig)ser.Deserialize(fs);
                     cfg.EnsureDefaultMetricsLayout();
+
+                    // Clean up any duplicates that may have been introduced during XML deserialization
+                    CleanupDuplicatesAfterDeserialization(cfg);
+
                     cachedInstance = cfg;
                     return cfg;
                   }
