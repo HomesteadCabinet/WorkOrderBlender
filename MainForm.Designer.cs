@@ -21,6 +21,7 @@ namespace WorkOrderBlender
       this.listWorkOrders = new System.Windows.Forms.ListView();
       this.colDir = new System.Windows.Forms.ColumnHeader();
       this.btnConsolidate = new System.Windows.Forms.Button();
+      this.btnClearSort = new System.Windows.Forms.Button();
       this.btnSettings = new System.Windows.Forms.Button();
       this.txtOutput = new System.Windows.Forms.TextBox();
       this.labelOutput = new System.Windows.Forms.Label();
@@ -111,6 +112,19 @@ namespace WorkOrderBlender
       this.btnConsolidate.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(37, 100, 40); // 20% darker than original green
 
       this.toolTip1.SetToolTip(this.btnConsolidate, "Run Consolidation");
+
+      //
+      // btnClearSort
+      //
+      this.btnClearSort.Name = "btnClearSort";
+      this.btnClearSort.Size = new System.Drawing.Size(80, 25);
+      this.btnClearSort.TabIndex = 6;
+      this.btnClearSort.Text = "Clear Sort";
+      this.btnClearSort.UseVisualStyleBackColor = true;
+      this.btnClearSort.Visible = false; // Hidden by default, shown when multi-sort is enabled
+      this.btnClearSort.Click += new System.EventHandler(this.btnClearSort_Click);
+
+      this.toolTip1.SetToolTip(this.btnClearSort, "Clear all column sorts");
 
       //
       // txtOutput
@@ -258,6 +272,7 @@ namespace WorkOrderBlender
       this.contextActionsColumn.Controls.Add(this.btnFilterFronts);
       this.contextActionsColumn.Controls.Add(this.btnFilterSubassemblies);
       this.contextActionsColumn.Controls.Add(this.btnAutoSequence);
+      this.contextActionsColumn.Controls.Add(this.btnClearSort);
 
       // this.filterColumn.Controls.Add(this.btnFilterFronts);
 
@@ -641,6 +656,7 @@ namespace WorkOrderBlender
     private ListView listWorkOrders;
     private ColumnHeader colDir;
     private Button btnConsolidate;
+    private Button btnClearSort;
     private Button btnPreviewChanges;
     private Button btnSettings;
     // removed legacy btnTableSelectAll and btnTableClearAll
