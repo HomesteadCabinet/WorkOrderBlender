@@ -4305,8 +4305,7 @@ namespace WorkOrderBlender
         // Add sequence menu item for Parts and Subassemblies tables
         ToolStripMenuItem sequenceMenuItem = null;
         if (!string.IsNullOrEmpty(currentSelectedTable) &&
-            (string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase)))
+            string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase))
         {
           sequenceMenuItem = new ToolStripMenuItem("Sequence Selected Rows...");
           sequenceMenuItem.Click += (s, e) => SequenceSelectedRows();
