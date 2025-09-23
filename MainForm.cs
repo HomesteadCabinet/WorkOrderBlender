@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Data.OleDb;
+using System.Data.SqlClient;
 using System.Data.SqlServerCe;
 using System.IO;
 using System.Linq;
@@ -740,7 +742,7 @@ namespace WorkOrderBlender
       }
     }
 
-    private void btnConsolidate_Click(object sender, EventArgs e)
+    private async void btnConsolidate_Click(object sender, EventArgs e)
     {
       var selected = filteredWorkOrders
         .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
@@ -765,6 +767,68 @@ namespace WorkOrderBlender
       {
         MessageBox.Show("Work order name contains invalid characters. Please use only letters, numbers, spaces, and basic punctuation.");
         return;
+      }
+
+      // Check if work order name already exists in Microvellum database
+      try
+      {
+        Program.Log($"Checking if work order name '{workOrderName}' exists in Microvellum database");
+
+        // Show progress indicator for MSSQL check
+        ShowLoadingIndicator(true, "Checking work order name in database...");
+
+        bool nameExists = await MssqlUtils.WorkOrderNameExistsAsync(workOrderName);
+
+        // Hide progress indicator
+        ShowLoadingIndicator(false);
+
+        if (nameExists)
+        {
+          var result = MessageBox.Show(
+            $"Work order name '{workOrderName}' already exists in the Microvellum database.\n\n" +
+            "Do you want to continue with this name anyway?\n\n" +
+            "Click 'Yes' to proceed with the existing name, or 'No' to cancel and enter a different name.",
+            "Work Order Name Exists",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning,
+            MessageBoxDefaultButton.Button2);
+
+          if (result != DialogResult.Yes)
+          {
+            Program.Log($"User cancelled consolidation due to existing work order name '{workOrderName}'");
+            return; // User chose to cancel and enter a different name
+          }
+
+          Program.Log($"User chose to proceed with existing work order name '{workOrderName}'");
+        }
+        else
+        {
+          Program.Log($"Work order name '{workOrderName}' is available in Microvellum database");
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error checking work order name in Microvellum database: {ex.Message}", ex);
+        ShowLoadingIndicator(false); // Hide progress indicator on error
+
+        // If we can't check the database, show a warning but allow the user to proceed
+        var result = MessageBox.Show(
+          $"Unable to verify work order name '{workOrderName}' against the Microvellum database.\n\n" +
+          "This may be due to a network or database connection issue.\n\n" +
+          "Do you want to continue anyway?\n\n" +
+          "Click 'Yes' to proceed, or 'No' to cancel and check your connection.",
+          "Database Connection Warning",
+          MessageBoxButtons.YesNo,
+          MessageBoxIcon.Warning,
+          MessageBoxDefaultButton.Button2);
+
+        if (result != DialogResult.Yes)
+        {
+          Program.Log("User cancelled consolidation due to database connection issue");
+          return; // User chose to cancel due to connection issues
+        }
+
+        Program.Log("User chose to proceed despite database connection issue");
       }
 
       // Create subfolder in DefaultRoot based on work order name
@@ -1529,6 +1593,10 @@ namespace WorkOrderBlender
         metricsGrid.DoubleClick -= MetricsGrid_DoubleClick;
         metricsGrid.DoubleClick += MetricsGrid_DoubleClick;
         // Also hook the parent panel so double-clicking padding/border toggles too
+
+        // Custom sorting for programmatic sort mode columns
+        metricsGrid.ColumnHeaderMouseClick -= MetricsGrid_ColumnHeaderMouseClick;
+        metricsGrid.ColumnHeaderMouseClick += MetricsGrid_ColumnHeaderMouseClick;
         try
         {
           if (panelMetricsBorder != null)
@@ -1745,7 +1813,7 @@ namespace WorkOrderBlender
     }
 
     // Apply user-configured layout and built-in column styling to the main metricsGrid
-    private void ApplyUserConfigToMetricsGrid(string tableName)
+    private void ApplyUserConfigToMetricsGrid(string tableName, DataTable data = null)
     {
       try
       {
@@ -1897,6 +1965,19 @@ namespace WorkOrderBlender
 
         var t5 = DateTime.Now; Program.Log($"ApplyUserConfig: virtual column styling applied in {(t5 - t4).TotalMilliseconds:F0}ms");
 
+        // Configure column sorting based on data type
+        foreach (DataGridViewColumn col in metricsGrid.Columns)
+        {
+          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+          if (!string.IsNullOrWhiteSpace(key) && data != null && data.Columns.Contains(key))
+          {
+            var dataType = data.Columns[key].DataType;
+            ConfigureColumnSorting(col, dataType);
+          }
+        }
+
+        var t6 = DateTime.Now; Program.Log($"ApplyUserConfig: column sorting configured in {(t6 - t5).TotalMilliseconds:F0}ms");
+
         // Apply order (build a sensible default when none is saved)
         var order = cfg.TryGetColumnOrder(tableName);
         if (order == null || order.Count == 0)
@@ -1981,7 +2062,7 @@ namespace WorkOrderBlender
 
             // Avoid extra layout churn here; rely on DataBindingComplete re-apply
           }
-          var t6 = DateTime.Now; Program.Log($"ApplyUserConfig: column order applied in {(t6 - t5).TotalMilliseconds:F0}ms");
+          var t7a = DateTime.Now; Program.Log($"ApplyUserConfig: column order applied in {(t7a - t6).TotalMilliseconds:F0}ms");
         }
         finally
         {
@@ -2426,6 +2507,174 @@ namespace WorkOrderBlender
       }
     }
 
+    // Determine appropriate data type for virtual columns based on their content
+    private Type DetermineVirtualColumnDataType(UserConfig.VirtualColumnDef def, DataTable data)
+    {
+      try
+      {
+        // For action columns, always use string since they contain button text
+        if (def.IsActionColumn)
+        {
+          return typeof(string);
+        }
+
+        // For lookup columns, analyze the target value column data type
+        if (def.IsLookupColumn && !string.IsNullOrWhiteSpace(def.TargetValueColumn))
+        {
+          // Try to find the target table and analyze its column data type
+          var targetTableName = def.TargetTableName;
+          if (!string.IsNullOrWhiteSpace(targetTableName))
+          {
+            // Check if we have schema information for the target table
+            var schema = GetTableSchema(targetTableName);
+            if (schema != null && schema.Rows.Count > 0)
+            {
+              var targetColumn = schema.Rows.Cast<DataRow>()
+                .FirstOrDefault(r => string.Equals(Convert.ToString(r["ColumnName"]), def.TargetValueColumn, StringComparison.OrdinalIgnoreCase));
+              if (targetColumn != null)
+              {
+                var targetDataType = (Type)targetColumn["DataType"];
+                Program.Log($"DetermineVirtualColumnDataType: Using target column data type {targetDataType.Name} for virtual column '{def.ColumnName}'");
+                return targetDataType;
+              }
+            }
+          }
+        }
+
+        // Default to string for unknown or unanalyzable columns
+        return typeof(string);
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"DetermineVirtualColumnDataType error for column '{def.ColumnName}': {ex.Message}");
+        return typeof(string);
+      }
+    }
+
+    // Get table schema information (cached for performance)
+    private static Dictionary<string, DataTable> _schemaCache = new Dictionary<string, DataTable>();
+    private DataTable GetTableSchema(string tableName)
+    {
+      try
+      {
+        if (_schemaCache.TryGetValue(tableName, out var cachedSchema))
+        {
+          return cachedSchema;
+        }
+
+        // For now, return null to use default string type
+        // In the future, this could be enhanced to analyze actual database schemas
+        Program.Log($"GetTableSchema: No schema available for table '{tableName}', using default string type");
+        return null;
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"GetTableSchema error for table '{tableName}': {ex.Message}");
+        return null;
+      }
+    }
+
+    // Configure DataGridView column sorting based on data type
+    private void ConfigureColumnSorting(DataGridViewColumn column, Type dataType)
+    {
+      try
+      {
+        if (column == null) return;
+
+        // Set appropriate SortMode based on data type
+        if (dataType == typeof(int) || dataType == typeof(long) || dataType == typeof(short) ||
+            dataType == typeof(decimal) || dataType == typeof(double) || dataType == typeof(float))
+        {
+          // Numeric columns should use programmatic sorting for proper numeric comparison
+          column.SortMode = DataGridViewColumnSortMode.Programmatic;
+          Program.Log($"ConfigureColumnSorting: Set programmatic sorting for numeric column '{column.Name}' ({dataType.Name})");
+        }
+        else if (dataType == typeof(DateTime))
+        {
+          // DateTime columns should use programmatic sorting for proper date comparison
+          column.SortMode = DataGridViewColumnSortMode.Programmatic;
+          Program.Log($"ConfigureColumnSorting: Set programmatic sorting for DateTime column '{column.Name}'");
+        }
+        else
+        {
+          // String and other types use automatic sorting
+          column.SortMode = DataGridViewColumnSortMode.Automatic;
+          Program.Log($"ConfigureColumnSorting: Set automatic sorting for column '{column.Name}' ({dataType.Name})");
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"ConfigureColumnSorting error for column '{column.Name}': {ex.Message}");
+        // Fallback to automatic sorting
+        try { column.SortMode = DataGridViewColumnSortMode.Automatic; } catch { }
+      }
+    }
+
+    // Handle custom sorting for programmatic sort mode columns
+    private void MetricsGrid_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+    {
+      try
+      {
+        if (e.ColumnIndex < 0 || metricsGrid == null) return;
+
+        var column = metricsGrid.Columns[e.ColumnIndex];
+        if (column.SortMode != DataGridViewColumnSortMode.Programmatic) return;
+
+        // Get the data source
+        if (!(metricsGrid.DataSource is BindingSource bindingSource) ||
+            !(bindingSource.DataSource is DataView dataView)) return;
+
+        var dataTable = dataView.Table;
+        if (dataTable == null) return;
+
+        // Get the column name
+        var columnName = !string.IsNullOrEmpty(column.DataPropertyName) ? column.DataPropertyName : column.Name;
+        if (!dataTable.Columns.Contains(columnName)) return;
+
+        var dataType = dataTable.Columns[columnName].DataType;
+        Program.Log($"Custom sorting column '{columnName}' with data type {dataType.Name}");
+
+        // Determine sort direction
+        var currentSort = dataView.Sort;
+        var isAscending = !currentSort.StartsWith($"[{columnName}] ASC", StringComparison.OrdinalIgnoreCase);
+        var sortDirection = isAscending ? "ASC" : "DESC";
+
+        // Create sort expression based on data type
+        string sortExpression;
+        if (dataType == typeof(int) || dataType == typeof(long) || dataType == typeof(short))
+        {
+          // For integer types, convert to int for proper numeric sorting
+          sortExpression = $"CAST([{columnName}] AS int) {sortDirection}";
+        }
+        else if (dataType == typeof(decimal) || dataType == typeof(double) || dataType == typeof(float))
+        {
+          // For decimal types, convert to decimal for proper numeric sorting
+          sortExpression = $"CAST([{columnName}] AS decimal) {sortDirection}";
+        }
+        else if (dataType == typeof(DateTime))
+        {
+          // For DateTime, use direct sorting
+          sortExpression = $"[{columnName}] {sortDirection}";
+        }
+        else
+        {
+          // For string and other types, use direct sorting
+          sortExpression = $"[{columnName}] {sortDirection}";
+        }
+
+        // Apply the sort
+        dataView.Sort = sortExpression;
+        Program.Log($"Applied custom sort: {sortExpression}");
+
+        // Update column header to show sort direction
+        column.HeaderCell.SortGlyphDirection = isAscending ? System.Windows.Forms.SortOrder.Ascending : System.Windows.Forms.SortOrder.Descending;
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Custom sorting error for column {e.ColumnIndex}: {ex.Message}");
+      }
+    }
+
     private void RebuildVirtualColumns(string tableName, DataTable data)
     {
       try
@@ -2442,9 +2691,11 @@ namespace WorkOrderBlender
           }
           else if (!exists)
           {
-            data.Columns.Add(def.ColumnName, typeof(string));
+            // Determine appropriate data type for virtual column based on its content
+            var dataType = DetermineVirtualColumnDataType(def, data);
+            data.Columns.Add(def.ColumnName, dataType);
             newlyAdded.Add(def.ColumnName);
-            Program.Log($"MainForm: Added virtual column '{def.ColumnName}'");
+            Program.Log($"MainForm: Added virtual column '{def.ColumnName}' with data type {dataType.Name}");
           }
 
           if (def.IsLookupColumn && virtualLookupCacheByColumn.TryGetValue(def.ColumnName, out var cache))
@@ -5053,7 +5304,13 @@ namespace WorkOrderBlender
         var prev = isApplyingLayout; isApplyingLayout = true;
         try
         {
-          ApplyUserConfigToMetricsGrid(currentSelectedTable);
+          // Get the data from the DataSource to pass to ApplyUserConfigToMetricsGrid
+          DataTable data = null;
+          if (metricsGrid?.DataSource is BindingSource bindingSource && bindingSource.DataSource is DataView dataView)
+          {
+            data = dataView.Table;
+          }
+          ApplyUserConfigToMetricsGrid(currentSelectedTable, data);
         }
         finally
         {
