@@ -20,6 +20,13 @@ namespace WorkOrderBlender
     public bool HidePurchasing { get; set; } = true; // default to true
     public bool DynamicSheetCosts { get; set; } = false; // default to false
 
+    // MSSQL connection settings for Microvellum database
+    public string MssqlServer { get; set; } = "SERVER\\SQL";
+    public string MssqlDatabase { get; set; } = "MicrovellumData";
+    public string MssqlUsername { get; set; } = "user";
+    public string MssqlPassword { get; set; } = "password";
+    public bool MssqlEnabled { get; set; } = true; // Enable/disable MSSQL validation
+
     // Configurable front filter keywords for parts filtering
     public List<string> FrontFilterKeywords { get; set; } = new List<string> { "Slab", "Drawer Front" };
 

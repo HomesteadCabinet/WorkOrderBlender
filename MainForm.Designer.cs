@@ -94,10 +94,22 @@ namespace WorkOrderBlender
       this.btnConsolidate.Size = new System.Drawing.Size(175, 36);
       this.btnConsolidate.TabIndex = 5;
       this.btnConsolidate.Text = "Run Consolidation";
-      this.btnConsolidate.UseVisualStyleBackColor = true;
+      this.btnConsolidate.BackColor = System.Drawing.Color.FromArgb(46, 125, 50); // Material Design Green
+      this.btnConsolidate.ForeColor = System.Drawing.Color.White;
+      this.btnConsolidate.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+      this.btnConsolidate.Font = new System.Drawing.Font("Segoe UI", 9F, System.Drawing.FontStyle.Bold);
+      this.btnConsolidate.UseVisualStyleBackColor = false;
       this.btnConsolidate.Margin = new System.Windows.Forms.Padding(3, 0, 0, 0);
       this.btnConsolidate.TextAlign = System.Drawing.ContentAlignment.MiddleCenter; // Text on the center
+      this.btnConsolidate.Padding = new System.Windows.Forms.Padding(6, 3, 6, 3);
       this.btnConsolidate.Click += new System.EventHandler(this.btnConsolidate_Click);
+
+      // Customize the flat button appearance
+      this.btnConsolidate.FlatAppearance.BorderSize = 1;
+      this.btnConsolidate.FlatAppearance.MouseOverBackColor = System.Drawing.Color.FromArgb(82, 168, 86); // 15% lighter green on hover
+      this.btnConsolidate.FlatAppearance.MouseDownBackColor = System.Drawing.Color.FromArgb(56, 142, 60); // 15% lighter than previous click color
+      this.btnConsolidate.FlatAppearance.BorderColor = System.Drawing.Color.FromArgb(37, 100, 40); // 20% darker than original green
+
       this.toolTip1.SetToolTip(this.btnConsolidate, "Run Consolidation");
 
       //

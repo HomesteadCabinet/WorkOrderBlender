@@ -11,6 +11,11 @@
   <MainWindowY>42</MainWindowY>
   <HidePurchasing>true</HidePurchasing>
   <DynamicSheetCosts>true</DynamicSheetCosts>
+  <MssqlServer>SERVER\SQL</MssqlServer>
+  <MssqlDatabase>MicrovellumData</MssqlDatabase>
+  <MssqlUsername>user</MssqlUsername>
+  <MssqlPassword>password</MssqlPassword>
+  <MssqlEnabled>true</MssqlEnabled>
   <FrontFilterKeywords>
     <string>Slab</string>
     <string>Drawer Front</string>
