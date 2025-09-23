@@ -318,6 +318,7 @@ namespace WorkOrderBlender
       metricsRefreshTimer.Interval = 50; // ms to coalesce repeated requests - reduced from 120ms for more responsive loading indicator
       metricsRefreshTimer.Tick += (s, e2) =>
       {
+        Program.Log($"metricsRefreshTimer.Tick: Timer tick fired - checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}, isRefreshingMetrics={isRefreshingMetrics}");
         if ((DateTime.UtcNow - lastRefreshRequestUtc).TotalMilliseconds >= metricsRefreshTimer.Interval)
         {
           metricsRefreshTimer.Stop();
@@ -705,7 +706,16 @@ namespace WorkOrderBlender
 
         ShowLoadingIndicator(false);
         isScanningWorkOrders = false;
-        RequestRefreshMetricsGrid();
+        // Only request refresh if there are actually selected work orders
+        if (checkedDirs.Count > 0 || listWorkOrders.SelectedIndices.Count > 0)
+        {
+          Program.Log("ScanWorkOrders: work orders selected, requesting refresh");
+          RequestRefreshMetricsGrid();
+        }
+        else
+        {
+          Program.Log("ScanWorkOrders: no work orders selected, skipping refresh");
+        }
       }
     }
 
@@ -1062,18 +1072,22 @@ namespace WorkOrderBlender
     {
       try
       {
+        Program.Log($"listWorkOrders_SelectedIndexChanged: checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}");
+
         // Update work order name based on selection
         UpdateWorkOrderNameFromSelection();
 
         // If no work orders are selected at all, clear the metrics grid and return early
         if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
         {
+          Program.Log("listWorkOrders_SelectedIndexChanged: no work orders selected, clearing grid and returning early");
           ClearMetricsGridFast();
           // Also hide the loading indicator as there's nothing to load
           ShowLoadingIndicator(false);
           return; // Exit early to prevent PopulateTableSelector from triggering a refresh
         }
 
+        Program.Log("listWorkOrders_SelectedIndexChanged: work orders selected, proceeding with refresh");
         // Show loading immediately when work order selection changes
         ShowLoadingIndicator(true, "Loading work order data...");
         Application.DoEvents();
@@ -1096,6 +1110,12 @@ namespace WorkOrderBlender
         {
           Program.Log("RequestRefreshMetricsGrid: no work orders selected or checked; clearing metrics grid and skipping refresh");
           ClearMetricsGridFast();
+          // Stop the timer to prevent it from firing and reloading data
+          if (metricsRefreshTimer.Enabled)
+          {
+            metricsRefreshTimer.Stop();
+            Program.Log("RequestRefreshMetricsGrid: stopped timer to prevent reload after clearing");
+          }
           return;
         }
       }
@@ -1158,13 +1178,10 @@ namespace WorkOrderBlender
 
         if (string.IsNullOrEmpty(needle))
         {
-          // Prepare to re-apply layout BEFORE binding changes trigger DataBindingComplete
-          applyLayoutAfterBinding = true;
           // Clear filter and keep binding to DataView for consistency
           try { if (view != null) view.RowFilter = string.Empty; } catch { }
           bs.DataSource = view ?? (object)data;
           bs.ResetBindings(false);
-          Program.Log("ApplyMetricsFilterLive: scheduled layout reapply after clearing filter");
           Program.Log("ApplyMetricsFilterLive: cleared filter");
           ApplyDisabledRowStyling();
           metricsGrid?.Invalidate();
@@ -1205,8 +1222,6 @@ namespace WorkOrderBlender
         string filterPreview = filterExpr.Length > 800 ? (filterExpr.Substring(0, 800) + " ...") : filterExpr;
         Program.Log($"ApplyMetricsFilterLive: columnsConsidered={visibleCols.Count}, rowFilterPreview={filterPreview}");
 
-        // Prepare to re-apply layout BEFORE binding changes trigger DataBindingComplete
-        applyLayoutAfterBinding = true;
         if (view != null)
         {
           view.RowFilter = filterExpr;
@@ -1217,7 +1232,7 @@ namespace WorkOrderBlender
           var dv = data.DefaultView; dv.RowFilter = filterExpr; bs.DataSource = dv; view = dv;
         }
         bs.ResetBindings(false);
-        Program.Log("ApplyMetricsFilterLive: scheduled layout reapply after applying filter");
+        Program.Log("ApplyMetricsFilterLive: applied filter");
 
         Program.Log($"ApplyMetricsFilterLive: after filter viewCount={view?.Count ?? 0}");
 
@@ -1236,6 +1251,7 @@ namespace WorkOrderBlender
     {
       try
       {
+        Program.Log($"PopulateTableSelector: ENTRY - checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}");
         suppressTableSelectorChanged = true;
         try
         {
@@ -1306,7 +1322,20 @@ namespace WorkOrderBlender
     {
       try
       {
-        if (suppressTableSelectorChanged) return;
+        Program.Log($"cmbTableSelector_SelectedIndexChanged: ENTRY - suppressTableSelectorChanged={suppressTableSelectorChanged}, checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}");
+
+        if (suppressTableSelectorChanged)
+        {
+          Program.Log("cmbTableSelector_SelectedIndexChanged: suppressed, returning");
+          return;
+        }
+
+        // If no work orders are selected, don't trigger a refresh
+        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        {
+          Program.Log("cmbTableSelector_SelectedIndexChanged: no work orders selected; skipping refresh");
+          return;
+        }
 
         Program.Log("cmbTableSelector_SelectedIndexChanged: Starting table refresh");
 
@@ -1458,9 +1487,12 @@ namespace WorkOrderBlender
                 Program.Log($"ApplyVirtualColumnsAndLayout completed in {(virtualEnd - virtualStart).TotalMilliseconds:F0}ms");
                 LogCurrentGridColumns("pre-bind (DataTable only)");
 
-                // Ensure DataBindingComplete handler is attached before binding, so we can re-apply layout post-bind
-                try { metricsGrid.DataBindingComplete -= MetricsGrid_DataBindingComplete; } catch { }
-                metricsGrid.DataBindingComplete += MetricsGrid_DataBindingComplete;
+                // Ensure events and context menus are wired before binding to avoid duplicate handlers
+                WireUpGridEvents();
+                AddGridContextMenu();
+                Program.Log("Metrics grid events/context menu wired before binding");
+
+                // DataBindingComplete handler is already attached by WireUpGridEvents()
                 applyLayoutAfterBinding = true;
 
                 // Bind to DataView to avoid re-generating columns during filtering
@@ -1469,11 +1501,6 @@ namespace WorkOrderBlender
                 Program.Log($"DataSource set in {(dataSourceSet - bindStart).TotalMilliseconds:F0}ms");
 
                 // Do not apply layout here; rely on DataBindingComplete to apply once post-bind
-
-                // Ensure events and context menus are wired after binding
-                WireUpGridEvents();
-                AddGridContextMenu();
-                Program.Log("Metrics grid events/context menu wired after binding");
                 // Apply filter if any text present (log prior to applying)
                 Program.Log($"RefreshMetricsGrid: applying live filter '{currentMetricsFilter}'");
                 ApplyMetricsFilterLive();
@@ -1557,6 +1584,7 @@ namespace WorkOrderBlender
       try
       {
         Program.Log("ClearMetricsGridFast: clearing metrics grid due to no selection");
+        Program.Log($"ClearMetricsGridFast: timer state before clearing - Enabled={metricsRefreshTimer.Enabled}, Interval={metricsRefreshTimer.Interval}");
         currentSourcePaths = new List<string>();
         ClearVirtualColumnCaches(); // Clear caches when clearing source data
         if (metricsGrid == null) return;
@@ -1576,6 +1604,7 @@ namespace WorkOrderBlender
           metricsGrid.Refresh();
           panelMetricsBorder.Refresh();
         }
+        Program.Log("ClearMetricsGridFast: grid cleared successfully");
       }
       catch { }
     }
@@ -2440,9 +2469,14 @@ namespace WorkOrderBlender
     {
       try
       {
+        Program.Log($"ConvertColumnDataType: Converting column '{originalColumn.ColumnName}' from {originalColumn.DataType.Name} to {newType.Name}");
+
         // Create a new column with the correct data type
         var newColumn = new DataColumn(originalColumn.ColumnName + "_temp", newType);
         dataTable.Columns.Add(newColumn);
+
+        var conversionErrors = 0;
+        var totalRows = dataTable.Rows.Count;
 
         // Copy data with proper type conversion
         foreach (DataRow row in dataTable.Rows)
@@ -2452,28 +2486,41 @@ namespace WorkOrderBlender
           {
             try
             {
+              var stringValue = value.ToString();
+
               if (newType == typeof(int))
               {
-                if (int.TryParse(value.ToString(), out var intVal))
+                if (int.TryParse(stringValue, out var intVal))
                   row[newColumn] = intVal;
                 else
+                {
                   row[newColumn] = 0;
+                  conversionErrors++;
+                  Program.Log($"ConvertColumnDataType: Failed to convert '{stringValue}' to int, using 0");
+                }
               }
               else if (newType == typeof(decimal))
               {
-                if (decimal.TryParse(value.ToString(), out var decVal))
+                if (decimal.TryParse(stringValue, out var decVal))
                   row[newColumn] = decVal;
                 else
+                {
                   row[newColumn] = 0m;
+                  conversionErrors++;
+                  Program.Log($"ConvertColumnDataType: Failed to convert '{stringValue}' to decimal, using 0");
+                }
               }
               else
               {
                 row[newColumn] = value;
               }
             }
-            catch
+            catch (Exception conversionEx)
             {
               // If conversion fails, use default value
+              conversionErrors++;
+              Program.Log($"ConvertColumnDataType: Exception converting '{value}' to {newType.Name}: {conversionEx.Message}");
+
               if (newType == typeof(int))
                 row[newColumn] = 0;
               else if (newType == typeof(decimal))
@@ -2492,7 +2539,7 @@ namespace WorkOrderBlender
         dataTable.Columns.Remove(originalColumn);
         newColumn.ColumnName = originalColumn.ColumnName;
 
-        // Successfully converted column to numeric type
+        Program.Log($"ConvertColumnDataType: Successfully converted column '{originalColumn.ColumnName}' to {newType.Name}. {conversionErrors}/{totalRows} conversion errors");
       }
       catch (Exception ex)
       {
@@ -2690,32 +2737,32 @@ namespace WorkOrderBlender
       {
         if (column == null) return;
 
-        // Set appropriate SortMode based on data type
+        // Enable programmatic sorting for ALL columns to support multi-column sorting
+        // This allows Ctrl+click multi-sort to work on all column types
+        column.SortMode = DataGridViewColumnSortMode.Programmatic;
+
         if (dataType == typeof(int) || dataType == typeof(long) || dataType == typeof(short) ||
             dataType == typeof(decimal) || dataType == typeof(double) || dataType == typeof(float))
         {
-          // Numeric columns should use programmatic sorting for proper numeric comparison
-          column.SortMode = DataGridViewColumnSortMode.Programmatic;
+          // Numeric columns use programmatic sorting for proper numeric comparison
           Program.Log($"ConfigureColumnSorting: Set programmatic sorting for numeric column '{column.Name}' ({dataType.Name})");
         }
         else if (dataType == typeof(DateTime))
         {
-          // DateTime columns should use programmatic sorting for proper date comparison
-          column.SortMode = DataGridViewColumnSortMode.Programmatic;
+          // DateTime columns use programmatic sorting for proper date comparison
           Program.Log($"ConfigureColumnSorting: Set programmatic sorting for DateTime column '{column.Name}'");
         }
         else
         {
-          // String and other types use automatic sorting
-          column.SortMode = DataGridViewColumnSortMode.Automatic;
-          Program.Log($"ConfigureColumnSorting: Set automatic sorting for column '{column.Name}' ({dataType.Name})");
+          // String and other types also use programmatic sorting for multi-column support
+          Program.Log($"ConfigureColumnSorting: Set programmatic sorting for string column '{column.Name}' ({dataType.Name})");
         }
       }
       catch (Exception ex)
       {
         Program.Log($"ConfigureColumnSorting error for column '{column.Name}': {ex.Message}");
-        // Fallback to automatic sorting
-        try { column.SortMode = DataGridViewColumnSortMode.Automatic; } catch { }
+        // Fallback to programmatic sorting to maintain multi-column functionality
+        try { column.SortMode = DataGridViewColumnSortMode.Programmatic; } catch { }
       }
     }
 
@@ -3017,6 +3064,9 @@ namespace WorkOrderBlender
             data.Columns.Add(newColumn);
 
             // Copy data with proper type conversion
+            var conversionErrors = 0;
+            var totalRows = data.Rows.Count;
+
             foreach (DataRow row in data.Rows)
             {
               var value = row[def.ColumnName];
@@ -3024,31 +3074,55 @@ namespace WorkOrderBlender
               {
                 try
                 {
+                  var stringValue = value.ToString();
+
                   if (detectedType == typeof(int))
                   {
-                    if (int.TryParse(value.ToString(), out var intVal))
+                    if (int.TryParse(stringValue, out var intVal))
                       row[newColumn] = intVal;
                     else
+                    {
                       row[newColumn] = 0;
+                      conversionErrors++;
+                      Program.Log($"UpdateVirtualColumnDataTypes: Failed to convert '{stringValue}' to int, using 0");
+                    }
                   }
                   else if (detectedType == typeof(decimal))
                   {
-                    if (decimal.TryParse(value.ToString(), out var decVal))
+                    if (decimal.TryParse(stringValue, out var decVal))
                       row[newColumn] = decVal;
                     else
+                    {
                       row[newColumn] = 0m;
+                      conversionErrors++;
+                      Program.Log($"UpdateVirtualColumnDataTypes: Failed to convert '{stringValue}' to decimal, using 0");
+                    }
                   }
                   else
                   {
                     row[newColumn] = value;
                   }
                 }
-                catch
+                catch (Exception conversionEx)
                 {
-                  row[newColumn] = value;
+                  conversionErrors++;
+                  Program.Log($"UpdateVirtualColumnDataTypes: Exception converting '{value}' to {detectedType.Name}: {conversionEx.Message}");
+
+                  if (detectedType == typeof(int))
+                    row[newColumn] = 0;
+                  else if (detectedType == typeof(decimal))
+                    row[newColumn] = 0m;
+                  else
+                    row[newColumn] = value;
                 }
               }
+              else
+              {
+                row[newColumn] = DBNull.Value;
+              }
             }
+
+            Program.Log($"UpdateVirtualColumnDataTypes: Converted virtual column '{def.ColumnName}' to {detectedType.Name}. {conversionErrors}/{totalRows} conversion errors");
 
             // Remove old column and rename new one
             var oldOrdinal = data.Columns[def.ColumnName].Ordinal;
@@ -3095,24 +3169,30 @@ namespace WorkOrderBlender
         if (originalType == typeof(string))
         {
           var sampleSize = Math.Min(20, dataTable.Rows.Count); // Sample first 20 rows
-          var numericCount = 0;
+          var integerCount = 0;
           var decimalCount = 0;
           var dateCount = 0;
+          var hasDecimalValues = false;
 
           for (int i = 0; i < sampleSize; i++)
           {
             var value = dataTable.Rows[i][columnName]?.ToString();
             if (string.IsNullOrWhiteSpace(value)) continue;
 
-            // Check for integer
-            if (int.TryParse(value, out _))
-            {
-              numericCount++;
-            }
-            // Check for decimal
-            else if (decimal.TryParse(value, out _))
+            // Check for decimal first (this will catch values like "2.00", "3.5", etc.)
+            if (decimal.TryParse(value, out var decVal))
             {
               decimalCount++;
+              // Check if this decimal value has fractional part or decimal places
+              if (decVal != Math.Floor(decVal) || value.Contains("."))
+              {
+                hasDecimalValues = true;
+              }
+            }
+            // Check for integer (only if it's not already a decimal)
+            else if (int.TryParse(value, out _))
+            {
+              integerCount++;
             }
             // Check for date
             else if (DateTime.TryParse(value, out _))
@@ -3121,25 +3201,31 @@ namespace WorkOrderBlender
             }
           }
 
+          Program.Log($"DetectColumnDataType for '{columnName}': integerCount={integerCount}, decimalCount={decimalCount}, hasDecimalValues={hasDecimalValues}, dateCount={dateCount}");
+
           // Determine the best type based on content analysis
-          if (numericCount > decimalCount && numericCount > dateCount && numericCount > sampleSize * 0.7)
+          if (hasDecimalValues || (decimalCount > 0 && decimalCount >= integerCount))
+          {
+            // If we have any decimal values or more decimal values than integers, use decimal
+            Program.Log($"DetectColumnDataType: Detected column '{columnName}' as decimal");
+            return typeof(decimal);
+          }
+          else if (integerCount > dateCount && integerCount > sampleSize * 0.7)
           {
             // Detected column as integer based on content analysis
+            Program.Log($"DetectColumnDataType: Detected column '{columnName}' as integer");
             return typeof(int);
-          }
-          else if (decimalCount > dateCount && decimalCount > sampleSize * 0.7)
-          {
-            // Detected column as decimal based on content analysis
-            return typeof(decimal);
           }
           else if (dateCount > sampleSize * 0.7)
           {
             // Detected column as DateTime based on content analysis
+            Program.Log($"DetectColumnDataType: Detected column '{columnName}' as DateTime");
             return typeof(DateTime);
           }
         }
 
         // Default to string
+        Program.Log($"DetectColumnDataType: Defaulting column '{columnName}' to string");
         return typeof(string);
       }
       catch (Exception ex)
@@ -5849,12 +5935,11 @@ namespace WorkOrderBlender
 
         if (btnAutoSequence != null)
         {
-          bool isPartsOrSubassembliesTable = !string.IsNullOrEmpty(currentSelectedTable) &&
-                                           (string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase) ||
-                                            string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase));
+          bool isPartsTable = !string.IsNullOrEmpty(currentSelectedTable) &&
+                                           string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase);
 
           // Show/hide button based on table selection - visible for Parts and Subassemblies tables
-          btnAutoSequence.Visible = isPartsOrSubassembliesTable;
+          btnAutoSequence.Visible = isPartsTable;
         }
       }
       catch (Exception ex)
@@ -5869,8 +5954,16 @@ namespace WorkOrderBlender
       {
       Program.Log("MetricsGrid_DataBindingComplete: fired");
       LogCurrentGridColumns("on-DataBindingComplete entry");
-        if (!applyLayoutAfterBinding) return;
-        if (string.IsNullOrWhiteSpace(currentSelectedTable)) return;
+        if (!applyLayoutAfterBinding)
+        {
+          Program.Log("MetricsGrid_DataBindingComplete: skipping layout reapply (applyLayoutAfterBinding=false)");
+          return;
+        }
+        if (string.IsNullOrWhiteSpace(currentSelectedTable))
+        {
+          Program.Log("MetricsGrid_DataBindingComplete: skipping layout reapply (no selected table)");
+          return;
+        }
         Program.Log($"MetricsGrid_DataBindingComplete: applying persisted layout for '{currentSelectedTable}' after bind");
         var prev = isApplyingLayout; isApplyingLayout = true;
         try
