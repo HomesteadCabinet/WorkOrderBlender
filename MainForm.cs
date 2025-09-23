@@ -63,6 +63,7 @@ namespace WorkOrderBlender
       catch { }
     }
     private bool isEditModeMainGrid = false; // tracks edit mode for metricsGrid
+    private bool isCtrlPressed = false; // tracks Ctrl key state for header coloring
     private System.Windows.Forms.Timer orderPersistTimer;
     private DateTime lastOrderChangeUtc;
     // Virtual columns state
@@ -77,6 +78,16 @@ namespace WorkOrderBlender
     private bool isRefreshingMetrics;
     private bool suppressTableSelectorChanged;
     private bool isScanningWorkOrders;
+
+    // Multi-column sorting state
+    private List<SortColumn> sortColumns = new List<SortColumn>();
+
+    private class SortColumn
+    {
+        public string ColumnName { get; set; }
+        public System.Windows.Forms.SortOrder Direction { get; set; }
+        public int Priority { get; set; } // 0 = primary, 1 = secondary, etc.
+    }
 
     // Cache key for virtual column lookup caches to avoid unnecessary rebuilds
     private string virtualCacheKey = null;
@@ -181,6 +192,19 @@ namespace WorkOrderBlender
           Program.Log("Error during initial scan", ex);
           MessageBox.Show("Error during initial scan: " + ex.Message);
         }
+      };
+
+      // Handle form focus changes to reset Ctrl state
+      this.LostFocus += (s, e) =>
+      {
+        try
+        {
+          if (isCtrlPressed)
+          {
+            UpdateHeaderColorsForCtrlState(false);
+          }
+        }
+        catch { }
       };
 
       // Restore window size and position from config
@@ -1608,6 +1632,8 @@ namespace WorkOrderBlender
         catch { }
         metricsGrid.KeyDown -= MetricsGrid_KeyDown;
         metricsGrid.KeyDown += MetricsGrid_KeyDown;
+        metricsGrid.KeyUp -= MetricsGrid_KeyUp;
+        metricsGrid.KeyUp += MetricsGrid_KeyUp;
         // Virtual column action handling
         metricsGrid.CellClick -= Grid_CellClick;
         metricsGrid.CellClick += Grid_CellClick;
@@ -1835,42 +1861,39 @@ namespace WorkOrderBlender
           Program.Log($"ApplyUserConfig: table={tableName}, cols={metricsGrid.Columns.Count}");
           var t0 = DateTime.Now;
 
-        // Apply column widths
-        foreach (DataGridViewColumn col in metricsGrid.Columns)
-        {
-          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
-          var w = cfg.TryGetColumnWidth(tableName, key);
-          if (w.HasValue && w.Value > 0)
+          // Apply column widths
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
           {
-            Program.Log($"ApplyUserConfig: set width column={key} width={w.Value}");
-            col.Width = w.Value;
-          }
-          col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-        }
-
-        var t1 = DateTime.Now; Program.Log($"ApplyUserConfig: widths applied in {(t1 - t0).TotalMilliseconds:F0}ms");
-
-        // Apply visibility
-        foreach (DataGridViewColumn col in metricsGrid.Columns)
-        {
-          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
-          var visibility = cfg.TryGetColumnVisibility(tableName, key);
-          if (visibility.HasValue)
-          {
-            Program.Log($"ApplyUserConfig: set visibility column={key} visible={visibility.Value}");
-            col.Visible = visibility.Value;
-          }
-          else
-          {
-            // Default new virtual columns to visible
-            if (virtualColumnNames.Contains(col.Name))
+            var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+            var w = cfg.TryGetColumnWidth(tableName, key);
+            if (w.HasValue && w.Value > 0)
             {
-              col.Visible = true;
+              // Set column width
+              col.Width = w.Value;
+            }
+            col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+          }
+
+
+          // Apply visibility
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
+          {
+            var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+            var visibility = cfg.TryGetColumnVisibility(tableName, key);
+            if (visibility.HasValue)
+            {
+              // Set column visibility
+              col.Visible = visibility.Value;
+            }
+            else
+            {
+              // Default new virtual columns to visible
+              if (virtualColumnNames.Contains(col.Name))
+              {
+                col.Visible = true;
+              }
             }
           }
-        }
-
-          var t2 = DateTime.Now; Program.Log($"ApplyUserConfig: visibility applied in {(t2 - t1).TotalMilliseconds:F0}ms");
 
           // Apply header overrides and tooltips
           metricsGrid.ShowCellToolTips = true; // enable tooltips generally
@@ -1880,7 +1903,9 @@ namespace WorkOrderBlender
             var headerText = cfg.TryGetColumnHeaderText(tableName, key);
             if (!string.IsNullOrWhiteSpace(headerText))
             {
-              col.HeaderText = headerText;
+              // Clean any priority numbers from the header text before applying
+              var cleanHeaderText = System.Text.RegularExpressions.Regex.Replace(headerText, @"^\d+\.\s*", "");
+              col.HeaderText = cleanHeaderText;
             }
             var headerTip = cfg.TryGetColumnHeaderToolTip(tableName, key);
             if (!string.IsNullOrWhiteSpace(headerTip))
@@ -1889,8 +1914,6 @@ namespace WorkOrderBlender
               col.HeaderCell.ToolTipText = headerTip;
             }
           }
-
-          var t3 = DateTime.Now; Program.Log($"ApplyUserConfig: headers/tooltips applied in {(t3 - t2).TotalMilliseconds:F0}ms");
 
           // Apply column colors
           foreach (DataGridViewColumn col in metricsGrid.Columns)
@@ -1913,103 +1936,97 @@ namespace WorkOrderBlender
             ApplyHeaderStyles(col);
           }
 
-        var t4 = DateTime.Now; Program.Log($"ApplyUserConfig: colors applied in {(t4 - t3).TotalMilliseconds:F0}ms");
-
-        // Style virtual columns with defaults (only if no custom colors are set)
-        foreach (var def in virtualColumnDefs)
-        {
-          if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
-          if (!metricsGrid.Columns.Contains(def.ColumnName)) continue;
-          var vc = metricsGrid.Columns[def.ColumnName];
-          vc.ReadOnly = true;
-
-          // Apply default styling only if no custom colors are set
-          var key = !string.IsNullOrEmpty(vc.DataPropertyName) ? vc.DataPropertyName : vc.Name;
-          var hasCustomBackColor = cfg.TryGetColumnBackColor(tableName, key).HasValue;
-          var hasCustomForeColor = cfg.TryGetColumnForeColor(tableName, key).HasValue;
-
-          if (!hasCustomBackColor)
+          // Style virtual columns with defaults (only if no custom colors are set)
+          foreach (var def in virtualColumnDefs)
           {
-            if (def.IsLookupColumn)
+            if (string.IsNullOrWhiteSpace(def.ColumnName)) continue;
+            if (!metricsGrid.Columns.Contains(def.ColumnName)) continue;
+            var vc = metricsGrid.Columns[def.ColumnName];
+            vc.ReadOnly = true;
+
+            // Apply default styling only if no custom colors are set
+            var key = !string.IsNullOrEmpty(vc.DataPropertyName) ? vc.DataPropertyName : vc.Name;
+            var hasCustomBackColor = cfg.TryGetColumnBackColor(tableName, key).HasValue;
+            var hasCustomForeColor = cfg.TryGetColumnForeColor(tableName, key).HasValue;
+
+            if (!hasCustomBackColor)
             {
-              vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(255, 255, 224); // light yellow
-              vc.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(255, 255, 224);
+              if (def.IsLookupColumn)
+              {
+                vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(255, 255, 224); // light yellow
+                vc.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(255, 255, 224);
+              }
+              else if (def.IsActionColumn)
+              {
+                vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(230, 240, 255); // light blue
+                vc.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(230, 240, 255);
+              }
+              else
+              {
+                vc.DefaultCellStyle.BackColor = System.Drawing.Color.Beige;
+                vc.HeaderCell.Style.BackColor = System.Drawing.Color.Beige;
+              }
             }
-            else if (def.IsActionColumn)
+
+            if (!hasCustomForeColor)
             {
-              vc.DefaultCellStyle.BackColor = System.Drawing.Color.FromArgb(230, 240, 255); // light blue
-              vc.HeaderCell.Style.BackColor = System.Drawing.Color.FromArgb(230, 240, 255);
+              if (def.IsActionColumn)
+              {
+                vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkBlue;
+                vc.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkBlue;
+                vc.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+              }
+              else
+              {
+                vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkSlateGray;
+                vc.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkSlateGray;
+              }
+            }
+          }
+
+          // Configure column sorting based on data type
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
+          {
+            var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+            if (!string.IsNullOrWhiteSpace(key) && data != null && data.Columns.Contains(key))
+            {
+              var dataType = data.Columns[key].DataType;
+              ConfigureColumnSorting(col, dataType);
+            }
+          }
+
+          // Apply order (build a sensible default when none is saved)
+          var order = cfg.TryGetColumnOrder(tableName);
+          if (order == null || order.Count == 0)
+          {
+            var existing = metricsGrid.Columns.Cast<DataGridViewColumn>()
+              .OrderBy(c => c.DisplayIndex)
+              .Select(c => !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name)
+              .ToList();
+
+            // Place virtual columns after LinkID if present, else at the front
+            var nonVirtual = existing.Where(name => !virtualColumnNames.Contains(name)).ToList();
+            var linkId = nonVirtual.FirstOrDefault(name =>
+              name.Equals("LinkID", StringComparison.OrdinalIgnoreCase) ||
+              name.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase));
+
+            var built = new List<string>();
+            if (!string.IsNullOrEmpty(linkId))
+            {
+              var idxLink = nonVirtual.IndexOf(linkId);
+              built.AddRange(nonVirtual.Take(idxLink + 1));
+              built.AddRange(virtualColumnNames);
+              built.AddRange(nonVirtual.Skip(idxLink + 1));
             }
             else
             {
-              vc.DefaultCellStyle.BackColor = System.Drawing.Color.Beige;
-              vc.HeaderCell.Style.BackColor = System.Drawing.Color.Beige;
+              built.AddRange(virtualColumnNames);
+              built.AddRange(nonVirtual);
             }
+            order = built;
+            // Do not persist auto-built default order; apply transiently only
+            Program.Log($"ApplyUserConfig: built transient default order with virtuals after LinkID: [{string.Join(", ", order)}]");
           }
-
-          if (!hasCustomForeColor)
-          {
-            if (def.IsActionColumn)
-            {
-              vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkBlue;
-              vc.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkBlue;
-              vc.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
-            }
-            else
-            {
-              vc.DefaultCellStyle.ForeColor = System.Drawing.Color.DarkSlateGray;
-              vc.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkSlateGray;
-            }
-          }
-        }
-
-        var t5 = DateTime.Now; Program.Log($"ApplyUserConfig: virtual column styling applied in {(t5 - t4).TotalMilliseconds:F0}ms");
-
-        // Configure column sorting based on data type
-        foreach (DataGridViewColumn col in metricsGrid.Columns)
-        {
-          var key = !string.IsNullOrEmpty(col.DataPropertyName) ? col.DataPropertyName : col.Name;
-          if (!string.IsNullOrWhiteSpace(key) && data != null && data.Columns.Contains(key))
-          {
-            var dataType = data.Columns[key].DataType;
-            ConfigureColumnSorting(col, dataType);
-          }
-        }
-
-        var t6 = DateTime.Now; Program.Log($"ApplyUserConfig: column sorting configured in {(t6 - t5).TotalMilliseconds:F0}ms");
-
-        // Apply order (build a sensible default when none is saved)
-        var order = cfg.TryGetColumnOrder(tableName);
-        if (order == null || order.Count == 0)
-        {
-          var existing = metricsGrid.Columns.Cast<DataGridViewColumn>()
-            .OrderBy(c => c.DisplayIndex)
-            .Select(c => !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name)
-            .ToList();
-
-          // Place virtual columns after LinkID if present, else at the front
-          var nonVirtual = existing.Where(name => !virtualColumnNames.Contains(name)).ToList();
-          var linkId = nonVirtual.FirstOrDefault(name =>
-            name.Equals("LinkID", StringComparison.OrdinalIgnoreCase) ||
-            name.StartsWith("LinkID", StringComparison.OrdinalIgnoreCase));
-
-          var built = new List<string>();
-          if (!string.IsNullOrEmpty(linkId))
-          {
-            var idxLink = nonVirtual.IndexOf(linkId);
-            built.AddRange(nonVirtual.Take(idxLink + 1));
-            built.AddRange(virtualColumnNames);
-            built.AddRange(nonVirtual.Skip(idxLink + 1));
-          }
-          else
-          {
-            built.AddRange(virtualColumnNames);
-            built.AddRange(nonVirtual);
-          }
-          order = built;
-          // Do not persist auto-built default order; apply transiently only
-          Program.Log($"ApplyUserConfig: built transient default order with virtuals after LinkID: [{string.Join(", ", order)}]");
-        }
 
           if (order != null && order.Count > 0)
           {
@@ -2059,10 +2076,7 @@ namespace WorkOrderBlender
             }
 
             LogCurrentGridColumns("after-apply-order");
-
-            // Avoid extra layout churn here; rely on DataBindingComplete re-apply
           }
-          var t7a = DateTime.Now; Program.Log($"ApplyUserConfig: column order applied in {(t7a - t6).TotalMilliseconds:F0}ms");
         }
         finally
         {
@@ -2090,27 +2104,18 @@ namespace WorkOrderBlender
           col.HeaderText = "Work Order";
         }
 
-        var t7 = DateTime.Now; Program.Log($"ApplyUserConfig: _SourceFile styling in {(t7 - t6b).TotalMilliseconds:F0}ms");
-
         // Enable user reordering and resizing
         metricsGrid.AllowUserToOrderColumns = true;
         metricsGrid.AllowUserToResizeColumns = true;
 
-        var t8 = DateTime.Now; Program.Log($"ApplyUserConfig: ordering/resizing toggles set in {(t8 - t7).TotalMilliseconds:F0}ms");
-
         // Enable custom header styling (disable visual styles for headers)
         metricsGrid.EnableHeadersVisualStyles = false;
-
-        var t9 = DateTime.Now; Program.Log($"ApplyUserConfig: header visual styles applied in {(t9 - t8).TotalMilliseconds:F0}ms");
 
         // Initialize edit mode visuals/state
         ApplyMainGridEditState();
 
-        var t10 = DateTime.Now; Program.Log($"ApplyUserConfig: edit state applied in {(t10 - t9).TotalMilliseconds:F0}ms");
-
         // Ensure all column headers have proper styling
         RefreshAllColumnHeaderStyles();
-        var t11 = DateTime.Now; Program.Log($"ApplyUserConfig: header styles refreshed in {(t11 - t10).TotalMilliseconds:F0}ms");
 
         // Update fronts filter button state
         UpdateFilterButtonStates();
@@ -2382,6 +2387,9 @@ namespace WorkOrderBlender
 
         dataTable.AcceptChanges();
 
+        // Convert string columns to numeric types if they contain numeric data
+        ConvertNumericStringColumns(dataTable);
+
         // Log summary of data loading
         Program.Log($"BuildDataTableFromSources completed for table '{tableName}': {totalRowsLoaded} total rows loaded from {sourcePaths.Count} source(s)");
       }
@@ -2390,6 +2398,106 @@ namespace WorkOrderBlender
         foreach (var tf in tempFiles.Distinct()) { try { File.Delete(tf); } catch { } }
       }
       return dataTable;
+    }
+
+    // Convert string columns to numeric types if they contain numeric data
+    private void ConvertNumericStringColumns(DataTable dataTable)
+    {
+      try
+      {
+        if (dataTable == null || dataTable.Rows.Count == 0) return;
+
+        var columnsToConvert = new List<DataColumn>();
+
+        // Analyze each string column to see if it should be converted to numeric
+        foreach (DataColumn column in dataTable.Columns)
+        {
+          if (column.DataType != typeof(string)) continue;
+
+          var detectedType = DetectColumnDataType(column.ColumnName, dataTable);
+          if (detectedType == typeof(int) || detectedType == typeof(decimal))
+          {
+            columnsToConvert.Add(column);
+            // Will convert column from string to numeric type
+          }
+        }
+
+        // Convert the identified columns
+        foreach (var column in columnsToConvert)
+        {
+          var detectedType = DetectColumnDataType(column.ColumnName, dataTable);
+          ConvertColumnDataType(dataTable, column, detectedType);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"ConvertNumericStringColumns error: {ex.Message}", ex);
+      }
+    }
+
+    // Convert a single column's data type
+    private void ConvertColumnDataType(DataTable dataTable, DataColumn originalColumn, Type newType)
+    {
+      try
+      {
+        // Create a new column with the correct data type
+        var newColumn = new DataColumn(originalColumn.ColumnName + "_temp", newType);
+        dataTable.Columns.Add(newColumn);
+
+        // Copy data with proper type conversion
+        foreach (DataRow row in dataTable.Rows)
+        {
+          var value = row[originalColumn];
+          if (value != null && value != DBNull.Value)
+          {
+            try
+            {
+              if (newType == typeof(int))
+              {
+                if (int.TryParse(value.ToString(), out var intVal))
+                  row[newColumn] = intVal;
+                else
+                  row[newColumn] = 0;
+              }
+              else if (newType == typeof(decimal))
+              {
+                if (decimal.TryParse(value.ToString(), out var decVal))
+                  row[newColumn] = decVal;
+                else
+                  row[newColumn] = 0m;
+              }
+              else
+              {
+                row[newColumn] = value;
+              }
+            }
+            catch
+            {
+              // If conversion fails, use default value
+              if (newType == typeof(int))
+                row[newColumn] = 0;
+              else if (newType == typeof(decimal))
+                row[newColumn] = 0m;
+              else
+                row[newColumn] = value;
+            }
+          }
+          else
+          {
+            row[newColumn] = DBNull.Value;
+          }
+        }
+
+        // Remove the original column and rename the new one
+        dataTable.Columns.Remove(originalColumn);
+        newColumn.ColumnName = originalColumn.ColumnName;
+
+        // Successfully converted column to numeric type
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"ConvertColumnDataType error for column '{originalColumn.ColumnName}': {ex.Message}", ex);
+      }
     }
 
     // Apply virtual columns (built-in) and persisted layout; placeholder for future lookup/action support
@@ -2412,7 +2520,6 @@ namespace WorkOrderBlender
     {
               try
         {
-          var t0 = DateTime.Now;
           var cfg = UserConfig.LoadOrDefault();
           virtualColumnDefs = cfg.GetVirtualColumnsForTable(tableName) ?? new List<UserConfig.VirtualColumnDef>();
           virtualColumnNames.Clear();
@@ -2421,8 +2528,6 @@ namespace WorkOrderBlender
           {
             if (!string.IsNullOrWhiteSpace(def.ColumnName)) virtualColumnNames.Add(def.ColumnName);
           }
-          var t1 = DateTime.Now;
-          Program.Log($"LoadVirtualColumnDefinitions: completed in {(t1 - t0).TotalMilliseconds:F0}ms");
         }
       catch (Exception ex)
       {
@@ -2498,8 +2603,7 @@ namespace WorkOrderBlender
 
           // Update cache key after successful build
           virtualCacheKey = newCacheKey;
-          var t1 = DateTime.Now;
-          Program.Log($"BuildVirtualLookupCaches: completed in {(t1 - t0).TotalMilliseconds:F0}ms for {virtualLookupCacheByColumn.Count} columns");
+          Program.Log($"BuildVirtualLookupCaches: completed for {virtualLookupCacheByColumn.Count} columns");
         }
       catch (Exception ex)
       {
@@ -2539,6 +2643,11 @@ namespace WorkOrderBlender
               }
             }
           }
+
+          // If schema lookup fails, use content-based detection on the virtual column data
+          // This will analyze the actual values in the virtual column after it's populated
+          Program.Log($"DetermineVirtualColumnDataType: Schema lookup failed for virtual column '{def.ColumnName}', will use content-based detection");
+          return typeof(string); // Will be overridden by content-based detection in DetectColumnDataType
         }
 
         // Default to string for unknown or unanalyzable columns
@@ -2632,46 +2741,411 @@ namespace WorkOrderBlender
         if (!dataTable.Columns.Contains(columnName)) return;
 
         var dataType = dataTable.Columns[columnName].DataType;
-        Program.Log($"Custom sorting column '{columnName}' with data type {dataType.Name}");
+        var detectedType = DetectColumnDataType(columnName, dataTable);
+        Program.Log($"Multi-column sorting column '{columnName}' with data type {dataType.Name}, detected as {detectedType.Name}");
 
-        // Determine sort direction
-        var currentSort = dataView.Sort;
-        var isAscending = !currentSort.StartsWith($"[{columnName}] ASC", StringComparison.OrdinalIgnoreCase);
-        var sortDirection = isAscending ? "ASC" : "DESC";
-
-        // Create sort expression based on data type
-        string sortExpression;
-        if (dataType == typeof(int) || dataType == typeof(long) || dataType == typeof(short))
-        {
-          // For integer types, convert to int for proper numeric sorting
-          sortExpression = $"CAST([{columnName}] AS int) {sortDirection}";
-        }
-        else if (dataType == typeof(decimal) || dataType == typeof(double) || dataType == typeof(float))
-        {
-          // For decimal types, convert to decimal for proper numeric sorting
-          sortExpression = $"CAST([{columnName}] AS decimal) {sortDirection}";
-        }
-        else if (dataType == typeof(DateTime))
-        {
-          // For DateTime, use direct sorting
-          sortExpression = $"[{columnName}] {sortDirection}";
-        }
-        else
-        {
-          // For string and other types, use direct sorting
-          sortExpression = $"[{columnName}] {sortDirection}";
-        }
-
-        // Apply the sort
-        dataView.Sort = sortExpression;
-        Program.Log($"Applied custom sort: {sortExpression}");
-
-        // Update column header to show sort direction
-        column.HeaderCell.SortGlyphDirection = isAscending ? System.Windows.Forms.SortOrder.Ascending : System.Windows.Forms.SortOrder.Descending;
+        // Handle multi-column sorting
+        HandleMultiColumnSort(columnName, detectedType, column, dataView);
       }
       catch (Exception ex)
       {
-        Program.Log($"Custom sorting error for column {e.ColumnIndex}: {ex.Message}");
+        Program.Log($"Multi-column sorting error for column {e.ColumnIndex}: {ex.Message}");
+      }
+    }
+
+    private void HandleMultiColumnSort(string columnName, Type dataType, DataGridViewColumn column, DataView dataView)
+    {
+      // Check if Ctrl key is pressed for multi-column sorting
+      bool isMultiColumn = Control.ModifierKeys.HasFlag(Keys.Control);
+
+      if (isMultiColumn)
+      {
+        // Multi-column sorting: add/update this column in the sort list
+        var existingSort = sortColumns.FirstOrDefault(s => s.ColumnName == columnName);
+        if (existingSort != null)
+        {
+          // Column already exists, cycle through: ASC -> DESC -> Remove
+          if (existingSort.Direction == System.Windows.Forms.SortOrder.Ascending)
+          {
+            existingSort.Direction = System.Windows.Forms.SortOrder.Descending;
+          }
+          else
+          {
+            // Remove from sort list
+            sortColumns.Remove(existingSort);
+            // Renumber priorities
+            for (int i = 0; i < sortColumns.Count; i++)
+            {
+              sortColumns[i].Priority = i;
+            }
+          }
+        }
+        else
+        {
+          // Add new column to sort list
+        sortColumns.Add(new SortColumn
+        {
+          ColumnName = columnName,
+          Direction = System.Windows.Forms.SortOrder.Ascending,
+          Priority = sortColumns.Count
+        });
+        }
+      }
+      else
+      {
+        // Single column sorting: clear existing sorts and set this as primary
+        // Check if this column is already the primary sort to toggle direction
+        var existingPrimary = sortColumns.FirstOrDefault(s => s.Priority == 0 && s.ColumnName == columnName);
+
+        sortColumns.Clear();
+
+        if (existingPrimary != null)
+        {
+          // Column is already primary, toggle direction
+          sortColumns.Add(new SortColumn
+          {
+            ColumnName = columnName,
+            Direction = existingPrimary.Direction == System.Windows.Forms.SortOrder.Ascending
+              ? System.Windows.Forms.SortOrder.Descending
+              : System.Windows.Forms.SortOrder.Ascending,
+            Priority = 0
+          });
+        }
+        else
+        {
+          // New column, start with ascending
+          sortColumns.Add(new SortColumn
+          {
+            ColumnName = columnName,
+            Direction = System.Windows.Forms.SortOrder.Ascending,
+            Priority = 0
+          });
+        }
+      }
+
+      // Apply the multi-column sort
+      ApplyMultiColumnSort(dataView, dataType);
+
+      // Update column header visual indicators
+      UpdateColumnSortIndicators();
+
+      // Update Clear Sort button visibility
+      UpdateClearSortButtonVisibility();
+    }
+
+    private void ApplyMultiColumnSort(DataView dataView, Type dataType)
+    {
+      if (sortColumns.Count == 0)
+      {
+        dataView.Sort = "";
+        return;
+      }
+
+      var sortExpressions = new List<string>();
+      var dataTable = dataView.Table;
+
+      foreach (var sortColumn in sortColumns.OrderBy(s => s.Priority))
+      {
+        var sortDirection = sortColumn.Direction == System.Windows.Forms.SortOrder.Ascending ? "ASC" : "DESC";
+        string sortExpression;
+
+        // Detect the data type for this specific column based on content
+        var columnDataType = DetectColumnDataType(sortColumn.ColumnName, dataTable);
+
+        // Create sort expression based on the detected data type
+        // SQL CE doesn't support CAST, so we use direct column sorting
+        // For numeric types, we rely on the data being properly typed in the DataTable
+        if (columnDataType == typeof(int) || columnDataType == typeof(long) || columnDataType == typeof(short) ||
+            columnDataType == typeof(decimal) || columnDataType == typeof(double) || columnDataType == typeof(float))
+        {
+          // For numeric types, use direct column sorting - SQL CE will handle numeric sorting correctly
+          sortExpression = $"[{sortColumn.ColumnName}] {sortDirection}";
+        }
+        else if (columnDataType == typeof(DateTime))
+        {
+          sortExpression = $"[{sortColumn.ColumnName}] {sortDirection}";
+        }
+        else
+        {
+          sortExpression = $"[{sortColumn.ColumnName}] {sortDirection}";
+        }
+
+        sortExpressions.Add(sortExpression);
+      }
+
+      var finalSortExpression = string.Join(", ", sortExpressions);
+      dataView.Sort = finalSortExpression;
+
+      Program.Log($"Applied multi-column sort: {finalSortExpression}");
+    }
+
+    private void UpdateColumnSortIndicators()
+    {
+      // Clear all sort indicators and priority numbers first
+      foreach (DataGridViewColumn col in metricsGrid.Columns)
+      {
+        col.HeaderCell.SortGlyphDirection = System.Windows.Forms.SortOrder.None;
+
+        // Always remove priority numbers from all column headers first
+        var headerText = col.HeaderText;
+        if (!string.IsNullOrWhiteSpace(headerText))
+        {
+          // Remove pattern like "1. ", "2. ", "3. " etc. from the beginning of header text
+          var cleanHeaderText = System.Text.RegularExpressions.Regex.Replace(headerText, @"^\d+\.\s*", "");
+          col.HeaderText = cleanHeaderText;
+        }
+      }
+
+      // Set indicators for active sort columns
+      foreach (var sortColumn in sortColumns)
+      {
+        var column = metricsGrid.Columns.Cast<DataGridViewColumn>()
+          .FirstOrDefault(c => (c.DataPropertyName ?? c.Name) == sortColumn.ColumnName);
+
+        if (column != null)
+        {
+          column.HeaderCell.SortGlyphDirection = sortColumn.Direction;
+
+          // Add priority indicator for multi-column sorts only
+          if (sortColumns.Count > 1)
+          {
+            var priority = sortColumn.Priority + 1;
+            // Header text is already clean from the loop above, so just add priority
+            column.HeaderText = $"{priority}. {column.HeaderText}";
+          }
+        }
+      }
+    }
+
+    private void ClearAllSorts()
+    {
+      try
+      {
+        sortColumns.Clear();
+
+        // Clear the data view sort
+        if (metricsGrid.DataSource is BindingSource bindingSource &&
+            bindingSource.DataSource is DataView dataView)
+        {
+          dataView.Sort = "";
+        }
+
+        // Clear all column indicators
+        UpdateColumnSortIndicators();
+
+        // Force refresh of column headers to ensure priority numbers are removed
+        RefreshColumnHeadersAfterClearSort();
+
+        // Update Clear Sort button visibility
+        UpdateClearSortButtonVisibility();
+
+        Program.Log("Cleared all column sorts");
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error clearing sorts: {ex.Message}", ex);
+      }
+    }
+
+    private void RefreshColumnHeadersAfterClearSort()
+    {
+      try
+      {
+        // Force refresh of column headers to remove priority numbers
+        foreach (DataGridViewColumn col in metricsGrid.Columns)
+        {
+          var headerText = col.HeaderText;
+          if (!string.IsNullOrWhiteSpace(headerText))
+          {
+            // Remove pattern like "1. ", "2. ", "3. " etc. from the beginning of header text
+            var cleanHeaderText = System.Text.RegularExpressions.Regex.Replace(headerText, @"^\d+\.\s*", "");
+            col.HeaderText = cleanHeaderText;
+          }
+        }
+
+        // Force grid refresh to show the changes
+        metricsGrid.Invalidate(new System.Drawing.Rectangle(0, 0, metricsGrid.Width, metricsGrid.ColumnHeadersHeight));
+
+        // Refreshed column headers after clearing sort
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"RefreshColumnHeadersAfterClearSort error: {ex.Message}", ex);
+      }
+    }
+
+    private void UpdateClearSortButtonVisibility()
+    {
+      try
+      {
+        if (btnClearSort != null)
+        {
+          // Show Clear Sort button only when multi-sort is enabled (more than 1 column)
+          btnClearSort.Visible = sortColumns.Count > 1;
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error updating Clear Sort button visibility: {ex.Message}", ex);
+      }
+    }
+
+    private void UpdateVirtualColumnDataTypes(DataTable data)
+    {
+      try
+      {
+        if (data == null || virtualColumnDefs == null) return;
+
+        foreach (var def in virtualColumnDefs)
+        {
+          if (string.IsNullOrWhiteSpace(def.ColumnName) || !data.Columns.Contains(def.ColumnName)) continue;
+
+          // Skip action columns
+          if (def.IsActionColumn) continue;
+
+          // Detect the appropriate data type based on content
+          var detectedType = DetectColumnDataType(def.ColumnName, data);
+          var currentType = data.Columns[def.ColumnName].DataType;
+
+          // If the detected type is different from current type, update it
+          if (detectedType != currentType)
+          {
+            Program.Log($"UpdateVirtualColumnDataTypes: Updating virtual column '{def.ColumnName}' from {currentType.Name} to {detectedType.Name}");
+
+            // Create a new column with the correct data type
+            var newColumn = new DataColumn(def.ColumnName + "_temp", detectedType);
+            data.Columns.Add(newColumn);
+
+            // Copy data with proper type conversion
+            foreach (DataRow row in data.Rows)
+            {
+              var value = row[def.ColumnName];
+              if (value != null && value != DBNull.Value)
+              {
+                try
+                {
+                  if (detectedType == typeof(int))
+                  {
+                    if (int.TryParse(value.ToString(), out var intVal))
+                      row[newColumn] = intVal;
+                    else
+                      row[newColumn] = 0;
+                  }
+                  else if (detectedType == typeof(decimal))
+                  {
+                    if (decimal.TryParse(value.ToString(), out var decVal))
+                      row[newColumn] = decVal;
+                    else
+                      row[newColumn] = 0m;
+                  }
+                  else
+                  {
+                    row[newColumn] = value;
+                  }
+                }
+                catch
+                {
+                  row[newColumn] = value;
+                }
+              }
+            }
+
+            // Remove old column and rename new one
+            var oldOrdinal = data.Columns[def.ColumnName].Ordinal;
+            data.Columns.Remove(def.ColumnName);
+            newColumn.ColumnName = def.ColumnName;
+            newColumn.SetOrdinal(oldOrdinal);
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error updating virtual column data types: {ex.Message}", ex);
+      }
+    }
+
+    private void btnClearSort_Click(object sender, EventArgs e)
+    {
+      ClearAllSorts();
+    }
+
+    private Type DetectColumnDataType(string columnName, DataTable dataTable)
+    {
+      try
+      {
+        if (!dataTable.Columns.Contains(columnName)) return typeof(string);
+
+        var column = dataTable.Columns[columnName];
+        var originalType = column.DataType;
+
+        // If it's already a numeric type, use it
+        if (originalType == typeof(int) || originalType == typeof(long) || originalType == typeof(short) ||
+            originalType == typeof(decimal) || originalType == typeof(double) || originalType == typeof(float))
+        {
+          return originalType;
+        }
+
+        // If it's already DateTime, use it
+        if (originalType == typeof(DateTime))
+        {
+          return originalType;
+        }
+
+        // For string columns, analyze the content to detect numeric data
+        if (originalType == typeof(string))
+        {
+          var sampleSize = Math.Min(20, dataTable.Rows.Count); // Sample first 20 rows
+          var numericCount = 0;
+          var decimalCount = 0;
+          var dateCount = 0;
+
+          for (int i = 0; i < sampleSize; i++)
+          {
+            var value = dataTable.Rows[i][columnName]?.ToString();
+            if (string.IsNullOrWhiteSpace(value)) continue;
+
+            // Check for integer
+            if (int.TryParse(value, out _))
+            {
+              numericCount++;
+            }
+            // Check for decimal
+            else if (decimal.TryParse(value, out _))
+            {
+              decimalCount++;
+            }
+            // Check for date
+            else if (DateTime.TryParse(value, out _))
+            {
+              dateCount++;
+            }
+          }
+
+          // Determine the best type based on content analysis
+          if (numericCount > decimalCount && numericCount > dateCount && numericCount > sampleSize * 0.7)
+          {
+            // Detected column as integer based on content analysis
+            return typeof(int);
+          }
+          else if (decimalCount > dateCount && decimalCount > sampleSize * 0.7)
+          {
+            // Detected column as decimal based on content analysis
+            return typeof(decimal);
+          }
+          else if (dateCount > sampleSize * 0.7)
+          {
+            // Detected column as DateTime based on content analysis
+            return typeof(DateTime);
+          }
+        }
+
+        // Default to string
+        return typeof(string);
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error detecting data type for column '{columnName}': {ex.Message}");
+        return typeof(string);
       }
     }
 
@@ -2715,6 +3189,9 @@ namespace WorkOrderBlender
             foreach (DataRow row in data.Rows) row[def.ColumnName] = def.ButtonText ?? "Action";
           }
         }
+
+        // Update data types for virtual columns after they're populated with data
+        UpdateVirtualColumnDataTypes(data);
 
         // Notify grid of new columns without full rebind to avoid heavy rebuild cost
         if (metricsGrid != null && newlyAdded.Count > 0)
@@ -3225,6 +3702,12 @@ namespace WorkOrderBlender
     {
       try
       {
+        // Handle Ctrl key state changes for header coloring
+        if (e.KeyCode == Keys.ControlKey)
+        {
+          UpdateHeaderColorsForCtrlState(true);
+        }
+
         if (e.Control)
         {
           if (e.KeyCode == Keys.C)
@@ -3245,6 +3728,74 @@ namespace WorkOrderBlender
         }
       }
       catch { }
+    }
+
+    private void MetricsGrid_KeyUp(object sender, KeyEventArgs e)
+    {
+      try
+      {
+        // Handle Ctrl key state changes for header coloring
+        if (e.KeyCode == Keys.ControlKey)
+        {
+          UpdateHeaderColorsForCtrlState(false);
+        }
+      }
+      catch { }
+    }
+
+    private void UpdateHeaderColorsForCtrlState(bool isCtrlPressed)
+    {
+      try
+      {
+        if (metricsGrid == null) return;
+
+        // Check if state has actually changed to avoid unnecessary updates
+        if (this.isCtrlPressed == isCtrlPressed) return;
+
+        // Update the Ctrl state tracking
+        this.isCtrlPressed = isCtrlPressed;
+
+        // Suspend layout to prevent multiple redraws
+        metricsGrid.SuspendLayout();
+
+        try
+        {
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
+          {
+            if (col.HeaderCell.Style == null)
+            {
+              col.HeaderCell.Style = new DataGridViewCellStyle();
+            }
+
+            if (isCtrlPressed)
+            {
+              // Ctrl is pressed - highlight headers to indicate multi-sort mode
+              col.HeaderCell.Style.BackColor = System.Drawing.Color.LightBlue;
+              col.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkBlue;
+            }
+            else
+            {
+              // Ctrl is released - restore normal header colors
+              col.HeaderCell.Style.BackColor = System.Drawing.Color.White;
+              col.HeaderCell.Style.ForeColor = System.Drawing.Color.Black;
+            }
+          }
+
+          // Only invalidate the header area, not the entire grid
+          metricsGrid.Invalidate(new System.Drawing.Rectangle(0, 0, metricsGrid.Width, metricsGrid.ColumnHeadersHeight));
+        }
+        finally
+        {
+          // Resume layout
+          metricsGrid.ResumeLayout(false);
+        }
+
+        // Updated header colors for Ctrl state
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"UpdateHeaderColorsForCtrlState error: {ex.Message}", ex);
+      }
     }
 
     private void MetricsGrid_CurrentCellDirtyStateChanged_Edit(object sender, EventArgs e)
@@ -5206,9 +5757,19 @@ namespace WorkOrderBlender
         }
         else
         {
-          // Apply normal header styling
-          col.HeaderCell.Style.BackColor = col.DefaultCellStyle.BackColor;
-          col.HeaderCell.Style.ForeColor = col.DefaultCellStyle.ForeColor;
+          // Apply normal header styling or Ctrl state styling
+          if (isCtrlPressed)
+          {
+            // Ctrl is pressed - highlight headers to indicate multi-sort mode
+            col.HeaderCell.Style.BackColor = System.Drawing.Color.LightBlue;
+            col.HeaderCell.Style.ForeColor = System.Drawing.Color.DarkBlue;
+          }
+          else
+          {
+            // Normal header styling
+            col.HeaderCell.Style.BackColor = col.DefaultCellStyle.BackColor;
+            col.HeaderCell.Style.ForeColor = col.DefaultCellStyle.ForeColor;
+          }
         }
 
         // Apply additional header-specific styling
@@ -5225,14 +5786,24 @@ namespace WorkOrderBlender
         // Ensure visual styles are disabled for custom header styling
         metricsGrid.EnableHeadersVisualStyles = false;
 
-        foreach (DataGridViewColumn col in metricsGrid.Columns)
-        {
-          ApplyHeaderStyles(col);
-        }
+        // Suspend layout to prevent multiple redraws
+        metricsGrid.SuspendLayout();
 
-        // Force grid to refresh and redraw headers
-        metricsGrid.Invalidate();
-        metricsGrid.Refresh();
+        try
+        {
+          foreach (DataGridViewColumn col in metricsGrid.Columns)
+          {
+            ApplyHeaderStyles(col);
+          }
+
+          // Only invalidate the header area, not the entire grid
+          metricsGrid.Invalidate(new System.Drawing.Rectangle(0, 0, metricsGrid.Width, metricsGrid.ColumnHeadersHeight));
+        }
+        finally
+        {
+          // Resume layout
+          metricsGrid.ResumeLayout(false);
+        }
       }
       catch { }
     }
