@@ -40,22 +40,50 @@ namespace WorkOrderBlender
       {
         Dock = DockStyle.Fill,
         Orientation = Orientation.Vertical,
-        SplitterDistance = (int)(this.ClientSize.Width * 0.60), // Left panel gets 60%, right panel gets 40%
+        SplitterDistance = (int)(this.ClientSize.Width * 0.50), // Left panel gets 50%, right panel gets 50%
         BorderStyle = BorderStyle.Fixed3D
       };
 
       // Create left panel (Staging)
       var leftPanel = new Panel { Dock = DockStyle.Fill };
+      // Create panel for staging label with Open Folder button
+      var stagingHeaderPanel = new Panel
+      {
+        Dock = DockStyle.Top,
+        Height = 40,
+        BackColor = Color.FromArgb(240, 240, 240),
+        Padding = new Padding(5, 5, 5, 5),
+      };
+
       stagingLabel = new Label
       {
         Text = $"Staging Directory: {stagingDir}",
-        Dock = DockStyle.Top,
-        Height = 40,
+        Dock = DockStyle.Fill,
         Padding = new Padding(10, 10, 10, 5),
         Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-        BackColor = Color.FromArgb(240, 240, 240),
+        BackColor = Color.Transparent,
         TextAlign = ContentAlignment.MiddleLeft
       };
+
+      var btnOpenStagingFolder = new Button
+      {
+        Text = "Open Folder",
+        Dock = DockStyle.Right,
+        Width = 180,
+        Height = 14,
+        BackColor = Color.FromArgb(225, 228, 230),
+        ForeColor = Color.Black,
+        FlatStyle = FlatStyle.Flat,
+        Font = new Font("Segoe UI", 8F, FontStyle.Regular),
+        UseVisualStyleBackColor = false,
+        // Padding = new Padding(4, 2, 4, 2)
+      };
+      btnOpenStagingFolder.FlatAppearance.BorderSize = 1;
+      btnOpenStagingFolder.Tag = stagingDir; // Store directory path in Tag
+      btnOpenStagingFolder.Click += BtnOpenFolder_Click;
+
+      stagingHeaderPanel.Controls.Add(stagingLabel);
+      stagingHeaderPanel.Controls.Add(btnOpenStagingFolder);
 
       stagingStatusLabel = new Label
       {
@@ -78,6 +106,7 @@ namespace WorkOrderBlender
         ReadOnly = true,
         AllowUserToAddRows = false,
         AllowUserToDeleteRows = false,
+        AllowUserToResizeRows = false,
         RowHeadersVisible = false,
         BackgroundColor = SystemColors.Window,
         BorderStyle = BorderStyle.None
@@ -114,8 +143,13 @@ namespace WorkOrderBlender
       var editJobNameMenuItem = new ToolStripMenuItem("Edit Job Name");
       editJobNameMenuItem.Click += StagingContextMenu_EditJobName_Click;
 
+      var deleteMenuItem = new ToolStripMenuItem("Delete");
+      deleteMenuItem.Click += StagingContextMenu_Delete_Click;
+
       stagingContextMenu.Items.Add(editJobNameMenuItem);
       stagingContextMenu.Items.Add(moveMenuItem);
+      stagingContextMenu.Items.Add(new ToolStripSeparator());
+      stagingContextMenu.Items.Add(deleteMenuItem);
 
       stagingDataGrid.ContextMenuStrip = stagingContextMenu;
 
@@ -123,21 +157,48 @@ namespace WorkOrderBlender
       stagingDataGrid.CellDoubleClick += StagingDataGrid_CellDoubleClick;
 
       leftPanel.Controls.Add(stagingDataGrid);
-      leftPanel.Controls.Add(stagingLabel);
+      leftPanel.Controls.Add(stagingHeaderPanel);
       leftPanel.Controls.Add(stagingStatusLabel);
 
       // Create right panel (Release)
       var rightPanel = new Panel { Dock = DockStyle.Fill };
+
+      // Create panel for release label with Open Folder button
+      var releaseHeaderPanel = new Panel
+      {
+        Dock = DockStyle.Top,
+        Height = 40,
+        BackColor = Color.FromArgb(240, 240, 240),
+        Padding = new Padding(5, 5, 5, 5),
+      };
+
       releaseLabel = new Label
       {
         Text = $"Release Directory: {releaseDir}",
-        Dock = DockStyle.Top,
-        Height = 40,
+        Dock = DockStyle.Fill,
         Padding = new Padding(10, 10, 10, 5),
         Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-        BackColor = Color.FromArgb(240, 240, 240),
+        BackColor = Color.Transparent,
         TextAlign = ContentAlignment.MiddleLeft
       };
+
+      var btnOpenReleaseFolder = new Button
+      {
+        Text = "Open Folder",
+        Dock = DockStyle.Right,
+        Width = 180,
+        Height = 14,
+        // Margin = new Padding(0, 8, 10, 8),
+        BackColor = Color.FromArgb(225, 228, 230),
+        ForeColor = Color.Black,
+        FlatStyle = FlatStyle.Flat,
+        Font = new Font("Segoe UI", 8F, FontStyle.Regular),
+        UseVisualStyleBackColor = false,
+        Padding = new Padding(4, 2, 4, 2)
+      };
+      btnOpenReleaseFolder.FlatAppearance.BorderSize = 1;
+      btnOpenReleaseFolder.Tag = releaseDir; // Store directory path in Tag
+      btnOpenReleaseFolder.Click += BtnOpenFolder_Click;
 
       releaseStatusLabel = new Label
       {
@@ -160,6 +221,7 @@ namespace WorkOrderBlender
         ReadOnly = true,
         AllowUserToAddRows = false,
         AllowUserToDeleteRows = false,
+        AllowUserToResizeRows = false,
         RowHeadersVisible = false,
         BackgroundColor = SystemColors.Window,
         BorderStyle = BorderStyle.None
@@ -214,8 +276,11 @@ namespace WorkOrderBlender
 
       releaseDataGrid.ContextMenuStrip = releaseContextMenu;
 
+      releaseHeaderPanel.Controls.Add(releaseLabel);
+      releaseHeaderPanel.Controls.Add(btnOpenReleaseFolder);
+
       rightPanel.Controls.Add(releaseDataGrid);
-      rightPanel.Controls.Add(releaseLabel);
+      rightPanel.Controls.Add(releaseHeaderPanel);
       rightPanel.Controls.Add(releaseStatusLabel);
 
       // Add panels to split container
@@ -271,17 +336,32 @@ namespace WorkOrderBlender
       var panel = new TableLayoutPanel
       {
         Dock = DockStyle.Bottom,
-        ColumnCount = 5,
+        ColumnCount = 4,
         RowCount = 1,
         Padding = new Padding(10, 5, 10, 10),
         Height = 50,
       };
 
+      panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Close
       panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F)); // spacer
       panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Refresh
       panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Move to Release
-      panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Open Folder
-      panel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Close
+
+      var btnClose = new Button
+      {
+        Text = "Close",
+        AutoSize = true,
+        BackColor = Color.FromArgb(173, 179, 184),
+        ForeColor = Color.Black,
+        FlatStyle = FlatStyle.Flat,
+        Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+        UseVisualStyleBackColor = false,
+        Padding = new Padding(12, 6, 12, 6),
+        Margin = new Padding(4, 0, 4, 0),
+        Width = 80
+      };
+      btnClose.FlatAppearance.BorderSize = 1;
+      btnClose.Click += (s, e) => Close();
 
       var btnRefresh = new Button
       {
@@ -315,42 +395,9 @@ namespace WorkOrderBlender
       btnMoveToRelease.FlatAppearance.BorderSize = 1;
       btnMoveToRelease.Click += BtnMoveToRelease_Click;
 
-      var btnOpenFolder = new Button
-      {
-        Text = "Open Folder",
-        AutoSize = true,
-        BackColor = Color.FromArgb(255, 193, 7),
-        ForeColor = Color.Black,
-        FlatStyle = FlatStyle.Flat,
-        Font = new Font("Segoe UI", 9F, FontStyle.Regular),
-        UseVisualStyleBackColor = false,
-        Padding = new Padding(12, 6, 12, 6),
-        Margin = new Padding(4, 0, 4, 0),
-        Width = 110
-      };
-      btnOpenFolder.FlatAppearance.BorderSize = 1;
-      btnOpenFolder.Click += BtnOpenFolder_Click;
-
-      var btnClose = new Button
-      {
-        Text = "Close",
-        AutoSize = true,
-        BackColor = Color.FromArgb(173, 179, 184),
-        ForeColor = Color.Black,
-        FlatStyle = FlatStyle.Flat,
-        Font = new Font("Segoe UI", 9F, FontStyle.Regular),
-        UseVisualStyleBackColor = false,
-        Padding = new Padding(12, 6, 12, 6),
-        Margin = new Padding(4, 0, 4, 0),
-        Width = 80
-      };
-      btnClose.FlatAppearance.BorderSize = 1;
-      btnClose.Click += (s, e) => Close();
-
-      panel.Controls.Add(btnRefresh, 1, 0);
-      panel.Controls.Add(btnMoveToRelease, 2, 0);
-      panel.Controls.Add(btnOpenFolder, 3, 0);
-      panel.Controls.Add(btnClose, 4, 0);
+      panel.Controls.Add(btnClose, 0, 0);
+      panel.Controls.Add(btnRefresh, 2, 0);
+      panel.Controls.Add(btnMoveToRelease, 3, 0);
 
       return panel;
     }
@@ -364,7 +411,7 @@ namespace WorkOrderBlender
         // Set splitter distance to give more width to right panel (60% left, 40% right)
         if (mainSplitContainer != null && this.ClientSize.Width > 0)
         {
-          mainSplitContainer.SplitterDistance = (int)(this.ClientSize.Width * 0.60);
+          mainSplitContainer.SplitterDistance = (int)(this.ClientSize.Width * 0.50);
         }
 
         // Scan release directory on startup to add any existing files to tracking
@@ -1087,15 +1134,26 @@ namespace WorkOrderBlender
     {
       try
       {
-        // Determine which folder to open based on which grid has focus
-        string folderToOpen = stagingDir;
+        // Get the directory path from the button's Tag property
+        var button = sender as Button;
+        string folderToOpen = null;
 
-        if (releaseDataGrid.Focused || releaseDataGrid.SelectedRows.Count > 0)
+        if (button != null && button.Tag != null)
         {
-          folderToOpen = releaseDir;
+          folderToOpen = button.Tag.ToString();
+        }
+        else
+        {
+          // Fallback: determine which folder to open based on which grid has focus
+          folderToOpen = stagingDir;
+
+          if (releaseDataGrid.Focused || releaseDataGrid.SelectedRows.Count > 0)
+          {
+            folderToOpen = releaseDir;
+          }
         }
 
-        if (Directory.Exists(folderToOpen))
+        if (!string.IsNullOrEmpty(folderToOpen) && Directory.Exists(folderToOpen))
         {
           System.Diagnostics.Process.Start("explorer.exe", folderToOpen);
           Program.Log($"SawQueueDialog: Opened folder: {folderToOpen}");
@@ -1360,6 +1418,103 @@ namespace WorkOrderBlender
       EditJobNameForSelectedRow();
     }
 
+    // Context menu handler for staging grid - Delete
+    private void StagingContextMenu_Delete_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        // Check if any rows are selected
+        if (stagingDataGrid.SelectedRows.Count == 0)
+        {
+          MessageBox.Show("Please select one or more files to delete.",
+            "No Files Selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        // Get selected FileDisplayItem objects
+        var selectedItems = new List<FileDisplayItem>();
+        foreach (DataGridViewRow row in stagingDataGrid.SelectedRows)
+        {
+          if (row.Tag is FileDisplayItem fileItem)
+          {
+            selectedItems.Add(fileItem);
+          }
+        }
+
+        if (selectedItems.Count == 0)
+        {
+          MessageBox.Show("No valid files selected.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        // Confirm the delete operation
+        var result = MessageBox.Show(
+          $"Are you sure you want to permanently delete {selectedItems.Count} file(s)?\n\nThis action cannot be undone.",
+          "Confirm Delete",
+          MessageBoxButtons.YesNo,
+          MessageBoxIcon.Warning);
+
+        if (result != DialogResult.Yes)
+          return;
+
+        // Delete selected files
+        var deletedCount = 0;
+        var errorCount = 0;
+        var errorMessages = new List<string>();
+
+        foreach (var item in selectedItems)
+        {
+          try
+          {
+            if (File.Exists(item.FilePath))
+            {
+              File.Delete(item.FilePath);
+              deletedCount++;
+              Program.Log($"SawQueueDialog: Deleted file: {item.FilePath}");
+            }
+            else
+            {
+              errorCount++;
+              errorMessages.Add($"{item.FileName} (file not found)");
+            }
+          }
+          catch (Exception ex)
+          {
+            errorCount++;
+            errorMessages.Add($"{item.FileName}: {ex.Message}");
+            Program.Log($"SawQueueDialog: Error deleting file {item.FilePath}", ex);
+          }
+        }
+
+        // Refresh the staging list
+        LoadFiles();
+
+        // Show result message
+        if (errorCount == 0)
+        {
+          MessageBox.Show($"Successfully deleted {deletedCount} file(s).",
+            "Delete Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        else
+        {
+          var errorMsg = $"Deleted {deletedCount} file(s).\n\nErrors occurred with {errorCount} file(s):\n" +
+            string.Join("\n", errorMessages.Take(5));
+          if (errorMessages.Count > 5)
+          {
+            errorMsg += $"\n... and {errorMessages.Count - 5} more error(s)";
+          }
+          MessageBox.Show(errorMsg, "Delete Complete with Errors",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error in delete operation", ex);
+        MessageBox.Show($"Error deleting files: {ex.Message}", "Delete Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     // Update job name in PTX file
     private void UpdateJobNameInPtx(string filePath, string newJobName)
     {
@@ -1423,32 +1578,51 @@ namespace WorkOrderBlender
         var contextMenu = sender as ContextMenuStrip;
         if (contextMenu == null) return;
 
-        // Find the "Move back to Staging" menu item
+        // Find the menu items
         var moveToStagingMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
           .FirstOrDefault(item => item.Text == "Move back to Staging");
 
-        if (moveToStagingMenuItem == null) return;
+        var removeMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Remove");
 
-        // Check if any selected rows have "Sent to Saw" status
+        if (moveToStagingMenuItem == null && removeMenuItem == null) return;
+
+        // Check selected rows' statuses
         bool hasSentToSawStatus = false;
+        bool hasPendingStatus = false;
+        int validRowCount = 0;
+
         if (releaseDataGrid.SelectedRows.Count > 0)
         {
           foreach (DataGridViewRow row in releaseDataGrid.SelectedRows)
           {
             if (row.Tag is TrackedReleaseFile trackedFile)
             {
+              validRowCount++;
               // Status is stored as "sent to saw" (lowercase) in the object
               if (string.Equals(trackedFile.Status, "sent to saw", StringComparison.OrdinalIgnoreCase))
               {
                 hasSentToSawStatus = true;
-                break;
+              }
+              else if (string.Equals(trackedFile.Status, "pending", StringComparison.OrdinalIgnoreCase))
+              {
+                hasPendingStatus = true;
               }
             }
           }
         }
 
-        // Disable "Move back to Staging" if any selected file has "Sent to Saw" status
-        moveToStagingMenuItem.Enabled = !hasSentToSawStatus && releaseDataGrid.SelectedRows.Count > 0;
+        // "Move back to Staging" is only enabled if NO selected files have "Sent to Saw" status
+        if (moveToStagingMenuItem != null)
+        {
+          moveToStagingMenuItem.Enabled = !hasSentToSawStatus && validRowCount > 0;
+        }
+
+        // "Remove" is only enabled if ALL selected files have "Sent to Saw" status
+        if (removeMenuItem != null)
+        {
+          removeMenuItem.Enabled = hasSentToSawStatus && !hasPendingStatus && validRowCount > 0;
+        }
       }
       catch (Exception ex)
       {
