@@ -21,6 +21,10 @@ namespace WorkOrderBlender
     public string MssqlPassword { get; set; }
     public bool MssqlEnabled { get; set; }
 
+    // Saw Queue directories
+    public string StagingDir { get; set; }
+    public string ReleaseDir { get; set; }
+
     // Event for Check for Updates functionality
     public event EventHandler CheckForUpdatesRequested;
 
@@ -39,6 +43,8 @@ namespace WorkOrderBlender
     private string originalMssqlUsername;
     private string originalMssqlPassword;
     private bool originalMssqlEnabled;
+    private string originalStagingDir;
+    private string originalReleaseDir;
 
     public SettingsDialog()
     {
@@ -53,7 +59,7 @@ namespace WorkOrderBlender
       this.Text = "Settings";
       this.StartPosition = FormStartPosition.CenterParent;
       this.Width = 700;
-      this.Height = 450;
+      this.Height = 550;
       this.MinimizeBox = false;
       this.MaximizeBox = false;
       this.FormBorderStyle = FormBorderStyle.Sizable;
@@ -62,9 +68,9 @@ namespace WorkOrderBlender
       {
         Dock = DockStyle.Top,
         ColumnCount = 4,
-        RowCount = 12,
+        RowCount = 14,
         Padding = new Padding(10, 10, 10, 10),
-        Height = 350,
+        Height = 400,
       };
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -76,6 +82,8 @@ namespace WorkOrderBlender
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Staging Dir
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Release Dir
 
       table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // 100% vertical spacer
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -182,6 +190,46 @@ namespace WorkOrderBlender
       table.Controls.Add(chkDynamicSheetCosts, 1, 4);
       table.SetColumnSpan(chkDynamicSheetCosts, 1);
 
+      // Saw Queue Staging Directory
+      var lblStagingDir = new Label { Text = "Saw Queue Staging Dir:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var txtStagingDir = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400 };
+      var btnBrowseStagingDir = new Button { Text = "Browse...", AutoSize = true };
+      btnBrowseStagingDir.Click += (s, e) =>
+      {
+        using (var fbd = new FolderBrowserDialog())
+        {
+          fbd.SelectedPath = txtStagingDir.Text;
+          if (fbd.ShowDialog(this) == DialogResult.OK)
+          {
+            txtStagingDir.Text = fbd.SelectedPath;
+          }
+        }
+      };
+      table.Controls.Add(lblStagingDir, 0, 5);
+      table.Controls.Add(txtStagingDir, 1, 5);
+      table.Controls.Add(btnBrowseStagingDir, 2, 5);
+      table.SetColumnSpan(txtStagingDir, 1);
+
+      // Saw Queue Release Directory
+      var lblReleaseDir = new Label { Text = "Saw Queue Release Dir:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var txtReleaseDir = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400 };
+      var btnBrowseReleaseDir = new Button { Text = "Browse...", AutoSize = true };
+      btnBrowseReleaseDir.Click += (s, e) =>
+      {
+        using (var fbd = new FolderBrowserDialog())
+        {
+          fbd.SelectedPath = txtReleaseDir.Text;
+          if (fbd.ShowDialog(this) == DialogResult.OK)
+          {
+            txtReleaseDir.Text = fbd.SelectedPath;
+          }
+        }
+      };
+      table.Controls.Add(lblReleaseDir, 0, 6);
+      table.Controls.Add(txtReleaseDir, 1, 6);
+      table.Controls.Add(btnBrowseReleaseDir, 2, 6);
+      table.SetColumnSpan(txtReleaseDir, 1);
+
       // MSSQL Connection Settings Section
       var lblMssqlHeader = new Label
       {
@@ -193,7 +241,7 @@ namespace WorkOrderBlender
 
         Font = new System.Drawing.Font(this.Font, System.Drawing.FontStyle.Bold)
       };
-      table.Controls.Add(lblMssqlHeader, 0, 6);
+      table.Controls.Add(lblMssqlHeader, 0, 8);
       table.SetColumnSpan(lblMssqlHeader, 4);
 
       // MSSQL Enable checkbox
@@ -203,35 +251,35 @@ namespace WorkOrderBlender
         AutoSize = true,
         Anchor = AnchorStyles.Left
       };
-      table.Controls.Add(chkMssqlEnabled, 0, 7);
+      table.Controls.Add(chkMssqlEnabled, 0, 9);
       table.SetColumnSpan(chkMssqlEnabled, 4);
 
       // MSSQL Server
       var lblMssqlServer = new Label { Text = "Server:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlServer = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlServer, 0, 8);
-      table.Controls.Add(txtMssqlServer, 1, 8);
+      table.Controls.Add(lblMssqlServer, 0, 10);
+      table.Controls.Add(txtMssqlServer, 1, 10);
       table.SetColumnSpan(txtMssqlServer, 3);
 
       // MSSQL Database
       var lblMssqlDatabase = new Label { Text = "Database:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlDatabase = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlDatabase, 0, 9);
-      table.Controls.Add(txtMssqlDatabase, 1, 9);
+      table.Controls.Add(lblMssqlDatabase, 0, 11);
+      table.Controls.Add(txtMssqlDatabase, 1, 11);
       table.SetColumnSpan(txtMssqlDatabase, 3);
 
       // MSSQL Username
       var lblMssqlUsername = new Label { Text = "Username:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlUsername = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlUsername, 0, 10);
-      table.Controls.Add(txtMssqlUsername, 1, 10);
+      table.Controls.Add(lblMssqlUsername, 0, 12);
+      table.Controls.Add(txtMssqlUsername, 1, 12);
       table.SetColumnSpan(txtMssqlUsername, 3);
 
       // MSSQL Password
       var lblMssqlPassword = new Label { Text = "Password:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlPassword = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200, UseSystemPasswordChar = true };
-      table.Controls.Add(lblMssqlPassword, 0, 11);
-      table.Controls.Add(txtMssqlPassword, 1, 11);
+      table.Controls.Add(lblMssqlPassword, 0, 13);
+      table.Controls.Add(txtMssqlPassword, 1, 13);
       table.SetColumnSpan(txtMssqlPassword, 3);
 
       // Store control references
@@ -359,6 +407,8 @@ namespace WorkOrderBlender
       this.chkDynamicSheetCosts = chkDynamicSheetCosts;
       this.txtFrontFilter = txtFrontFilter;
       this.txtSubassemblyFilter = txtSubassemblyFilter;
+      this.txtStagingDir = txtStagingDir;
+      this.txtReleaseDir = txtReleaseDir;
       this.btnSave = btnSave;
       this.btnDiscard = btnDiscard;
 
@@ -381,6 +431,10 @@ namespace WorkOrderBlender
       MssqlUsername = cfg.MssqlUsername ?? "user";
       MssqlPassword = cfg.MssqlPassword ?? "password";
       MssqlEnabled = cfg.MssqlEnabled;
+
+      // Load Saw Queue directories
+      StagingDir = cfg.StagingDir ?? @"P:\CadLinkPTX\staging";
+      ReleaseDir = cfg.ReleaseDir ?? @"P:\CadLinkPTX\release";
 
       // Clean up any existing duplicated values in the configuration
       FrontFilterKeywords = (cfg.FrontFilterKeywords ?? new List<string> { "Slab", "Drawer Front" })
@@ -405,6 +459,8 @@ namespace WorkOrderBlender
       originalMssqlUsername = MssqlUsername;
       originalMssqlPassword = MssqlPassword;
       originalMssqlEnabled = MssqlEnabled;
+      originalStagingDir = StagingDir;
+      originalReleaseDir = ReleaseDir;
 
       // Update UI controls - ensure clean values without duplication
       if (txtRootLocal != null) txtRootLocal.Text = DefaultRoot;
@@ -418,6 +474,10 @@ namespace WorkOrderBlender
       if (txtMssqlDatabase != null) txtMssqlDatabase.Text = MssqlDatabase;
       if (txtMssqlUsername != null) txtMssqlUsername.Text = MssqlUsername;
       if (txtMssqlPassword != null) txtMssqlPassword.Text = MssqlPassword;
+
+      // Update Saw Queue UI controls
+      if (txtStagingDir != null) txtStagingDir.Text = StagingDir;
+      if (txtReleaseDir != null) txtReleaseDir.Text = ReleaseDir;
 
       // Set filter text fields with proper values, ensuring no duplication
       if (txtFrontFilter != null)
@@ -479,6 +539,10 @@ namespace WorkOrderBlender
       cfg.MssqlUsername = (txtMssqlUsername?.Text ?? string.Empty).Trim();
       cfg.MssqlPassword = (txtMssqlPassword?.Text ?? string.Empty).Trim();
       cfg.MssqlEnabled = chkMssqlEnabled?.Checked ?? true;
+
+      // Save Saw Queue directories
+      cfg.StagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
+      cfg.ReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
 
       // Parse and save front filter keywords - remove duplicates
       var frontFilterText = (txtFrontFilter?.Text ?? string.Empty).Trim();
@@ -629,6 +693,8 @@ namespace WorkOrderBlender
       if (txtMssqlDatabase != null) txtMssqlDatabase.TextChanged += OnSettingChanged;
       if (txtMssqlUsername != null) txtMssqlUsername.TextChanged += OnSettingChanged;
       if (txtMssqlPassword != null) txtMssqlPassword.TextChanged += OnSettingChanged;
+      if (txtStagingDir != null) txtStagingDir.TextChanged += OnSettingChanged;
+      if (txtReleaseDir != null) txtReleaseDir.TextChanged += OnSettingChanged;
     }
 
     private void OnSettingChanged(object sender, EventArgs e)
@@ -667,6 +733,10 @@ namespace WorkOrderBlender
       hasChanges |= (txtMssqlUsername?.Text ?? string.Empty).Trim() != originalMssqlUsername;
       hasChanges |= (txtMssqlPassword?.Text ?? string.Empty).Trim() != originalMssqlPassword;
       hasChanges |= (chkMssqlEnabled?.Checked ?? true) != originalMssqlEnabled;
+
+      // Check Saw Queue directories
+      hasChanges |= (txtStagingDir?.Text ?? string.Empty).Trim() != originalStagingDir;
+      hasChanges |= (txtReleaseDir?.Text ?? string.Empty).Trim() != originalReleaseDir;
 
       hasUnsavedChanges = hasChanges;
       UpdateButtonStates();
@@ -714,6 +784,8 @@ namespace WorkOrderBlender
         originalMssqlUsername = (txtMssqlUsername?.Text ?? string.Empty).Trim();
         originalMssqlPassword = (txtMssqlPassword?.Text ?? string.Empty).Trim();
         originalMssqlEnabled = chkMssqlEnabled?.Checked ?? true;
+        originalStagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
+        originalReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
 
         hasUnsavedChanges = false;
         UpdateButtonStates();
@@ -769,6 +841,8 @@ namespace WorkOrderBlender
       if (txtMssqlDatabase != null) txtMssqlDatabase.Text = originalMssqlDatabase;
       if (txtMssqlUsername != null) txtMssqlUsername.Text = originalMssqlUsername;
       if (txtMssqlPassword != null) txtMssqlPassword.Text = originalMssqlPassword;
+      if (txtStagingDir != null) txtStagingDir.Text = originalStagingDir;
+      if (txtReleaseDir != null) txtReleaseDir.Text = originalReleaseDir;
 
       hasUnsavedChanges = false;
       UpdateButtonStates();
@@ -782,6 +856,8 @@ namespace WorkOrderBlender
     private CheckBox chkDynamicSheetCosts;
     private TextBox txtFrontFilter;
     private TextBox txtSubassemblyFilter;
+    private TextBox txtStagingDir;
+    private TextBox txtReleaseDir;
     private CheckBox chkMssqlEnabled;
     private TextBox txtMssqlServer;
     private TextBox txtMssqlDatabase;

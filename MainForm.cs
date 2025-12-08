@@ -27,6 +27,7 @@ namespace WorkOrderBlender
       ("Products", "Products"),
       ("Parts", "Parts"),
       ("Subassemblies", "Subassemblies"),
+      ("Sheets", "Sheets"),
       ("Hardware", "Hardware"),
     };
 
@@ -582,6 +583,28 @@ namespace WorkOrderBlender
       }
       imgs.Images.Add(bmp1);
       return imgs;
+    }
+
+    // Create a list/queue icon for the Saw Queue button
+    private System.Drawing.Image CreateListQueueIcon()
+    {
+      var bmp = new System.Drawing.Bitmap(16, 16);
+      using (var g = System.Drawing.Graphics.FromImage(bmp))
+      {
+        g.Clear(System.Drawing.Color.Transparent);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+        // Draw horizontal lines to represent a list/queue
+        using (var pen = new System.Drawing.Pen(System.Drawing.Color.DarkBlue, 2))
+        {
+          // Draw 4 horizontal lines to represent list items
+          g.DrawLine(pen, 2, 3, 14, 3);   // Top line
+          g.DrawLine(pen, 2, 6, 14, 6);   // Second line
+          g.DrawLine(pen, 2, 9, 14, 9);   // Third line
+          g.DrawLine(pen, 2, 12, 14, 12); // Bottom line
+        }
+      }
+      return bmp;
     }
 
     private string GetDisplayPath(string absoluteDir)
@@ -4713,6 +4736,28 @@ namespace WorkOrderBlender
       }
     }
 
+    private void btnSawQueue_Click(object sender, EventArgs e)
+    {
+      Program.Log("btnSawQueue_Click: enter");
+      try
+      {
+        // Open the Saw Queue dialog to manage saw cutting patterns
+        Program.Log("btnSawQueue_Click: Opening SawQueueDialog");
+        using (var dialog = new SawQueueDialog())
+        {
+          dialog.ShowDialog(this);
+        }
+
+        Program.Log("btnSawQueue_Click: completed");
+      }
+      catch (Exception ex)
+      {
+        Program.Log("Error in btnSawQueue_Click", ex);
+        MessageBox.Show("Error opening saw queue dialog: " + ex.Message, "Saw Queue Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     private void PerformAutoSequence(bool useAutomaticFiltering, List<int> selectedRowIndices, string customSequenceId)
     {
       try
@@ -5837,7 +5882,7 @@ namespace WorkOrderBlender
           else
           {
             col.HeaderCell.Style.ForeColor = System.Drawing.Color.White; // White text on selected header
-            col.HeaderCell.Style.BackColor = System.Drawing.ColorTranslator.FromHtml("#0078d7"); // Set to #0078d7 (blue)
+            col.HeaderCell.Style.BackColor = System.Drawing.ColorTranslator.FromHtml("#0078d7");
           }
         }
         else
@@ -5939,6 +5984,14 @@ namespace WorkOrderBlender
 
           // Show/hide button based on table selection - visible for Parts and Subassemblies tables
           btnAutoSequence.Visible = isPartsTable;
+        }
+
+        if (btnSawQueue != null)
+        {
+          bool isPartsTable = !string.IsNullOrEmpty(currentSelectedTable) &&
+                             string.Equals(currentSelectedTable, "Parts", StringComparison.OrdinalIgnoreCase);
+          bool isSubassembliesTable = !string.IsNullOrEmpty(currentSelectedTable) &&
+                                     string.Equals(currentSelectedTable, "Subassemblies", StringComparison.OrdinalIgnoreCase);
         }
       }
       catch (Exception ex)
