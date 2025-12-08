@@ -128,6 +128,10 @@ namespace WorkOrderBlender
     [XmlArrayItem("VirtualColumnDef")]
     public List<VirtualColumnDef> VirtualColumns { get; set; } = new List<VirtualColumnDef>();
 
+    // Saw Queue directories
+    public string StagingDir { get; set; } = @"P:\CadLinkPTX\staging";
+    public string ReleaseDir { get; set; } = @"P:\CadLinkPTX\release";
+
     // Update management
     public string SkippedVersion { get; set; } = string.Empty;
     public DateTime LastUpdateCheck { get; set; } = DateTime.MinValue;

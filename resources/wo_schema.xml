@@ -896,6 +896,7 @@
       <Column Name="HandlingCode" />
       <Column Name="HandlingCodeFormula" />
       <Column Name="HatchType" />
+      <Column Name="ID" />
       <Column Name="Index" />
       <Column Name="InventoryAvailableQty" />
       <Column Name="InventoryCurrentQty" />
@@ -964,7 +965,6 @@
       <Column Name="WeightedSelectionValueFormula" />
       <Column Name="Width" />
       <Column Name="WidthFormula" />
-      <Column Name="ID" />
     </Columns>
   </Table>
   <Table Name="Subassemblies">

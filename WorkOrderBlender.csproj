@@ -42,7 +42,9 @@
       <SpecificVersion>false</SpecificVersion>
       <Private>true</Private>
     </Reference>
-    <Reference Include="System.Data.SqlClient" />
+    <Reference Include="System.Data.SqlClient">
+      <Private>False</Private>
+    </Reference>
     <Reference Include="System.Net.Http" />
   </ItemGroup>
 

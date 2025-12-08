@@ -44,6 +44,7 @@ namespace WorkOrderBlender
       this.panelTableSelector = new System.Windows.Forms.Panel();
       this.panelLeftColumn = new System.Windows.Forms.FlowLayoutPanel(); // Fixed: should be FlowLayoutPanel, not TableLayoutPanel
       this.filterColumn = new System.Windows.Forms.FlowLayoutPanel();
+      this.btnSawQueue = new System.Windows.Forms.Button();
       this.btnPreviewChanges = new System.Windows.Forms.Button();
       this.tableWorkOrder = new System.Windows.Forms.TableLayoutPanel();
       this.loadingLayout = new System.Windows.Forms.TableLayoutPanel();
@@ -227,10 +228,10 @@ namespace WorkOrderBlender
 
     // Add buttons to toolbar panel
       // Align toolbar panel's content to the right
-      this.filterColumn.Anchor = System.Windows.Forms.AnchorStyles.Right | System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom;
+      // Only use valid AnchorStyles flags (Right, not Center)
+      this.filterColumn.Anchor = System.Windows.Forms.AnchorStyles.Right;
       this.filterColumn.AutoSize = true;
       this.filterColumn.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-
 
       this.btnFilterFronts = new System.Windows.Forms.Button();
       // this.btnFilterFronts.Margin = new System.Windows.Forms.Padding(8, 0, 0, 0);
@@ -274,8 +275,26 @@ namespace WorkOrderBlender
       this.contextActionsColumn.Controls.Add(this.btnAutoSequence);
       this.contextActionsColumn.Controls.Add(this.btnClearSort);
 
-      // this.filterColumn.Controls.Add(this.btnFilterFronts);
+      // Create the Saw Queue button for quick filter/preset for saw queue
+      this.btnSawQueue = new System.Windows.Forms.Button();
+      this.btnSawQueue.Text = "Saw Queue";
+      this.btnSawQueue.Height = 26;
+      this.btnSawQueue.Width = 110;
+      this.btnSawQueue.UseVisualStyleBackColor = true;
+      this.btnSawQueue.BackColor = System.Drawing.SystemColors.ButtonHighlight; // Standard background
+      this.btnSawQueue.Visible = true; // Only shown for Parts/Subassemblies tables as needed
+      this.btnSawQueue.Font = new System.Drawing.Font("Microsoft Sans Serif", 10F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
+      this.toolTip1.SetToolTip(this.btnSawQueue, "Manage saw cutting patterns - move files from staging to release");
+      this.btnSawQueue.Click += new System.EventHandler(this.btnSawQueue_Click);
 
+      // Add list/queue icon to the button
+      this.btnSawQueue.Image = this.CreateListQueueIcon();
+      this.btnSawQueue.ImageAlign = System.Drawing.ContentAlignment.MiddleLeft;
+      this.btnSawQueue.TextAlign = System.Drawing.ContentAlignment.MiddleRight;
+      this.btnSawQueue.TextImageRelation = System.Windows.Forms.TextImageRelation.ImageBeforeText;
+
+      // Add Saw Queue button to contextActionsColumn to be inline with other buttons
+      this.contextActionsColumn.Controls.Add(this.btnSawQueue);
 
       // Metrics search label and textbox
       this.labelMetricsSearch = new System.Windows.Forms.Label();
@@ -284,7 +303,6 @@ namespace WorkOrderBlender
       this.labelMetricsSearch.Text = "Filter:";
       this.labelMetricsSearch.Name = "labelMetricsSearch";
       this.labelMetricsSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 11F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
-      this.filterColumn.Controls.Add(this.labelMetricsSearch);
 
       this.txtMetricsSearch = new System.Windows.Forms.TextBox();
       this.txtMetricsSearch.Width = 180;
@@ -294,6 +312,9 @@ namespace WorkOrderBlender
       this.txtMetricsSearch.Font = new System.Drawing.Font("Microsoft Sans Serif", 11F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0))); // Increased font size
       this.toolTip1.SetToolTip(this.txtMetricsSearch, "Filter rows in the metrics table");
       this.txtMetricsSearch.TextChanged += new System.EventHandler(this.txtMetricsSearch_TextChanged);
+
+      // Add Filter label and textbox to filterColumn
+      this.filterColumn.Controls.Add(this.labelMetricsSearch);
       this.filterColumn.Controls.Add(this.txtMetricsSearch);
 
       //
@@ -681,6 +702,7 @@ namespace WorkOrderBlender
     private FlowLayoutPanel panelLeftColumn;
     private FlowLayoutPanel contextActionsColumn;
     private FlowLayoutPanel filterColumn;
+    private Button btnSawQueue;
     private DataGridView metricsGrid;
     private Panel panelMetricsBorder;
     private Panel panelSearchLeft;

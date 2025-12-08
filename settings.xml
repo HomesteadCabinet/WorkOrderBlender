@@ -7,14 +7,14 @@
   <MainSplitterDistance>305</MainSplitterDistance>
   <MainWindowWidth>1559</MainWindowWidth>
   <MainWindowHeight>847</MainWindowHeight>
-  <MainWindowX>128</MainWindowX>
-  <MainWindowY>42</MainWindowY>
+  <MainWindowX>2097</MainWindowX>
+  <MainWindowY>66</MainWindowY>
   <HidePurchasing>true</HidePurchasing>
   <DynamicSheetCosts>true</DynamicSheetCosts>
-  <MssqlServer>SERVER2019\HSSQL</MssqlServer>
+  <MssqlServer>SERVER\SQL</MssqlServer>
   <MssqlDatabase>MicrovellumData</MssqlDatabase>
-  <MssqlUsername>sa</MssqlUsername>
-  <MssqlPassword>H0m35te@d12!</MssqlPassword>
+  <MssqlUsername>user</MssqlUsername>
+  <MssqlPassword>password</MssqlPassword>
   <MssqlEnabled>true</MssqlEnabled>
   <FrontFilterKeywords>
     <string>Slab</string>
@@ -169,12 +169,17 @@
     <ColumnWidthEntry>
       <TableName>Products</TableName>
       <ColumnName>Width</ColumnName>
-      <Width>64</Width>
+      <Width>73</Width>
     </ColumnWidthEntry>
     <ColumnWidthEntry>
       <TableName>Products</TableName>
       <ColumnName>Comments1</ColumnName>
       <Width>183</Width>
+    </ColumnWidthEntry>
+    <ColumnWidthEntry>
+      <TableName>Products</TableName>
+      <ColumnName>ActivityPathShort</ColumnName>
+      <Width>144</Width>
     </ColumnWidthEntry>
   </ColumnWidths>
   <ColumnOrders>
@@ -317,6 +322,7 @@
         <string>PerfectGrainCaption</string>
         <string>Grain</string>
         <string>Name</string>
+        <string>Material Grain</string>
         <string>MaterialName</string>
         <string>TotalQuantity</string>
         <string>Length</string>
@@ -464,6 +470,7 @@
         <string>AdjustedCutPartLength</string>
         <string>AdjustedCutPartWidth</string>
         <string>Quantity</string>
+        <string>RemoveRoutesOutsideBorder</string>
       </Columns>
     </ColumnOrderEntry>
     <ColumnOrderEntry>
@@ -599,37 +606,6 @@
       <ButtonText>Work Order</ButtonText>
     </VirtualColumnDef>
     <VirtualColumnDef>
-      <TableName>Parts</TableName>
-      <ColumnName>_SourceFile</ColumnName>
-      <ColumnType>BuiltIn</ColumnType>
-      <ActionType>SourceFile</ActionType>
-      <ButtonText>Work Order</ButtonText>
-    </VirtualColumnDef>
-    <VirtualColumnDef>
-      <TableName>Parts</TableName>
-      <ColumnName>#</ColumnName>
-      <TargetTableName>Products</TargetTableName>
-      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
-      <TargetKeyColumn>LinkID</TargetKeyColumn>
-      <TargetValueColumn>ItemNumber</TargetValueColumn>
-      <ColumnType>Lookup</ColumnType>
-      <ActionType />
-      <ButtonText />
-      <ButtonIcon />
-    </VirtualColumnDef>
-    <VirtualColumnDef>
-      <TableName>Parts</TableName>
-      <ColumnName>Product</ColumnName>
-      <TargetTableName>Products</TargetTableName>
-      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
-      <TargetKeyColumn>LinkID</TargetKeyColumn>
-      <TargetValueColumn>Name</TargetValueColumn>
-      <ColumnType>Lookup</ColumnType>
-      <ActionType />
-      <ButtonText />
-      <ButtonIcon />
-    </VirtualColumnDef>
-    <VirtualColumnDef>
       <TableName>Subassemblies</TableName>
       <ColumnName>#</ColumnName>
       <TargetTableName>Products</TargetTableName>
@@ -690,7 +666,50 @@
       <ActionType>SourceFile</ActionType>
       <ButtonText>Work Order</ButtonText>
     </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Parts</TableName>
+      <ColumnName>_SourceFile</ColumnName>
+      <ColumnType>BuiltIn</ColumnType>
+      <ActionType>SourceFile</ActionType>
+      <ButtonText>Work Order</ButtonText>
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Parts</TableName>
+      <ColumnName>#</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>ItemNumber</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Parts</TableName>
+      <ColumnName>Product</ColumnName>
+      <TargetTableName>Products</TargetTableName>
+      <LocalKeyColumn>LinkIDProduct</LocalKeyColumn>
+      <TargetKeyColumn>LinkID</TargetKeyColumn>
+      <TargetValueColumn>Name</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
+    </VirtualColumnDef>
+    <VirtualColumnDef>
+      <TableName>Parts</TableName>
+      <ColumnName>Material Grain</ColumnName>
+      <TargetTableName>Sheets</TargetTableName>
+      <LocalKeyColumn>LinkIDMaterial</LocalKeyColumn>
+      <TargetKeyColumn>LinkIDMaterial</TargetKeyColumn>
+      <TargetValueColumn>Grain</TargetValueColumn>
+      <ColumnType>Lookup</ColumnType>
+      <ActionType />
+      <ButtonText />
+      <ButtonIcon />
+    </VirtualColumnDef>
   </VirtualColumns>
   <SkippedVersion />
-  <LastUpdateCheck>2025-09-19T13:31:57.7044013-06:00</LastUpdateCheck>
+  <LastUpdateCheck>2025-09-24T11:51:52.3978938-06:00</LastUpdateCheck>
 </UserConfig>
