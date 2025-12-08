@@ -17,11 +17,15 @@ namespace WorkOrderBlender
     private readonly Label releaseLabel;
     private readonly Label stagingStatusLabel;
     private readonly Label releaseStatusLabel;
+    private readonly TextBox stagingFilterTextBox;
+    private readonly TextBox releaseFilterTextBox;
     private readonly string stagingDir;
     private readonly string releaseDir;
     private readonly ReleaseFileTracker releaseTracker;
     private FileSystemWatcher releaseDirWatcher;
     private FileSystemWatcher stagingDirWatcher;
+    private List<FileDisplayItem> allStagingFiles; // Store original staging files for filtering
+    private List<TrackedReleaseFile> allReleaseFiles; // Store original release files for filtering
 
     public SawQueueDialog()
     {
@@ -32,6 +36,10 @@ namespace WorkOrderBlender
 
       // Initialize release file tracker
       releaseTracker = new ReleaseFileTracker();
+
+      // Initialize filter lists
+      allStagingFiles = new List<FileDisplayItem>();
+      allReleaseFiles = new List<TrackedReleaseFile>();
 
       InitializeDialog();
 
@@ -50,40 +58,67 @@ namespace WorkOrderBlender
       var stagingHeaderPanel = new Panel
       {
         Dock = DockStyle.Top,
-        Height = 40,
+        Height = 30,
         BackColor = Color.FromArgb(240, 240, 240),
-        Padding = new Padding(5, 5, 5, 5),
+        Padding = new Padding(5, 0, 5, 0),
       };
+
+      // Calculate vertical center position accounting for padding
+      var panelPadding = stagingHeaderPanel.Padding.Top;
+      var labelHeight = 20; // Standard label height
+      var centeredTop = panelPadding + (stagingHeaderPanel.Height - panelPadding * 2 - labelHeight) / 2;
 
       stagingLabel = new Label
       {
         Text = $"Staging Directory: {stagingDir}",
-        Dock = DockStyle.Fill,
-        Padding = new Padding(10, 10, 10, 5),
+        Left = 10,
+        Top = stagingHeaderPanel.Height - labelHeight,
+        AutoSize = true,
+        Height = labelHeight,
         Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+        BackColor = Color.Transparent,
+        TextAlign = ContentAlignment.MiddleLeft,
+        Cursor = Cursors.Hand,
+        ForeColor = Color.FromArgb(0, 102, 204) // Blue color to indicate clickable
+      };
+      stagingLabel.Click += StagingLabel_Click;
+
+      // Create container panel for search controls
+      var stagingSearchPanel = new Panel
+      {
+        Dock = DockStyle.Right,
+        Width = 250,
+        BackColor = Color.Transparent
+      };
+
+      var stagingSearchLabel = new Label
+      {
+        Text = "Search:",
+        Left = 5,
+        Top = centeredTop,
+        Width = 50,
+        Height = labelHeight,
+        Font = new Font("Segoe UI", 8F, FontStyle.Regular),
         BackColor = Color.Transparent,
         TextAlign = ContentAlignment.MiddleLeft
       };
 
-      var btnOpenStagingFolder = new Button
+      stagingFilterTextBox = new TextBox
       {
-        Text = "Open Folder",
-        Dock = DockStyle.Right,
+        Left = 60,
+        Top = centeredTop,
         Width = 180,
-        Height = 14,
-        BackColor = Color.FromArgb(225, 228, 230),
-        ForeColor = Color.Black,
-        FlatStyle = FlatStyle.Flat,
+        Height = labelHeight,
         Font = new Font("Segoe UI", 8F, FontStyle.Regular),
-        UseVisualStyleBackColor = false,
-        // Padding = new Padding(4, 2, 4, 2)
+        Anchor = AnchorStyles.Right | AnchorStyles.Top
       };
-      btnOpenStagingFolder.FlatAppearance.BorderSize = 1;
-      btnOpenStagingFolder.Tag = stagingDir; // Store directory path in Tag
-      btnOpenStagingFolder.Click += BtnOpenFolder_Click;
+      stagingFilterTextBox.TextChanged += StagingFilterTextBox_TextChanged;
+
+      stagingSearchPanel.Controls.Add(stagingSearchLabel);
+      stagingSearchPanel.Controls.Add(stagingFilterTextBox);
 
       stagingHeaderPanel.Controls.Add(stagingLabel);
-      stagingHeaderPanel.Controls.Add(btnOpenStagingFolder);
+      stagingHeaderPanel.Controls.Add(stagingSearchPanel);
 
       stagingStatusLabel = new Label
       {
@@ -167,38 +202,67 @@ namespace WorkOrderBlender
       var releaseHeaderPanel = new Panel
       {
         Dock = DockStyle.Top,
-        Height = 40,
+        Height = 30,
         BackColor = Color.FromArgb(240, 240, 240),
-        Padding = new Padding(5, 5, 5, 5),
+        Padding = new Padding(5, 0, 5, 0),
       };
+
+      // Calculate vertical center position accounting for padding
+      var releasePanelPadding = releaseHeaderPanel.Padding.Top;
+      var releaseLabelHeight = 20; // Standard label height
+      var releaseCenteredTop = releasePanelPadding + (releaseHeaderPanel.Height - releasePanelPadding * 2 - releaseLabelHeight) / 2;
 
       releaseLabel = new Label
       {
         Text = $"Release Directory: {releaseDir}",
-        Dock = DockStyle.Fill,
-        Padding = new Padding(10, 10, 10, 5),
+        Left = 10,
+        Top = releaseHeaderPanel.Height - releaseLabelHeight,
+        AutoSize = true,
+        Height = releaseLabelHeight,
         Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+        BackColor = Color.Transparent,
+        TextAlign = ContentAlignment.MiddleLeft,
+        Cursor = Cursors.Hand,
+        ForeColor = Color.FromArgb(0, 102, 204) // Blue color to indicate clickable
+      };
+      releaseLabel.Click += ReleaseLabel_Click;
+
+      // Create container panel for search controls
+      var releaseSearchPanel = new Panel
+      {
+        Dock = DockStyle.Right,
+        Width = 250,
+        BackColor = Color.Transparent,
+        Padding = new Padding(0, 0, 0, 5),
+        Margin = new Padding(0, 0, 0, 5),
+      };
+
+      // Use same centered top position for search controls
+      var releaseSearchLabel = new Label
+      {
+        Text = "Search:",
+        Left = 5,
+        Top = releaseCenteredTop,
+        Width = 50,
+        Height = releaseLabelHeight,
+        Font = new Font("Segoe UI", 8F, FontStyle.Regular),
         BackColor = Color.Transparent,
         TextAlign = ContentAlignment.MiddleLeft
       };
 
-      var btnOpenReleaseFolder = new Button
+      releaseFilterTextBox = new TextBox
       {
-        Text = "Open Folder",
-        Dock = DockStyle.Right,
+        Left = 60,
+        Top = releaseCenteredTop,
         Width = 180,
-        Height = 14,
-        // Margin = new Padding(0, 8, 10, 8),
-        BackColor = Color.FromArgb(225, 228, 230),
-        ForeColor = Color.Black,
-        FlatStyle = FlatStyle.Flat,
+        Height = releaseLabelHeight,
         Font = new Font("Segoe UI", 8F, FontStyle.Regular),
-        UseVisualStyleBackColor = false,
-        Padding = new Padding(4, 2, 4, 2)
+        Anchor = AnchorStyles.Right | AnchorStyles.Top
       };
-      btnOpenReleaseFolder.FlatAppearance.BorderSize = 1;
-      btnOpenReleaseFolder.Tag = releaseDir; // Store directory path in Tag
-      btnOpenReleaseFolder.Click += BtnOpenFolder_Click;
+      releaseFilterTextBox.TextChanged += ReleaseFilterTextBox_TextChanged;
+
+      releaseSearchPanel.Controls.Add(releaseSearchLabel);
+      releaseSearchPanel.Controls.Add(releaseFilterTextBox);
 
       releaseStatusLabel = new Label
       {
@@ -277,7 +341,7 @@ namespace WorkOrderBlender
       releaseDataGrid.ContextMenuStrip = releaseContextMenu;
 
       releaseHeaderPanel.Controls.Add(releaseLabel);
-      releaseHeaderPanel.Controls.Add(btnOpenReleaseFolder);
+      releaseHeaderPanel.Controls.Add(releaseSearchPanel);
 
       rightPanel.Controls.Add(releaseDataGrid);
       rightPanel.Controls.Add(releaseHeaderPanel);
@@ -752,26 +816,18 @@ namespace WorkOrderBlender
       {
         if (Directory.Exists(stagingDir))
         {
-          var stagingFiles = GetFilesWithMetadata(stagingDir);
+          // Store original files for filtering
+          allStagingFiles = GetFilesWithMetadata(stagingDir);
 
-          // Create display items for DataGridView
-          var displayItems = stagingFiles.Select(f => new
-          {
-            JobName = f.JobName,
-            FileSize = FormatFileSize(f.FileSize),
-            LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
-          }).ToList();
-
-          stagingDataGrid.DataSource = displayItems;
-
-          // Store FileDisplayItem references in row Tag for easy access
-          for (int i = 0; i < stagingDataGrid.Rows.Count && i < stagingFiles.Count; i++)
-          {
-            stagingDataGrid.Rows[i].Tag = stagingFiles[i];
-          }
-
-          stagingStatusLabel.Text = $"{stagingFiles.Count} file(s) in staging";
-          stagingStatusLabel.ForeColor = stagingFiles.Count > 0 ? Color.DarkGreen : Color.Gray;
+          // Apply current filter
+          ApplyStagingFilter();
+        }
+        else
+        {
+          allStagingFiles = new List<FileDisplayItem>();
+          stagingDataGrid.DataSource = null;
+          stagingStatusLabel.Text = "Staging directory not found";
+          stagingStatusLabel.ForeColor = Color.DarkRed;
         }
       }
       catch (Exception ex)
@@ -811,29 +867,11 @@ namespace WorkOrderBlender
     {
       try
       {
-        var trackedFiles = releaseTracker.GetTrackedFiles();
+        // Store original files for filtering
+        allReleaseFiles = releaseTracker.GetTrackedFiles();
 
-        // Create a list of display objects for the DataGridView
-        var displayItems = trackedFiles.Select(f => new
-        {
-          JobName = f.JobName,
-          Status = f.Status == "pending" ? "Pending" : "Sent to Saw",
-          ReleaseDate = f.SentToRelease.ToString("yyyy-MM-dd HH:mm"),
-          SentToSawDate = f.SentToSaw.HasValue ? f.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm") : ""
-        }).ToList();
-
-        releaseDataGrid.DataSource = displayItems;
-
-        // Store TrackedReleaseFile references in row Tag for easy access
-        for (int i = 0; i < releaseDataGrid.Rows.Count && i < trackedFiles.Count; i++)
-        {
-          releaseDataGrid.Rows[i].Tag = trackedFiles[i];
-        }
-
-        var pendingCount = trackedFiles.Count(f => f.Status == "pending");
-        var sentCount = trackedFiles.Count(f => f.Status == "sent to saw");
-        releaseStatusLabel.Text = $"{trackedFiles.Count} tracked file(s) - {pendingCount} pending, {sentCount} sent to saw";
-        releaseStatusLabel.ForeColor = trackedFiles.Count > 0 ? Color.DarkGreen : Color.Gray;
+        // Apply current filter
+        ApplyReleaseFilter();
       }
       catch (Exception ex)
       {
@@ -883,37 +921,8 @@ namespace WorkOrderBlender
       {
         Program.Log($"SawQueueDialog: Loading files from staging='{stagingDir}' and release='{releaseDir}'");
 
-        // Load staging files
-        if (Directory.Exists(stagingDir))
-        {
-          var stagingFiles = GetFilesWithMetadata(stagingDir);
-
-          // Create display items for DataGridView
-          var displayItems = stagingFiles.Select(f => new
-          {
-            JobName = f.JobName,
-            FileSize = FormatFileSize(f.FileSize),
-            LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
-          }).ToList();
-
-          stagingDataGrid.DataSource = displayItems;
-
-          // Store FileDisplayItem references in row Tag for easy access
-          for (int i = 0; i < stagingDataGrid.Rows.Count && i < stagingFiles.Count; i++)
-          {
-            stagingDataGrid.Rows[i].Tag = stagingFiles[i];
-          }
-
-          stagingStatusLabel.Text = $"{stagingFiles.Count} file(s) in staging";
-          stagingStatusLabel.ForeColor = stagingFiles.Count > 0 ? Color.DarkGreen : Color.Gray;
-        }
-        else
-        {
-          stagingDataGrid.DataSource = null;
-          stagingStatusLabel.Text = "Staging directory not found";
-          stagingStatusLabel.ForeColor = Color.DarkRed;
-          Program.Log($"SawQueueDialog: Staging directory does not exist: {stagingDir}");
-        }
+        // Load staging files - RefreshStagingList will handle the display and filtering
+        RefreshStagingList();
 
         // Load release tracking history instead of current files
 
@@ -1130,45 +1139,200 @@ namespace WorkOrderBlender
       }
     }
 
-    private void BtnOpenFolder_Click(object sender, EventArgs e)
+    // Handle click on staging label to open folder
+    private void StagingLabel_Click(object sender, EventArgs e)
     {
       try
       {
-        // Get the directory path from the button's Tag property
-        var button = sender as Button;
-        string folderToOpen = null;
-
-        if (button != null && button.Tag != null)
+        if (!string.IsNullOrEmpty(stagingDir) && Directory.Exists(stagingDir))
         {
-          folderToOpen = button.Tag.ToString();
+          System.Diagnostics.Process.Start("explorer.exe", stagingDir);
+          Program.Log($"SawQueueDialog: Opened staging folder: {stagingDir}");
         }
         else
         {
-          // Fallback: determine which folder to open based on which grid has focus
-          folderToOpen = stagingDir;
-
-          if (releaseDataGrid.Focused || releaseDataGrid.SelectedRows.Count > 0)
-          {
-            folderToOpen = releaseDir;
-          }
-        }
-
-        if (!string.IsNullOrEmpty(folderToOpen) && Directory.Exists(folderToOpen))
-        {
-          System.Diagnostics.Process.Start("explorer.exe", folderToOpen);
-          Program.Log($"SawQueueDialog: Opened folder: {folderToOpen}");
-        }
-        else
-        {
-          MessageBox.Show($"Directory does not exist:\n{folderToOpen}", "Directory Not Found",
+          MessageBox.Show($"Directory does not exist:\n{stagingDir}", "Directory Not Found",
             MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
       }
       catch (Exception ex)
       {
-        Program.Log("SawQueueDialog: Error opening folder", ex);
+        Program.Log("SawQueueDialog: Error opening staging folder", ex);
         MessageBox.Show($"Error opening folder: {ex.Message}", "Open Folder Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Handle click on release label to open folder
+    private void ReleaseLabel_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        if (!string.IsNullOrEmpty(releaseDir) && Directory.Exists(releaseDir))
+        {
+          System.Diagnostics.Process.Start("explorer.exe", releaseDir);
+          Program.Log($"SawQueueDialog: Opened release folder: {releaseDir}");
+        }
+        else
+        {
+          MessageBox.Show($"Directory does not exist:\n{releaseDir}", "Directory Not Found",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error opening release folder", ex);
+        MessageBox.Show($"Error opening folder: {ex.Message}", "Open Folder Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Handle staging filter text change
+    private void StagingFilterTextBox_TextChanged(object sender, EventArgs e)
+    {
+      try
+      {
+        ApplyStagingFilter();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error applying staging filter", ex);
+      }
+    }
+
+    // Handle release filter text change
+    private void ReleaseFilterTextBox_TextChanged(object sender, EventArgs e)
+    {
+      try
+      {
+        ApplyReleaseFilter();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error applying release filter", ex);
+      }
+    }
+
+    // Apply filter to staging list
+    private void ApplyStagingFilter()
+    {
+      try
+      {
+        if (allStagingFiles == null)
+          return;
+
+        var filterText = stagingFilterTextBox.Text?.Trim() ?? "";
+        List<FileDisplayItem> filteredFiles;
+
+        if (string.IsNullOrEmpty(filterText))
+        {
+          filteredFiles = allStagingFiles;
+        }
+        else
+        {
+          // Filter by job name (case-insensitive)
+          filteredFiles = allStagingFiles.Where(f =>
+            f.JobName.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            f.FileName.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0
+          ).ToList();
+        }
+
+        // Create display items for DataGridView
+        var displayItems = filteredFiles.Select(f => new
+        {
+          JobName = f.JobName,
+          FileSize = FormatFileSize(f.FileSize),
+          LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
+        }).ToList();
+
+        stagingDataGrid.DataSource = displayItems;
+
+        // Store FileDisplayItem references in row Tag for easy access
+        for (int i = 0; i < stagingDataGrid.Rows.Count && i < filteredFiles.Count; i++)
+        {
+          stagingDataGrid.Rows[i].Tag = filteredFiles[i];
+        }
+
+        // Update status label to show filtered count
+        var totalCount = allStagingFiles.Count;
+        var filteredCount = filteredFiles.Count;
+        if (filteredCount < totalCount)
+        {
+          stagingStatusLabel.Text = $"{filteredCount} of {totalCount} file(s) shown";
+        }
+        else
+        {
+          stagingStatusLabel.Text = $"{totalCount} file(s) in staging";
+        }
+        stagingStatusLabel.ForeColor = filteredCount > 0 ? Color.DarkGreen : Color.Gray;
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error applying staging filter", ex);
+      }
+    }
+
+    // Apply filter to release list
+    private void ApplyReleaseFilter()
+    {
+      try
+      {
+        if (allReleaseFiles == null)
+          return;
+
+        var filterText = releaseFilterTextBox.Text?.Trim() ?? "";
+        List<TrackedReleaseFile> filteredFiles;
+
+        if (string.IsNullOrEmpty(filterText))
+        {
+          filteredFiles = allReleaseFiles;
+        }
+        else
+        {
+          // Filter by job name or status (case-insensitive)
+          filteredFiles = allReleaseFiles.Where(f =>
+            f.JobName.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            f.FileName.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            f.Status.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0
+          ).ToList();
+        }
+
+        // Create a list of display objects for the DataGridView
+        var displayItems = filteredFiles.Select(f => new
+        {
+          JobName = f.JobName,
+          Status = f.Status == "pending" ? "Pending" : "Sent to Saw",
+          ReleaseDate = f.SentToRelease.ToString("yyyy-MM-dd HH:mm"),
+          SentToSawDate = f.SentToSaw.HasValue ? f.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm") : ""
+        }).ToList();
+
+        releaseDataGrid.DataSource = displayItems;
+
+        // Store TrackedReleaseFile references in row Tag for easy access
+        for (int i = 0; i < releaseDataGrid.Rows.Count && i < filteredFiles.Count; i++)
+        {
+          releaseDataGrid.Rows[i].Tag = filteredFiles[i];
+        }
+
+        // Update status label to show filtered count
+        var totalCount = allReleaseFiles.Count;
+        var filteredCount = filteredFiles.Count;
+        var pendingCount = filteredFiles.Count(f => f.Status == "pending");
+        var sentCount = filteredFiles.Count(f => f.Status == "sent to saw");
+
+        if (filteredCount < totalCount)
+        {
+          releaseStatusLabel.Text = $"{filteredCount} of {totalCount} tracked file(s) shown - {pendingCount} pending, {sentCount} sent to saw";
+        }
+        else
+        {
+          releaseStatusLabel.Text = $"{totalCount} tracked file(s) - {pendingCount} pending, {sentCount} sent to saw";
+        }
+        releaseStatusLabel.ForeColor = filteredCount > 0 ? Color.DarkGreen : Color.Gray;
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error applying release filter", ex);
       }
     }
 
@@ -1400,8 +1564,8 @@ namespace WorkOrderBlender
         // Refresh the staging list to show updated job name
         LoadFiles();
 
-        MessageBox.Show("Job name updated successfully.", "Success",
-          MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // MessageBox.Show("Job name updated successfully.", "Success",
+        //   MessageBoxButtons.OK, MessageBoxIcon.Information);
       }
       catch (Exception ex)
       {
