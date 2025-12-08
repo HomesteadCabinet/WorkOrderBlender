@@ -1501,6 +1501,12 @@ namespace WorkOrderBlender
 
                 isApplyingLayout = true;
 
+                // Check if settings.xml has column configuration for this table
+                // If it does, we'll still use AutoGenerateColumns but ensure settings.xml is applied after binding
+                var cfg = UserConfig.LoadOrDefault();
+                var hasColumnConfig = cfg.TryGetColumnOrder(selectedTable.TableName) != null && cfg.TryGetColumnOrder(selectedTable.TableName).Count > 0;
+                Program.Log($"RefreshMetricsGrid: Table '{selectedTable.TableName}' has column configuration in settings.xml: {hasColumnConfig}");
+
                 metricsGrid.AutoGenerateColumns = true;
 
                 // Build virtual columns before binding so initial columns reflect settings.xml
@@ -1522,6 +1528,10 @@ namespace WorkOrderBlender
                 metricsGrid.DataSource = new BindingSource { DataSource = data.DefaultView };
                 var dataSourceSet = DateTime.Now;
                 Program.Log($"DataSource set in {(dataSourceSet - bindStart).TotalMilliseconds:F0}ms");
+
+                // Note: DataBindingComplete event will fire after binding completes and will call
+                // ApplyUserConfigToMetricsGrid to ensure settings.xml configuration is applied.
+                // The hasColumnConfig flag is logged above for debugging purposes.
 
                 // Do not apply layout here; rely on DataBindingComplete to apply once post-bind
                 // Apply filter if any text present (log prior to applying)
@@ -2047,10 +2057,13 @@ namespace WorkOrderBlender
             }
           }
 
-          // Apply order (build a sensible default when none is saved)
+          // Apply order from settings.xml - always use settings.xml if configuration exists
+          // Only fall back to auto-generated order if no configuration exists for this table
           var order = cfg.TryGetColumnOrder(tableName);
           if (order == null || order.Count == 0)
           {
+            // No configuration exists in settings.xml - build a sensible default from existing columns
+            Program.Log($"ApplyUserConfig: No column order configuration found in settings.xml for table '{tableName}', using auto-generated order");
             var existing = metricsGrid.Columns.Cast<DataGridViewColumn>()
               .OrderBy(c => c.DisplayIndex)
               .Select(c => !string.IsNullOrEmpty(c.DataPropertyName) ? c.DataPropertyName : c.Name)
@@ -2078,6 +2091,11 @@ namespace WorkOrderBlender
             order = built;
             // Do not persist auto-built default order; apply transiently only
             Program.Log($"ApplyUserConfig: built transient default order with virtuals after LinkID: [{string.Join(", ", order)}]");
+          }
+          else
+          {
+            // Configuration exists in settings.xml - use it
+            Program.Log($"ApplyUserConfig: Found column order configuration in settings.xml for table '{tableName}' with {order.Count} columns: [{string.Join(", ", order)}]");
           }
 
           if (order != null && order.Count > 0)
@@ -3321,6 +3339,13 @@ namespace WorkOrderBlender
             {
               // Fallback: bind through a BindingSource if grid isn't already using one
               metricsGrid.DataSource = new BindingSource { DataSource = data };
+            }
+            // Ensure settings.xml configuration is applied after resetting bindings
+            // This ensures columns are always configured from settings.xml when available
+            if (!string.IsNullOrWhiteSpace(tableName))
+            {
+              Program.Log($"RebuildVirtualColumns: Applying settings.xml configuration after virtual column refresh");
+              ApplyUserConfigToMetricsGrid(tableName, data);
             }
           }
           finally

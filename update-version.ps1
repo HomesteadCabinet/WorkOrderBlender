@@ -1,16 +1,15 @@
 # WorkOrderBlender Version Update and Release Script
-# This script updates version numbers, builds portable package, and triggers auto-update via GitHub release
+# This script updates version numbers, commits all changes, and triggers auto-update via GitHub release
+# Note: GitHub Actions workflow generates the .zip file automatically
 #
 # Parameters:
 #   NewVersion        - New version number (e.g., "1.0.2")
 #   CommitMessage     - Git commit message (default: "Version bump to {version}")
 #   SkipGitPush       - Skip pushing to GitHub (default: false)
 #   Force             - Force update even with uncommitted changes (default: false)
-#   SkipPortableBuild - Skip building portable package (default: false)
 #
 # Usage:
 #   .\update-version.ps1 -NewVersion "1.0.2"
-#   .\update-version.ps1 -NewVersion "1.0.2" -SkipPortableBuild
 #   .\update-version.ps1 -NewVersion "1.0.2" -SkipGitPush
 
 param(
@@ -21,9 +20,7 @@ param(
 
     [switch]$SkipGitPush,
 
-    [switch]$Force,
-
-    [switch]$SkipPortableBuild
+    [switch]$Force
 )
 
 # Function to validate version format (e.g., "1.0.2")
@@ -103,56 +100,6 @@ function Update-WixVersion {
     return $true
 }
 
-# Function to build package
-function Build-Package {
-    param([string]$Version)
-
-    Write-Host "`n[INFO] Building portable package..." -ForegroundColor Cyan
-
-    try {
-        # Run the build script
-        $buildScript = Join-Path $PSScriptRoot "build.ps1"
-        if (-not (Test-Path $buildScript)) {
-            Write-Error "[ERROR] build.ps1 not found"
-            return $false
-        }
-
-        # Execute build.ps1 with Clean parameter
-        # We don't need to skip build since we're updating version files first
-        Write-Host "[INFO] Executing build.ps1..." -ForegroundColor Cyan
-        $buildArgs = @("-Clean")
-        & $buildScript @buildArgs
-
-        if ($LASTEXITCODE -ne 0) {
-            Write-Error "[ERROR] Portable build failed"
-            return $false
-        }
-
-        # Ensure dist directory exists
-        $distDir = Join-Path $PSScriptRoot "dist"
-        if (-not (Test-Path $distDir)) {
-            Write-Error "[ERROR] Dist directory not found after build: $distDir"
-            return $false
-        }
-
-        # Verify the zip file was created
-        $expectedZipName = "WorkOrderBlender-$Version-portable.zip"
-        $zipDir = Join-Path $PSScriptRoot "dist"
-        $zipPath = Join-Path $zipDir $expectedZipName
-
-        if (-not (Test-Path $zipPath)) {
-            Write-Error "[ERROR] Portable zip file not found at expected location: $zipPath"
-            return $false
-        }
-
-        Write-Host "[OK] Portable package built successfully: $expectedZipName" -ForegroundColor Green
-        return $true
-    }
-    catch {
-        Write-Error "[ERROR] Failed to build portable package: $($_.Exception.Message)"
-        return $false
-    }
-}
 
 # Validate inputs
 if (-not (Test-VersionFormat $NewVersion)) {
@@ -169,16 +116,11 @@ if (-not (Test-Path ".git")) {
     exit 1
 }
 
-# Check for uncommitted changes
+# Check for uncommitted changes (informational only - we'll add them all)
 $status = git status --porcelain
 if ($status -and -not $Force) {
-    Write-Warning "[WARNING] You have uncommitted changes:"
+    Write-Host "[INFO] Found uncommitted changes (will be included in commit):" -ForegroundColor Cyan
     git status --short
-    $choice = Read-Host "Continue anyway? (y/N)"
-    if ($choice -ne 'y' -and $choice -ne 'Y') {
-        Write-Host "[CANCELLED] Aborted" -ForegroundColor Red
-        exit 1
-    }
 }
 
 # Update version files
@@ -208,47 +150,13 @@ if (-not $success) {
     exit 1
 }
 
-# Build portable package (unless skipped)
-if (-not $SkipPortableBuild) {
-        # Check if build.ps1 exists
-    $buildScript = Join-Path $PSScriptRoot "build.ps1"
-    if (-not (Test-Path $buildScript)) {
-      Write-Error "[ERROR] build.ps1 not found. Cannot build portable package."
-        exit 1
-    }
-
-    if (-not (Build-Package $NewVersion)) {
-        Write-Error "[ERROR] Failed to build portable package"
-        exit 1
-    }
-} else {
-    Write-Host "`n[INFO] Skipping portable build (use -SkipPortableBuild:`$false to build)" -ForegroundColor Yellow
-}
-
 # Git operations
 Write-Host "`n[INFO] Git operations..." -ForegroundColor Cyan
 
 try {
-    # Add changed files
-    git add WorkOrderBlender.csproj update.xml
-    if (Test-Path "WorkOrderBlender.Installer.wxs") {
-        git add WorkOrderBlender.Installer.wxs
-    }
-
-    # Add the new portable zip file if it was built
-    if (-not $SkipPortableBuild) {
-        $expectedZipName = "WorkOrderBlender-$NewVersion-portable.zip"
-        $zipDir = Join-Path $PSScriptRoot "dist"
-        $zipPath = Join-Path $zipDir $expectedZipName
-        if (Test-Path $zipPath) {
-            git add $zipPath
-            Write-Host "[OK] Staged portable zip file: $expectedZipName" -ForegroundColor Green
-        } else {
-            Write-Warning "[WARNING] Portable zip file not found: $expectedZipName"
-        }
-    }
-
-    Write-Host "[OK] Staged version files" -ForegroundColor Green
+    # Add all unstaged files (including version files and any other changes)
+    git add -A
+    Write-Host "[OK] Staged all changes (including version files and unstaged files)" -ForegroundColor Green
 
     # Commit changes
     git commit -m $CommitMessage
@@ -290,25 +198,20 @@ Write-Host "   - update.xml (Version: $NewVersion)" -ForegroundColor White
 if (Test-Path "WorkOrderBlender.Installer.wxs") {
     Write-Host "   - WorkOrderBlender.Installer.wxs (Version: $NewVersion)" -ForegroundColor White
 }
-
-if (-not $SkipPortableBuild) {
-    Write-Host "   - WorkOrderBlender-$NewVersion-portable.zip (Portable package)" -ForegroundColor White
-}
+Write-Host "   - All other unstaged files included in commit" -ForegroundColor White
 
 if (-not $SkipGitPush) {
     Write-Host "`n[INFO] The GitHub Actions workflow will:" -ForegroundColor Cyan
     Write-Host "   1. Build the application" -ForegroundColor White
     Write-Host "   2. Create a GitHub release" -ForegroundColor White
-    Write-Host "   3. Upload WorkOrderBlender-v$NewVersion.zip" -ForegroundColor White
+    Write-Host "   3. Generate and upload WorkOrderBlender-v$NewVersion.zip" -ForegroundColor White
     Write-Host "   4. Update the auto-updater XML" -ForegroundColor White
     Write-Host "   5. Trigger auto-updates for existing users" -ForegroundColor White
 }
 
 Write-Host "`n[INFO] Script completed successfully with:" -ForegroundColor Cyan
 Write-Host "   - Version files updated" -ForegroundColor White
-if (-not $SkipPortableBuild) {
-    Write-Host "   - Portable package built and committed" -ForegroundColor White
-}
+Write-Host "   - All changes committed" -ForegroundColor White
 Write-Host "   - Git commit and tag created" -ForegroundColor White
 if (-not $SkipGitPush) {
     Write-Host "   - Changes pushed to GitHub" -ForegroundColor White
