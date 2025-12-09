@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -54,16 +55,55 @@ namespace WorkOrderBlender
                 Height = 50
             };
 
-            // Changelog link
-            var lnkChangelog = new LinkLabel
+            // Update recommendation note
+            var lblUpdateNote = new Label
             {
-                Text = "View Changelog",
-                Font = new Font("Segoe UI", 9),
+                Text = "We recommend installing this update to ensure you have the latest features and improvements.",
+                Font = new Font("Segoe UI", 9, FontStyle.Italic),
+                ForeColor = Color.DarkBlue,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Dock = DockStyle.Top,
-                Height = 25
+                Height = 35,
+                Padding = new Padding(15, 5, 15, 5)
             };
-            lnkChangelog.LinkClicked += (s, e) => OpenChangelog();
+
+            // Release notes display (if available)
+            Control releaseNotesControl = null;
+            if (!string.IsNullOrWhiteSpace(updateInfo.ReleaseNotes))
+            {
+                var lblReleaseNotesTitle = new Label
+                {
+                    Text = "Release Notes:",
+                    Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                    Dock = DockStyle.Top,
+                    Height = 20,
+                    Padding = new Padding(10, 5, 10, 0)
+                };
+
+                var txtReleaseNotes = new TextBox
+                {
+                    Text = updateInfo.ReleaseNotes,
+                    Multiline = true,
+                    ReadOnly = true,
+                    ScrollBars = ScrollBars.Vertical,
+                    Dock = DockStyle.Fill,
+                    Font = new Font("Segoe UI", 8),
+                    BackColor = SystemColors.Window,
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Padding = new Padding(5)
+                };
+
+                var releaseNotesPanel = new Panel
+                {
+                    Dock = DockStyle.Top,
+                    Height = 120,
+                    Padding = new Padding(10, 0, 10, 5)
+                };
+                releaseNotesPanel.Controls.Add(txtReleaseNotes);
+                releaseNotesPanel.Controls.Add(lblReleaseNotesTitle);
+
+                releaseNotesControl = releaseNotesPanel;
+            }
 
             // Progress bar
             var progressBar = new ProgressBar
@@ -134,15 +174,23 @@ namespace WorkOrderBlender
             buttonPanel.Controls.Add(btnUpdate, 2, 0);
 
             // Add controls to form
-            this.Controls.AddRange(new Control[]
+            var controlsToAdd = new List<Control>
             {
                 lblTitle,
                 lblVersion,
-                lnkChangelog,
+                lblUpdateNote,
                 progressBar,
                 lblStatus,
                 buttonPanel
-            });
+            };
+
+            // Add release notes if available (insert after update note)
+            if (releaseNotesControl != null)
+            {
+                controlsToAdd.Insert(3, releaseNotesControl); // Insert after update note
+            }
+
+            this.Controls.AddRange(controlsToAdd.ToArray());
 
             this.ResumeLayout(false);
         }
@@ -171,26 +219,6 @@ namespace WorkOrderBlender
             }
         }
 
-        private void OpenChangelog()
-        {
-            try
-            {
-                if (!string.IsNullOrEmpty(updateInfo.ChangelogUrl))
-                {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = updateInfo.ChangelogUrl,
-                        UseShellExecute = true
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                Program.Log("Error opening changelog", ex);
-                MessageBox.Show("Could not open changelog: " + ex.Message, "Error",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
-        }
 
         private async Task StartUpdate(ProgressBar progressBar, Label statusLabel, Button updateButton)
         {

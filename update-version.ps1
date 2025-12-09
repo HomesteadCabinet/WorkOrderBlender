@@ -11,12 +11,15 @@
 # Usage:
 #   .\update-version.ps1 -NewVersion "1.0.2"
 #   .\update-version.ps1 -NewVersion "1.0.2" -SkipGitPush
+#
+# Note: The script will prompt for release notes during execution. These notes will be included
+#       in the commit body and displayed in the update dialog when users check for updates.
 
 param(
-    [Parameter(Mandatory=$true)]
+    [Parameter(Mandatory=$false)]
     [string]$NewVersion,
 
-    [string]$CommitMessage = "Version bump to $NewVersion",
+    [string]$CommitMessage,
 
     [switch]$SkipGitPush,
 
@@ -100,6 +103,78 @@ function Update-WixVersion {
     return $true
 }
 
+# Function to get current version from .csproj file
+function Get-CurrentVersion {
+    try {
+        if (Test-Path "WorkOrderBlender.csproj") {
+            $content = Get-Content "WorkOrderBlender.csproj" -Raw
+            if ($content -match '<Version>([\d\.]+)</Version>') {
+                return $matches[1]
+            }
+        }
+    }
+    catch {
+        # Ignore errors, return null
+    }
+    return $null
+}
+
+# Function to get multiline release notes from user
+function Get-ReleaseNotes {
+    Write-Host "`n[INFO] Enter release notes for this update:" -ForegroundColor Cyan
+    Write-Host "   (These notes will appear in the commit body and update dialog)" -ForegroundColor Gray
+    Write-Host "   (Press Enter on an empty line twice to finish, or just press Enter twice to skip)" -ForegroundColor Gray
+    Write-Host ""
+
+    $releaseNotes = @()
+    $emptyLineCount = 0
+    $lineNumber = 1
+
+    while ($true) {
+        $prompt = if ($lineNumber -eq 1) { "   Release notes: " } else { "   > " }
+        $line = Read-Host $prompt
+
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            $emptyLineCount++
+            if ($emptyLineCount -ge 2) {
+                break
+            }
+        } else {
+            $emptyLineCount = 0
+            $releaseNotes += $line
+            $lineNumber++
+        }
+    }
+
+    if ($releaseNotes.Count -eq 0) {
+        Write-Host "   [INFO] No release notes provided (skipping)" -ForegroundColor Yellow
+        return ""
+    }
+
+    Write-Host "   [OK] Release notes captured ($($releaseNotes.Count) line(s))" -ForegroundColor Green
+    return $releaseNotes -join "`n"
+}
+
+
+# Display current version first
+Write-Host "=== WorkOrderBlender Version Update Script ===" -ForegroundColor Cyan
+$currentVersion = Get-CurrentVersion
+if ($currentVersion) {
+    Write-Host "Current Version: $currentVersion" -ForegroundColor Cyan
+} else {
+    Write-Host "Current Version: Unable to determine" -ForegroundColor Yellow
+}
+Write-Host ""
+
+# Prompt for new version if not provided
+if ([string]::IsNullOrWhiteSpace($NewVersion)) {
+    $NewVersion = Read-Host "Enter new version number (e.g., 1.0.2)"
+}
+
+# Set default commit message if not provided
+if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
+    $CommitMessage = "Version bump to $NewVersion"
+}
 
 # Validate inputs
 if (-not (Test-VersionFormat $NewVersion)) {
@@ -107,7 +182,6 @@ if (-not (Test-VersionFormat $NewVersion)) {
     exit 1
 }
 
-Write-Host "=== WorkOrderBlender Version Update Script ===" -ForegroundColor Cyan
 Write-Host "New Version: $NewVersion" -ForegroundColor Yellow
 
 # Check if we're in a git repository
@@ -158,9 +232,34 @@ try {
     git add -A
     Write-Host "[OK] Staged all changes (including version files and unstaged files)" -ForegroundColor Green
 
-    # Commit changes
-    git commit -m $CommitMessage
-    Write-Host "[OK] Committed changes: $CommitMessage" -ForegroundColor Green
+    # Get release notes from user
+    $releaseNotes = Get-ReleaseNotes
+
+    # Commit changes with release notes in body
+    if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
+        # No release notes provided, use simple commit
+        git commit -m $CommitMessage
+        Write-Host "[OK] Committed changes: $CommitMessage" -ForegroundColor Green
+    } else {
+        # Create temporary file for commit message with body
+        $tempCommitFile = [System.IO.Path]::GetTempFileName()
+        try {
+            # Write commit message: subject line, blank line, then body
+            $commitContent = $CommitMessage + "`n`n" + $releaseNotes
+            Set-Content -Path $tempCommitFile -Value $commitContent -NoNewline
+
+            # Commit using the file
+            git commit -F $tempCommitFile
+            Write-Host "[OK] Committed changes: $CommitMessage" -ForegroundColor Green
+            Write-Host "[OK] Release notes included in commit body" -ForegroundColor Green
+        }
+        finally {
+            # Clean up temporary file
+            if (Test-Path $tempCommitFile) {
+                Remove-Item $tempCommitFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 
     # Create and push tag
     $tagName = "v$NewVersion"
