@@ -415,7 +415,7 @@ namespace WorkOrderBlender
       {
         Text = "Close",
         AutoSize = true,
-        BackColor = Color.FromArgb(173, 179, 184),
+        BackColor = Color.FromArgb(215, 218, 222),
         ForeColor = Color.Black,
         FlatStyle = FlatStyle.Flat,
         Font = new Font("Segoe UI", 9F, FontStyle.Regular),

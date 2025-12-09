@@ -84,6 +84,12 @@ namespace WorkOrderBlender
                 var httpResult = await CheckForUpdatesWithHttpAsync();
                 if (httpResult != null)
                 {
+                    // Try to get release notes from latest commit
+                    var releaseNotes = await GetLatestCommitMessageAsync();
+                    if (!string.IsNullOrWhiteSpace(releaseNotes))
+                    {
+                        httpResult.ReleaseNotes = releaseNotes;
+                    }
                     return httpResult;
                 }
 
@@ -108,7 +114,11 @@ namespace WorkOrderBlender
                     var updateXmlPath = Path.Combine(tempDir, "update.xml");
                     if (!File.Exists(updateXmlPath)) return null;
                     var updateXml = XDocument.Load(updateXmlPath);
-                    return ParseUpdateInfo(updateXml.Root);
+
+                    // Get release notes from latest commit
+                    var releaseNotes = await GetLatestCommitMessageAsync(tempDir);
+                    var updateInfo = ParseUpdateInfo(updateXml.Root, releaseNotes);
+                    return updateInfo;
                 }
                 finally
                 {
@@ -132,7 +142,14 @@ namespace WorkOrderBlender
                 var updateXml = await DownloadUpdateXmlAsync();
                 if (updateXml == null) return null;
 
-                return ParseUpdateInfo(updateXml);
+                // Try to get release notes from latest commit if Git is available
+                string releaseNotes = null;
+                if (IsGitAvailable())
+                {
+                    releaseNotes = await GetLatestCommitMessageAsync();
+                }
+
+                return ParseUpdateInfo(updateXml, releaseNotes);
             }
             catch (Exception ex)
             {
@@ -144,7 +161,7 @@ namespace WorkOrderBlender
         /// <summary>
         /// Parses update information from XML
         /// </summary>
-        private static UpdateInfo ParseUpdateInfo(XElement updateXml)
+        private static UpdateInfo ParseUpdateInfo(XElement updateXml, string releaseNotes = null)
         {
             try
             {
@@ -160,6 +177,7 @@ namespace WorkOrderBlender
                         AvailableVersion = availableVersion.ToString(),
                         DownloadUrl = updateXml.Element("url")?.Value,
                         ChangelogUrl = updateXml.Element("changelog")?.Value,
+                        ReleaseNotes = releaseNotes,
                         IsMandatory = bool.Parse(updateXml.Element("mandatory")?.Value ?? "false")
                     };
                 }
@@ -170,6 +188,82 @@ namespace WorkOrderBlender
             catch (Exception ex)
             {
                 Program.Log("PortableUpdateManager: Error parsing update info", ex);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Gets the latest commit message from the repository
+        /// </summary>
+        private static async Task<string> GetLatestCommitMessageAsync(string workingDir = null)
+        {
+            try
+            {
+                // If workingDir is provided, use it; otherwise create a temp directory
+                var tempDir = workingDir;
+                var shouldCleanup = false;
+                var commitRef = "origin/main"; // Default reference
+
+                if (string.IsNullOrEmpty(tempDir))
+                {
+                    tempDir = Path.Combine(Path.GetTempPath(), "WOB_Commit_Check_" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(tempDir);
+                    shouldCleanup = true;
+
+                    try
+                    {
+                        var init = await RunGitCommandAsync(tempDir, "init");
+                        if (init.ExitCode != 0) return null;
+                        var remote = await RunGitCommandAsync(tempDir, "remote", "add", "origin", "git@github.com:HomesteadCabinet/WorkOrderBlender.git");
+                        if (remote.ExitCode != 0) return null;
+                        var fetch = await RunGitCommandAsync(tempDir, "fetch", "--depth", "1", "origin", "main");
+                        if (fetch.ExitCode != 0) return null;
+                        commitRef = "FETCH_HEAD";
+                    }
+                    catch
+                    {
+                        if (shouldCleanup)
+                        {
+                            try { Directory.Delete(tempDir, true); } catch { }
+                        }
+                        return null;
+                    }
+                }
+                else
+                {
+                    // If workingDir is provided, it's already been fetched, use HEAD or origin/main
+                    commitRef = "HEAD";
+                }
+
+                try
+                {
+                    // Get the latest commit message (subject + body)
+                    // Try multiple references in case one doesn't work
+                    var refsToTry = new[] { commitRef, "HEAD", "origin/main" };
+                    foreach (var refToTry in refsToTry)
+                    {
+                        var logResult = await RunGitCommandAsync(tempDir, "log", "-1", "--format=%B", refToTry);
+                        if (logResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(logResult.Output))
+                        {
+                            var commitMessage = logResult.Output.Trim();
+                            Program.Log($"PortableUpdateManager: Retrieved commit message from {refToTry} (length: {commitMessage.Length})");
+                            return commitMessage;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (shouldCleanup)
+                    {
+                        try { Directory.Delete(tempDir, true); } catch { }
+                    }
+                }
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Program.Log("PortableUpdateManager: Error getting latest commit message", ex);
                 return null;
             }
         }
@@ -319,7 +413,7 @@ namespace WorkOrderBlender
         /// </summary>
         private static Version ParseVersion(string versionString)
         {
-            if (string.IsNullOrWhiteSpace(versionString)) return new Version(0, 0, 0, 0);
+            if (string.IsNullOrWhiteSpace(versionString)) return new Version(0, 0, 0);
 
             try
             {
@@ -329,7 +423,7 @@ namespace WorkOrderBlender
             }
             catch
             {
-                return new Version(0, 0, 0, 0);
+                return new Version(0, 0, 0);
             }
         }
 
@@ -807,6 +901,7 @@ Start-Process $ExePath -WorkingDirectory $CurrentDir
         public string AvailableVersion { get; set; }
         public string DownloadUrl { get; set; }
         public string ChangelogUrl { get; set; }
+        public string ReleaseNotes { get; set; }
         public bool IsMandatory { get; set; }
     }
 
