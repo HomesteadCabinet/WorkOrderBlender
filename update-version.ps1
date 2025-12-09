@@ -131,7 +131,7 @@ function Get-ReleaseNotes {
     $lineNumber = 1
 
     while ($true) {
-        $prompt = if ($lineNumber -eq 1) { "   Release notes: " } else { "   > " }
+        $prompt = if ($lineNumber -eq 1) { "   Release notes" } else { "   > " }
         $line = Read-Host $prompt
 
         if ([string]::IsNullOrWhiteSpace($line)) {
