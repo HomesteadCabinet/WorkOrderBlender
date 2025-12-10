@@ -34,8 +34,11 @@ namespace WorkOrderBlender
       stagingDir = cfg.StagingDir ?? @"P:\CadLinkPTX\staging";
       releaseDir = cfg.ReleaseDir ?? @"P:\CadLinkPTX\release";
 
-      // Initialize release file tracker
-      releaseTracker = new ReleaseFileTracker();
+      // Initialize release file tracker with release directory for shared CSV file
+      releaseTracker = new ReleaseFileTracker(releaseDir);
+
+      // Subscribe to CSV file changes to synchronize across instances
+      releaseTracker.CsvFileChanged += ReleaseTracker_CsvFileChanged;
 
       // Initialize filter lists
       allStagingFiles = new List<FileDisplayItem>();
@@ -495,6 +498,14 @@ namespace WorkOrderBlender
 
     private void SawQueueDialog_FormClosing(object sender, FormClosingEventArgs e)
     {
+      // Unsubscribe from CSV file change events
+      if (releaseTracker != null)
+      {
+        releaseTracker.CsvFileChanged -= ReleaseTracker_CsvFileChanged;
+        releaseTracker.Dispose();
+        Program.Log("SawQueueDialog: Released release file tracker");
+      }
+
       // Dispose the file system watchers when form closes
       if (releaseDirWatcher != null)
       {
@@ -510,6 +521,28 @@ namespace WorkOrderBlender
         stagingDirWatcher.Dispose();
         stagingDirWatcher = null;
         Program.Log("SawQueueDialog: Released staging directory watcher");
+      }
+    }
+
+    // Handle CSV file changes from other instances
+    private void ReleaseTracker_CsvFileChanged(object sender, EventArgs e)
+    {
+      try
+      {
+        // Refresh the release list on UI thread when CSV changes
+        if (InvokeRequired)
+        {
+          Invoke(new Action(RefreshReleaseList));
+        }
+        else
+        {
+          RefreshReleaseList();
+        }
+        Program.Log("SawQueueDialog: Refreshed release list due to CSV file change from another instance");
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error refreshing release list after CSV change", ex);
       }
     }
 
@@ -1947,7 +1980,7 @@ namespace WorkOrderBlender
 
         // Confirm the removal
         var result = MessageBox.Show(
-          $"Are you sure you want to remove {selectedFiles.Count} file(s) from the tracking list?\n\nThis will remove them from the CSV file permanently.",
+          $"Are you sure you want to remove {selectedFiles.Count} file(s) from the tracking list?",
           "Confirm Removal",
           MessageBoxButtons.YesNo,
           MessageBoxIcon.Warning);
@@ -2008,22 +2041,145 @@ namespace WorkOrderBlender
     }
 
     // Class to track release file history with CSV persistence
-    private sealed class ReleaseFileTracker
+    private sealed class ReleaseFileTracker : IDisposable
     {
       private readonly List<TrackedReleaseFile> trackedFiles;
       private readonly string csvFilePath;
+      private readonly FileSystemWatcher csvWatcher;
+      private bool isSaving = false; // Flag to ignore changes we make ourselves
+      private DateTime lastChangeTime = DateTime.MinValue; // For debouncing rapid changes
       private const int MaxTrackedFiles = 100;
+      private const int ChangeDebounceMs = 500; // Debounce window for file changes
 
-      public ReleaseFileTracker()
+      // Event fired when CSV file changes (from another instance)
+      public event EventHandler CsvFileChanged;
+
+      public ReleaseFileTracker(string releaseDirectory)
       {
-        // Store CSV file in the same directory as settings.xml
-        var configDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
-        if (string.IsNullOrEmpty(configDir))
-          configDir = Environment.CurrentDirectory;
-        csvFilePath = Path.Combine(configDir, "release_history.csv");
+        // Store CSV file in the release directory so multiple users can share the same tracking file
+        if (string.IsNullOrWhiteSpace(releaseDirectory))
+        {
+          // Fallback to config directory if release directory not provided
+          var configDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+          if (string.IsNullOrEmpty(configDir))
+            configDir = Environment.CurrentDirectory;
+          csvFilePath = Path.Combine(configDir, "release_history.csv");
+        }
+        else
+        {
+          // Ensure release directory exists
+          try
+          {
+            if (!Directory.Exists(releaseDirectory))
+            {
+              Directory.CreateDirectory(releaseDirectory);
+              Program.Log($"ReleaseFileTracker: Created release directory: {releaseDirectory}");
+            }
+            csvFilePath = Path.Combine(releaseDirectory, "release_history.csv");
+          }
+          catch (Exception ex)
+          {
+            // Fallback to config directory if we can't access release directory
+            Program.Log($"ReleaseFileTracker: Error accessing release directory, falling back to config directory", ex);
+            var configDir = Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location);
+            if (string.IsNullOrEmpty(configDir))
+              configDir = Environment.CurrentDirectory;
+            csvFilePath = Path.Combine(configDir, "release_history.csv");
+          }
+        }
 
         trackedFiles = new List<TrackedReleaseFile>();
+        Program.Log($"ReleaseFileTracker: Using CSV file at: {csvFilePath}");
         LoadFromCsv();
+
+        // Set up file watcher to detect changes from other instances
+        csvWatcher = new FileSystemWatcher
+        {
+          Path = Path.GetDirectoryName(csvFilePath),
+          Filter = Path.GetFileName(csvFilePath),
+          NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+          EnableRaisingEvents = true
+        };
+        csvWatcher.Changed += CsvWatcher_Changed;
+        csvWatcher.Error += CsvWatcher_Error;
+        Program.Log($"ReleaseFileTracker: Set up file watcher for CSV synchronization");
+      }
+
+      // Handle CSV file changes from other instances
+      private void CsvWatcher_Changed(object sender, FileSystemEventArgs e)
+      {
+        try
+        {
+          // Ignore changes we made ourselves
+          if (isSaving)
+          {
+            return;
+          }
+
+          // Debounce rapid file change events (FileSystemWatcher can fire multiple times)
+          var now = DateTime.Now;
+          var timeSinceLastChange = (now - lastChangeTime).TotalMilliseconds;
+          if (timeSinceLastChange < ChangeDebounceMs)
+          {
+            // Too soon after last change, ignore this event
+            return;
+          }
+          lastChangeTime = now;
+
+          // Wait a moment for file write to complete
+          System.Threading.Thread.Sleep(200);
+
+          // Reload CSV file
+          Program.Log("ReleaseFileTracker: CSV file changed by another instance, reloading...");
+          LoadFromCsv();
+
+          // Notify subscribers that the data has changed
+          CsvFileChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+          Program.Log("ReleaseFileTracker: Error handling CSV file change", ex);
+        }
+      }
+
+      // Handle watcher errors
+      private void CsvWatcher_Error(object sender, ErrorEventArgs e)
+      {
+        try
+        {
+          Program.Log("ReleaseFileTracker: CSV file watcher error", e.GetException());
+
+          // Try to restart the watcher
+          if (csvWatcher != null)
+          {
+            csvWatcher.EnableRaisingEvents = false;
+            System.Threading.Thread.Sleep(1000);
+
+            var csvDir = Path.GetDirectoryName(csvFilePath);
+            if (Directory.Exists(csvDir) && File.Exists(csvFilePath))
+            {
+              csvWatcher.EnableRaisingEvents = true;
+              Program.Log("ReleaseFileTracker: CSV file watcher restarted after error");
+            }
+          }
+        }
+        catch (Exception ex)
+        {
+          Program.Log("ReleaseFileTracker: Error handling CSV watcher error", ex);
+        }
+      }
+
+      // Dispose the file watcher
+      public void Dispose()
+      {
+        if (csvWatcher != null)
+        {
+          csvWatcher.Changed -= CsvWatcher_Changed;
+          csvWatcher.Error -= CsvWatcher_Error;
+          csvWatcher.EnableRaisingEvents = false;
+          csvWatcher.Dispose();
+          Program.Log("ReleaseFileTracker: Disposed CSV file watcher");
+        }
       }
 
       // Load tracked files from CSV
@@ -2038,7 +2194,14 @@ namespace WorkOrderBlender
           }
 
           trackedFiles.Clear();
-          var lines = File.ReadAllLines(csvFilePath, Encoding.UTF8);
+
+          // Read with file sharing to allow concurrent access
+          var lines = ReadCsvWithRetry();
+          if (lines == null)
+          {
+            Program.Log("ReleaseFileTracker: Failed to read CSV file after retries");
+            return;
+          }
 
           // Skip header line if present
           int startIndex = 0;
@@ -2126,29 +2289,101 @@ namespace WorkOrderBlender
         return fields.ToArray();
       }
 
-      // Save tracked files to CSV
-      private void SaveToCsv()
+      // Read CSV file with retry logic for concurrent access
+      private string[] ReadCsvWithRetry(int maxRetries = 5, int delayMs = 200)
       {
-        try
+        for (int attempt = 0; attempt < maxRetries; attempt++)
         {
-          using (var writer = new StreamWriter(csvFilePath, false, Encoding.UTF8))
+          try
           {
-            // Write header
-            writer.WriteLine("FileName,FilePath,JobName,Status,SentToRelease,SentToSaw");
-
-            // Write data (most recent first)
-            foreach (var file in trackedFiles.OrderByDescending(f => f.SentToRelease))
+            // Use FileShare.ReadWrite to allow concurrent reads and writes
+            using (var fileStream = new FileStream(csvFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var reader = new StreamReader(fileStream, Encoding.UTF8))
             {
-              var sentToSawStr = file.SentToSaw.HasValue ? file.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm:ss") : "";
-              writer.WriteLine($"{EscapeCsvField(file.FileName)},{EscapeCsvField(file.FilePath)},{EscapeCsvField(file.JobName)},{EscapeCsvField(file.Status)},{file.SentToRelease:yyyy-MM-dd HH:mm:ss},{sentToSawStr}");
+              var lines = new List<string>();
+              string line;
+              while ((line = reader.ReadLine()) != null)
+              {
+                lines.Add(line);
+              }
+              return lines.ToArray();
             }
           }
-
-          Program.Log($"ReleaseFileTracker: Saved {trackedFiles.Count} tracked files to CSV");
+          catch (IOException ex) when (attempt < maxRetries - 1)
+          {
+            // File might be locked by another process, retry after delay
+            Program.Log($"ReleaseFileTracker: CSV file locked, retrying ({attempt + 1}/{maxRetries}): {ex.Message}");
+            System.Threading.Thread.Sleep(delayMs);
+          }
+          catch (Exception ex)
+          {
+            Program.Log($"ReleaseFileTracker: Error reading CSV file on attempt {attempt + 1}", ex);
+            if (attempt == maxRetries - 1)
+              throw;
+            System.Threading.Thread.Sleep(delayMs);
+          }
         }
-        catch (Exception ex)
+        return null;
+      }
+
+      // Save tracked files to CSV with retry logic for concurrent access
+      private void SaveToCsv()
+      {
+        const int maxRetries = 5;
+        const int delayMs = 200;
+
+        // Set flag to ignore our own changes
+        isSaving = true;
+        try
         {
-          Program.Log("ReleaseFileTracker: Error saving to CSV", ex);
+          for (int attempt = 0; attempt < maxRetries; attempt++)
+          {
+            try
+            {
+              // Use FileShare.Read to allow concurrent reads while writing
+              using (var fileStream = new FileStream(csvFilePath, FileMode.Create, FileAccess.Write, FileShare.Read))
+              using (var writer = new StreamWriter(fileStream, Encoding.UTF8))
+              {
+                // Write header
+                writer.WriteLine("FileName,FilePath,JobName,Status,SentToRelease,SentToSaw");
+
+                // Write data (most recent first)
+                foreach (var file in trackedFiles.OrderByDescending(f => f.SentToRelease))
+                {
+                  var sentToSawStr = file.SentToSaw.HasValue ? file.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm:ss") : "";
+                  writer.WriteLine($"{EscapeCsvField(file.FileName)},{EscapeCsvField(file.FilePath)},{EscapeCsvField(file.JobName)},{EscapeCsvField(file.Status)},{file.SentToRelease:yyyy-MM-dd HH:mm:ss},{sentToSawStr}");
+                }
+              }
+
+              Program.Log($"ReleaseFileTracker: Saved {trackedFiles.Count} tracked files to CSV");
+              return; // Success, exit retry loop
+            }
+            catch (IOException ex) when (attempt < maxRetries - 1)
+            {
+              // File might be locked by another process, retry after delay
+              Program.Log($"ReleaseFileTracker: CSV file locked during save, retrying ({attempt + 1}/{maxRetries}): {ex.Message}");
+              System.Threading.Thread.Sleep(delayMs);
+            }
+            catch (Exception ex)
+            {
+              Program.Log($"ReleaseFileTracker: Error saving to CSV on attempt {attempt + 1}", ex);
+              if (attempt == maxRetries - 1)
+              {
+                // Last attempt failed, log error but don't throw to prevent application crash
+                Program.Log("ReleaseFileTracker: Failed to save CSV after all retries", ex);
+              }
+              else
+              {
+                System.Threading.Thread.Sleep(delayMs);
+              }
+            }
+          }
+        }
+        finally
+        {
+          // Clear flag after a short delay to allow file system to settle
+          System.Threading.Thread.Sleep(200);
+          isSaving = false;
         }
       }
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WorkOrderBlender
@@ -579,10 +580,42 @@ namespace WorkOrderBlender
       cfg.Save();
     }
 
-    private void CheckForUpdates_Click(object sender, EventArgs e)
+    private async void CheckForUpdates_Click(object sender, EventArgs e)
     {
-      // Raise the event to let MainForm handle the Check for Updates functionality
-      CheckForUpdatesRequested?.Invoke(this, EventArgs.Empty);
+      try
+      {
+        // Disable the button to prevent multiple clicks
+        var button = sender as Button;
+        if (button != null)
+        {
+          button.Enabled = false;
+          button.Text = "Checking...";
+        }
+
+        // Raise the event to let MainForm handle the Check for Updates functionality
+        // The event handler will call Program.CheckForUpdates which is async void
+        CheckForUpdatesRequested?.Invoke(this, EventArgs.Empty);
+
+        // Wait a moment to allow the async update check to start
+        // This prevents the button from re-enabling too quickly
+        await Task.Delay(1000);
+      }
+      catch (Exception ex)
+      {
+        Program.Log("CheckForUpdates_Click error in SettingsDialog", ex);
+        MessageBox.Show("Failed to check for updates: " + ex.Message, "Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+      finally
+      {
+        // Re-enable the button after allowing time for update check to start
+        var button = sender as Button;
+        if (button != null)
+        {
+          button.Enabled = true;
+          button.Text = "Check for Updates";
+        }
+      }
     }
 
     private void TestMssqlConnection_Click(object sender, EventArgs e)

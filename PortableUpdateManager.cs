@@ -84,11 +84,21 @@ namespace WorkOrderBlender
                 var httpResult = await CheckForUpdatesWithHttpAsync();
                 if (httpResult != null)
                 {
-                    // Try to get release notes from latest commit
-                    var releaseNotes = await GetLatestCommitMessageAsync();
-                    if (!string.IsNullOrWhiteSpace(releaseNotes))
+                    // Try to get release notes from latest commit (non-blocking, timeout after 3 seconds)
+                    // Don't wait for release notes if it's slow - update check is more important
+                    try
                     {
-                        httpResult.ReleaseNotes = releaseNotes;
+                        var releaseNotesTask = GetLatestCommitMessageAsync();
+                        var timeoutTask = Task.Delay(3000); // 3 second timeout
+                        var completedTask = await Task.WhenAny(releaseNotesTask, timeoutTask);
+                        if (completedTask == releaseNotesTask && !string.IsNullOrWhiteSpace(releaseNotesTask.Result))
+                        {
+                            httpResult.ReleaseNotes = releaseNotesTask.Result;
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore errors - release notes are optional
                     }
                     return httpResult;
                 }
@@ -142,14 +152,30 @@ namespace WorkOrderBlender
                 var updateXml = await DownloadUpdateXmlAsync();
                 if (updateXml == null) return null;
 
-                // Try to get release notes from latest commit if Git is available
-                string releaseNotes = null;
-                if (IsGitAvailable())
+                // Parse update info first (don't wait for release notes)
+                var updateInfo = ParseUpdateInfo(updateXml, null);
+
+                // Try to get release notes from latest commit if Git is available (non-blocking, timeout after 2 seconds)
+                // Release notes are optional - don't delay the update check for them
+                if (IsGitAvailable() && updateInfo?.IsUpdateAvailable == true)
                 {
-                    releaseNotes = await GetLatestCommitMessageAsync();
+                    try
+                    {
+                        var releaseNotesTask = GetLatestCommitMessageAsync();
+                        var timeoutTask = Task.Delay(2000); // 2 second timeout
+                        var completedTask = await Task.WhenAny(releaseNotesTask, timeoutTask);
+                        if (completedTask == releaseNotesTask && !string.IsNullOrWhiteSpace(releaseNotesTask.Result))
+                        {
+                            updateInfo.ReleaseNotes = releaseNotesTask.Result;
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore errors - release notes are optional
+                    }
                 }
 
-                return ParseUpdateInfo(updateXml, releaseNotes);
+                return updateInfo;
             }
             catch (Exception ex)
             {
@@ -343,8 +369,8 @@ namespace WorkOrderBlender
                 }
                 startInfo.EnvironmentVariables["GIT_CONFIG_NOSYSTEM"] = "1";
                 startInfo.EnvironmentVariables["GIT_TERMINAL_PROMPT"] = "0";
-                // Optional tracing; logs are verbose but useful during issues
-                startInfo.EnvironmentVariables["GIT_TRACE"] = "1";
+                // Disable tracing for better performance (can be enabled for debugging)
+                // startInfo.EnvironmentVariables["GIT_TRACE"] = "1";
 
                 using (var process = new Process { StartInfo = startInfo })
                 {
@@ -530,7 +556,7 @@ namespace WorkOrderBlender
         {
             var currentDir = AppDomain.CurrentDomain.BaseDirectory;
             var exeName = "WorkOrderBlender.exe";
-            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0,0)).ToString();
+            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0)).ToString();
             var logsDir = Path.Combine(currentDir, "logs");
 
             return $@"@echo off
@@ -585,7 +611,7 @@ exit
         {
             var currentDir = AppDomain.CurrentDomain.BaseDirectory;
             var exeName = "WorkOrderBlender.exe";
-            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0,0)).ToString();
+            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0)).ToString();
             var logsDir = Path.Combine(currentDir, "logs");
 
             return $@"# WorkOrderBlender Update Script
