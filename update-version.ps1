@@ -36,13 +36,31 @@ function Test-VersionFormat {
 function Update-XmlVersion {
     param(
         [string]$FilePath,
-        [string]$Version
+        [string]$Version,
+        [string]$ReleaseNotes = ""
     )
 
     try {
         $xml = [xml](Get-Content $FilePath)
         $xml.item.version = $Version
         $xml.item.url = "https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v$Version/WorkOrderBlender-v$Version.zip"
+
+        # Update or create releaseNotes element
+        if (-not [string]::IsNullOrWhiteSpace($ReleaseNotes)) {
+            # Check if releaseNotes element exists, if not create it
+            if ($null -eq $xml.item.releaseNotes) {
+                $releaseNotesElement = $xml.CreateElement("releaseNotes")
+                $xml.item.AppendChild($releaseNotesElement) | Out-Null
+            }
+            $xml.item.releaseNotes = $ReleaseNotes
+            Write-Host "[OK] Updated release notes in $FilePath" -ForegroundColor Green
+        } else {
+            # If no release notes provided, remove the element if it exists
+            if ($null -ne $xml.item.releaseNotes) {
+                $xml.item.RemoveChild($xml.item.releaseNotes) | Out-Null
+            }
+        }
+
         $xml.Save($FilePath)
         Write-Host "[OK] Updated $FilePath" -ForegroundColor Green
     }
@@ -197,6 +215,11 @@ if ($status -and -not $Force) {
     git status --short
 }
 
+# Get release notes from user BEFORE updating files
+# This allows us to include release notes in update.xml
+Write-Host "`n[INFO] Collecting release notes..." -ForegroundColor Cyan
+$releaseNotes = Get-ReleaseNotes
+
 # Update version files
 Write-Host "`n[INFO] Updating version files..." -ForegroundColor Cyan
 
@@ -207,8 +230,8 @@ if (-not (Update-CsprojVersion "WorkOrderBlender.csproj" $NewVersion)) {
     $success = $false
 }
 
-# Update update.xml
-if (-not (Update-XmlVersion "update.xml" $NewVersion)) {
+# Update update.xml (with release notes if provided)
+if (-not (Update-XmlVersion "update.xml" $NewVersion $releaseNotes)) {
     $success = $false
 }
 
@@ -231,9 +254,6 @@ try {
     # Add all unstaged files (including version files and any other changes)
     git add -A
     Write-Host "[OK] Staged all changes (including version files and unstaged files)" -ForegroundColor Green
-
-    # Get release notes from user
-    $releaseNotes = Get-ReleaseNotes
 
     # Commit changes with release notes in body
     if ([string]::IsNullOrWhiteSpace($releaseNotes)) {
@@ -269,12 +289,12 @@ try {
     if (-not $SkipGitPush) {
         Write-Host "[INFO] Pushing to GitHub..." -ForegroundColor Cyan
 
-        # Push commits
-        git push origin main
+        # Push commits (explicitly specify branch ref to avoid ambiguity with tags)
+        git push origin refs/heads/main:refs/heads/main
         Write-Host "[OK] Pushed commits to main branch" -ForegroundColor Green
 
         # Push tag (this triggers the GitHub Action release workflow)
-        git push origin $tagName
+        git push origin refs/tags/$tagName
         Write-Host "[OK] Pushed tag: $tagName" -ForegroundColor Green
 
         Write-Host "`n[SUCCESS] Release workflow should start automatically." -ForegroundColor Green

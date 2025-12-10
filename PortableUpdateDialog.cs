@@ -58,7 +58,7 @@ namespace WorkOrderBlender
             // Update recommendation note
             var lblUpdateNote = new Label
             {
-                Text = "We recommend installing this update to ensure you have the latest features and improvements.",
+                Text = "It's recommended to install this update for new features and improvements.",
                 Font = new Font("Segoe UI", 9, FontStyle.Italic),
                 ForeColor = Color.DarkBlue,
                 TextAlign = ContentAlignment.MiddleCenter,
