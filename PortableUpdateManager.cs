@@ -39,7 +39,8 @@ namespace WorkOrderBlender
 
 
         /// <summary>
-        /// Checks for updates using HTTP (fast method), with optional Git-based release notes
+        /// Checks for updates using HTTP (fast method)
+        /// Release notes are now included in update.xml for better performance
         /// </summary>
         public static async Task<UpdateInfo> CheckForUpdatesAsync()
         {
@@ -47,34 +48,8 @@ namespace WorkOrderBlender
             {
                 Program.Log("PortableUpdateManager: Checking for updates...");
 
-                // Always use HTTP method first - it's much faster than Git operations
-                // Only use Git for release notes if needed and available
-                var updateInfo = await CheckForUpdatesWithHttpAsync();
-
-                // If update is available and we want release notes, try to get them (non-blocking, fast timeout)
-                if (updateInfo?.IsUpdateAvailable == true && isDeployKeyAvailable)
-                {
-                    // Don't wait for release notes - they're optional and can be slow
-                    // Fire and forget - if it completes quickly, great, otherwise skip it
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            var releaseNotes = await GetLatestCommitMessageAsync();
-                            if (!string.IsNullOrWhiteSpace(releaseNotes))
-                            {
-                                // Update release notes if we got them (though dialog may already be shown)
-                                updateInfo.ReleaseNotes = releaseNotes;
-                            }
-                        }
-                        catch
-                        {
-                            // Ignore - release notes are optional
-                        }
-                    });
-                }
-
-                return updateInfo;
+                // Use HTTP method - fast and includes release notes in update.xml
+                return await CheckForUpdatesWithHttpAsync();
             }
             catch (Exception ex)
             {
@@ -99,25 +74,10 @@ namespace WorkOrderBlender
 
                 // Query the repo for update.xml without cloning the tree
                 // Option 1: Use raw.githubusercontent.com via HTTP if accessible
+                // Release notes are now included in update.xml, so no need for Git operations
                 var httpResult = await CheckForUpdatesWithHttpAsync();
                 if (httpResult != null)
                 {
-                    // Try to get release notes from latest commit (non-blocking, timeout after 3 seconds)
-                    // Don't wait for release notes if it's slow - update check is more important
-                    try
-                    {
-                        var releaseNotesTask = GetLatestCommitMessageAsync();
-                        var timeoutTask = Task.Delay(3000); // 3 second timeout
-                        var completedTask = await Task.WhenAny(releaseNotesTask, timeoutTask);
-                        if (completedTask == releaseNotesTask && !string.IsNullOrWhiteSpace(releaseNotesTask.Result))
-                        {
-                            httpResult.ReleaseNotes = releaseNotesTask.Result;
-                        }
-                    }
-                    catch
-                    {
-                        // Ignore errors - release notes are optional
-                    }
                     return httpResult;
                 }
 
@@ -143,9 +103,8 @@ namespace WorkOrderBlender
                     if (!File.Exists(updateXmlPath)) return null;
                     var updateXml = XDocument.Load(updateXmlPath);
 
-                    // Get release notes from latest commit
-                    var releaseNotes = await GetLatestCommitMessageAsync(tempDir);
-                    var updateInfo = ParseUpdateInfo(updateXml.Root, releaseNotes);
+                    // Release notes are now included in update.xml, no need for Git commit message
+                    var updateInfo = ParseUpdateInfo(updateXml.Root);
                     return updateInfo;
                 }
                 finally
@@ -197,6 +156,14 @@ namespace WorkOrderBlender
 
                 if (availableVersion > currentVersion)
                 {
+                    // Get release notes from XML if available (faster than Git)
+                    var releaseNotesFromXml = updateXml.Element("releaseNotes")?.Value?.Trim();
+                    if (string.IsNullOrWhiteSpace(releaseNotesFromXml))
+                    {
+                        // Fallback to provided releaseNotes parameter (for backward compatibility)
+                        releaseNotesFromXml = releaseNotes;
+                    }
+
                     return new UpdateInfo
                     {
                         IsUpdateAvailable = true,
@@ -204,7 +171,7 @@ namespace WorkOrderBlender
                         AvailableVersion = availableVersion.ToString(),
                         DownloadUrl = updateXml.Element("url")?.Value,
                         ChangelogUrl = updateXml.Element("changelog")?.Value,
-                        ReleaseNotes = releaseNotes,
+                        ReleaseNotes = releaseNotesFromXml,
                         IsMandatory = bool.Parse(updateXml.Element("mandatory")?.Value ?? "false")
                     };
                 }
