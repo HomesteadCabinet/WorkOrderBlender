@@ -35,7 +35,8 @@ namespace WorkOrderBlender
       releaseDir = cfg.ReleaseDir ?? @"P:\CadLinkPTX\release";
 
       // Initialize release file tracker with release directory for shared CSV file
-      releaseTracker = new ReleaseFileTracker(releaseDir);
+      var maxTrackedFiles = cfg.MaxTrackedFiles;
+      releaseTracker = new ReleaseFileTracker(releaseDir, maxTrackedFiles);
 
       // Subscribe to CSV file changes to synchronize across instances
       releaseTracker.CsvFileChanged += ReleaseTracker_CsvFileChanged;
@@ -345,9 +346,9 @@ namespace WorkOrderBlender
       moveToStagingMenuItem.Click += ReleaseContextMenu_MoveToStaging_Click;
       releaseContextMenu.Items.Add(moveToStagingMenuItem);
 
-      var removeMenuItem = new ToolStripMenuItem("Remove");
-      removeMenuItem.Click += ReleaseContextMenu_Remove_Click;
-      releaseContextMenu.Items.Add(removeMenuItem);
+      var archiveMenuItem = new ToolStripMenuItem("Archive");
+      archiveMenuItem.Click += ReleaseContextMenu_Archive_Click;
+      releaseContextMenu.Items.Add(archiveMenuItem);
 
       // Add Opening event handler to enable/disable menu items based on selection
       releaseContextMenu.Opening += ReleaseContextMenu_Opening;
@@ -492,6 +493,9 @@ namespace WorkOrderBlender
           mainSplitContainer.SplitterDistance = (int)(this.ClientSize.Width * 0.50);
         }
 
+        // Clean up any stale lock files on startup
+        CleanupStaleLockFiles();
+
         // Scan release directory on startup to add any existing files to tracking
         ScanReleaseDirectoryOnStartup();
 
@@ -504,6 +508,64 @@ namespace WorkOrderBlender
         Program.Log("SawQueueDialog load failed", ex);
         MessageBox.Show($"Failed to load saw queue dialog: {ex.Message}", "Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Clean up stale lock files that may have been left behind
+    private void CleanupStaleLockFiles()
+    {
+      try
+      {
+        if (!Directory.Exists(stagingDir))
+          return;
+
+        var lockFiles = Directory.GetFiles(stagingDir, "*.lock", SearchOption.TopDirectoryOnly);
+        var cleanedCount = 0;
+
+        foreach (var lockFilePath in lockFiles)
+        {
+          try
+          {
+            // Check if the corresponding PTX file exists
+            var ptxFilePath = lockFilePath.Substring(0, lockFilePath.Length - 5); // Remove ".lock"
+
+            // If PTX file doesn't exist, or lock file is older than 5 minutes, consider it stale
+            var lockFileInfo = new FileInfo(lockFilePath);
+            var isStale = !File.Exists(ptxFilePath) ||
+                         (DateTime.Now - lockFileInfo.LastWriteTime).TotalMinutes > 5;
+
+            if (isStale)
+            {
+              // Try to delete the stale lock file
+              try
+              {
+                // Wait a moment in case file is still being closed
+                System.Threading.Thread.Sleep(100);
+                File.Delete(lockFilePath);
+                cleanedCount++;
+                Program.Log($"SawQueueDialog: Cleaned up stale lock file: {Path.GetFileName(lockFilePath)}");
+              }
+              catch (Exception ex)
+              {
+                // Lock file might be in use, skip it
+                Program.Log($"SawQueueDialog: Could not delete lock file {Path.GetFileName(lockFilePath)}: {ex.Message}");
+              }
+            }
+          }
+          catch (Exception ex)
+          {
+            Program.Log($"SawQueueDialog: Error checking lock file {Path.GetFileName(lockFilePath)}", ex);
+          }
+        }
+
+        if (cleanedCount > 0)
+        {
+          Program.Log($"SawQueueDialog: Cleaned up {cleanedCount} stale lock file(s) on startup");
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error cleaning up stale lock files", ex);
       }
     }
 
@@ -778,10 +840,25 @@ namespace WorkOrderBlender
       try
       {
         var fileName = Path.GetFileName(e.FullPath);
+        var filePath = e.FullPath;
         Program.Log($"SawQueueDialog: File created in staging directory detected by watcher: {fileName}");
 
         // Wait a moment for file to be fully written
         System.Threading.Thread.Sleep(500);
+
+        // Try to update job names with batch ID (only if file is not locked by another instance)
+        if (File.Exists(filePath))
+        {
+          try
+          {
+            UpdateJobNamesWithBatchId(filePath);
+          }
+          catch (Exception updateEx)
+          {
+            // Log but don't fail - file might be locked by another instance
+            Program.Log($"SawQueueDialog: Could not update batch ID for {fileName} (may be processed by another instance): {updateEx.Message}");
+          }
+        }
 
         // Refresh staging list on UI thread
         if (InvokeRequired)
@@ -808,7 +885,23 @@ namespace WorkOrderBlender
         if (e.ChangeType == WatcherChangeTypes.Changed)
         {
           var fileName = Path.GetFileName(e.FullPath);
+          var filePath = e.FullPath;
           Program.Log($"SawQueueDialog: File changed in staging directory: {fileName}");
+
+          // Check if this file needs batch ID update (may have been modified by another instance)
+          if (File.Exists(filePath) && fileName.EndsWith(".PTX", StringComparison.OrdinalIgnoreCase))
+          {
+            try
+            {
+              // Only try to update if file is not currently locked
+              UpdateJobNamesWithBatchId(filePath);
+            }
+            catch (Exception updateEx)
+            {
+              // Log but don't fail - file might be locked or already updated
+              Program.Log($"SawQueueDialog: Could not check/update batch ID for {fileName}: {updateEx.Message}");
+            }
+          }
 
           // Refresh staging list on UI thread
           if (InvokeRequired)
@@ -1001,6 +1094,19 @@ namespace WorkOrderBlender
           try
           {
             var fileInfo = new FileInfo(filePath);
+
+            // Try to update job names with batch ID if needed (only if file is not locked)
+            // This ensures files are updated when the dialog loads
+            try
+            {
+              UpdateJobNamesWithBatchId(filePath);
+            }
+            catch (Exception updateEx)
+            {
+              // Log but don't fail - file might be locked by another instance
+              Program.Log($"SawQueueDialog: Could not update batch ID for {fileInfo.Name} during load: {updateEx.Message}");
+            }
+
             // Extract job name from PTX file
             var jobName = ExtractJobNameFromPtx(filePath);
             var item = new FileDisplayItem
@@ -1878,6 +1984,200 @@ namespace WorkOrderBlender
       }
     }
 
+    // Update job names in PTX file with batch ID from the JOBS line
+    // This method uses file locking to prevent concurrent modifications by multiple instances
+    private bool UpdateJobNamesWithBatchId(string filePath)
+    {
+      const int maxRetries = 5;
+      const int retryDelayMs = 200;
+      var lockFilePath = filePath + ".lock";
+      FileStream lockFile = null;
+
+      // Try to acquire file lock using a lock file
+      for (int attempt = 0; attempt < maxRetries; attempt++)
+      {
+        try
+        {
+          // Try to create lock file (exclusive creation)
+          lockFile = new FileStream(lockFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+
+          // Lock acquired - we can proceed with modification
+          try
+          {
+            // Read all lines from the file
+            var lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList();
+            bool found = false;
+            bool modified = false;
+
+            // Find and update the JOBS line
+            for (int i = 0; i < lines.Count; i++)
+            {
+              if (lines[i].StartsWith("JOBS,", StringComparison.OrdinalIgnoreCase))
+              {
+                var fields = lines[i].Split(',');
+                // JOBS format: JOBS,JobIndex,JobName1,JobName2,Date1,Date2,BatchId,...
+                // Indices: 0=JOBS, 1=JobIndex, 2=JobName1, 3=JobName2, 4=Date1, 5=Date2, 6=BatchId
+                if (fields.Length >= 7)
+                {
+                  var batchId = fields[6]?.Trim();
+                  if (!string.IsNullOrWhiteSpace(batchId))
+                  {
+                    var jobName1 = fields[2]?.Trim() ?? "";
+                    var jobName2 = fields[3]?.Trim() ?? "";
+
+                    // Check if batch ID is already appended to job names
+                    var batchIdSuffix = "_" + batchId;
+                    var needsUpdate1 = !jobName1.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
+                    var needsUpdate2 = !jobName2.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
+
+                    if (needsUpdate1 || needsUpdate2)
+                    {
+                      // Append batch ID to job names if not already present
+                      if (needsUpdate1)
+                      {
+                        fields[2] = jobName1 + batchIdSuffix;
+                      }
+                      if (needsUpdate2)
+                      {
+                        fields[3] = jobName2 + batchIdSuffix;
+                      }
+
+                      lines[i] = string.Join(",", fields);
+                      modified = true;
+                      found = true;
+                      Program.Log($"SawQueueDialog: Updating job names with batch ID '{batchId}' in {Path.GetFileName(filePath)}");
+                      break;
+                    }
+                    else
+                    {
+                      // Batch ID already present, no update needed
+                      found = true;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+
+            if (!found)
+            {
+              Program.Log($"SawQueueDialog: JOBS line not found or invalid format in {Path.GetFileName(filePath)}");
+              return false;
+            }
+
+            if (modified)
+            {
+              // Preserve the original file timestamps before modifying
+              var fileInfo = new FileInfo(filePath);
+              var originalLastWriteTime = fileInfo.LastWriteTime;
+              var originalLastAccessTime = fileInfo.LastAccessTime;
+              var originalCreationTime = fileInfo.CreationTime;
+
+              // Write the updated lines back to the file
+              File.WriteAllLines(filePath, lines, Encoding.UTF8);
+
+              // Restore the original file timestamps
+              fileInfo.Refresh();
+              fileInfo.LastWriteTime = originalLastWriteTime;
+              fileInfo.LastAccessTime = originalLastAccessTime;
+              fileInfo.CreationTime = originalCreationTime;
+
+              Program.Log($"SawQueueDialog: Successfully updated job names with batch ID in {Path.GetFileName(filePath)} (preserved timestamps)");
+              return true;
+            }
+            else
+            {
+              // No modification needed - batch ID already present
+              return false;
+            }
+          }
+          finally
+          {
+            // Always close and dispose the lock file stream first
+            if (lockFile != null)
+            {
+              try
+              {
+                lockFile.Close();
+                lockFile.Dispose();
+              }
+              catch { }
+              lockFile = null;
+            }
+
+            // Then delete the lock file
+            try
+            {
+              if (File.Exists(lockFilePath))
+              {
+                File.Delete(lockFilePath);
+              }
+            }
+            catch (Exception ex)
+            {
+              Program.Log($"SawQueueDialog: Error deleting lock file {Path.GetFileName(lockFilePath)}", ex);
+            }
+          }
+        }
+        catch (IOException) when (attempt < maxRetries - 1)
+        {
+          // Lock file exists - another instance is modifying the file
+          // Clean up any partial lock file we might have created
+          if (lockFile != null)
+          {
+            try
+            {
+              lockFile.Close();
+              lockFile.Dispose();
+            }
+            catch { }
+            lockFile = null;
+          }
+          try
+          {
+            if (File.Exists(lockFilePath))
+            {
+              File.Delete(lockFilePath);
+            }
+          }
+          catch { }
+
+          // Wait and retry
+          Program.Log($"SawQueueDialog: File locked by another instance, retrying ({attempt + 1}/{maxRetries}): {Path.GetFileName(filePath)}");
+          System.Threading.Thread.Sleep(retryDelayMs);
+        }
+        catch (Exception ex)
+        {
+          // Clean up lock file on any error
+          if (lockFile != null)
+          {
+            try
+            {
+              lockFile.Close();
+              lockFile.Dispose();
+            }
+            catch { }
+            lockFile = null;
+          }
+          try
+          {
+            if (File.Exists(lockFilePath))
+            {
+              File.Delete(lockFilePath);
+            }
+          }
+          catch { }
+
+          Program.Log($"SawQueueDialog: Error updating job names with batch ID in {Path.GetFileName(filePath)}", ex);
+          return false;
+        }
+      }
+
+      // All retries exhausted - file is locked by another instance
+      Program.Log($"SawQueueDialog: Could not acquire lock for {Path.GetFileName(filePath)} after {maxRetries} attempts (another instance may be processing it)");
+      return false;
+    }
+
     // Update job name in PTX file
     private void UpdateJobNameInPtx(string filePath, string newJobName)
     {
@@ -1945,14 +2245,13 @@ namespace WorkOrderBlender
         var moveToStagingMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
           .FirstOrDefault(item => item.Text == "Move back to Staging");
 
-        var removeMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
-          .FirstOrDefault(item => item.Text == "Remove");
+        var archiveMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Archive");
 
-        if (moveToStagingMenuItem == null && removeMenuItem == null) return;
+        if (moveToStagingMenuItem == null && archiveMenuItem == null) return;
 
         // Check selected rows' statuses
         bool hasSentToSawStatus = false;
-        bool hasPendingStatus = false;
         int validRowCount = 0;
 
         if (releaseDataGrid.SelectedRows.Count > 0)
@@ -1967,10 +2266,6 @@ namespace WorkOrderBlender
               {
                 hasSentToSawStatus = true;
               }
-              else if (string.Equals(trackedFile.Status, "pending", StringComparison.OrdinalIgnoreCase))
-              {
-                hasPendingStatus = true;
-              }
             }
           }
         }
@@ -1981,10 +2276,10 @@ namespace WorkOrderBlender
           moveToStagingMenuItem.Enabled = !hasSentToSawStatus && validRowCount > 0;
         }
 
-        // "Remove" is only enabled if ALL selected files have "Sent to Saw" status
-        if (removeMenuItem != null)
+        // "Archive" is enabled if any files are selected
+        if (archiveMenuItem != null)
         {
-          removeMenuItem.Enabled = hasSentToSawStatus && !hasPendingStatus && validRowCount > 0;
+          archiveMenuItem.Enabled = validRowCount > 0;
         }
       }
       catch (Exception ex)
@@ -2115,15 +2410,15 @@ namespace WorkOrderBlender
       }
     }
 
-    // Context menu handler for release grid - Remove
-    private void ReleaseContextMenu_Remove_Click(object sender, EventArgs e)
+    // Context menu handler for release grid - Archive
+    private void ReleaseContextMenu_Archive_Click(object sender, EventArgs e)
     {
       try
       {
         // Check if any rows are selected
         if (releaseDataGrid.SelectedRows.Count == 0)
         {
-          MessageBox.Show("Please select one or more files to remove.",
+          MessageBox.Show("Please select one or more files to archive.",
             "No Files Selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
           return;
         }
@@ -2144,36 +2439,73 @@ namespace WorkOrderBlender
           return;
         }
 
-        // Confirm the removal
+        // Confirm the archive operation
         var result = MessageBox.Show(
-          $"Are you sure you want to remove {selectedFiles.Count} file(s) from the tracking list?",
-          "Confirm Removal",
+          $"Are you sure you want to archive {selectedFiles.Count} file(s)?\n\nThis will move them from the tracking list to the archive.",
+          "Confirm Archive",
           MessageBoxButtons.YesNo,
-          MessageBoxIcon.Warning);
+          MessageBoxIcon.Question);
 
         if (result != DialogResult.Yes)
           return;
 
-        // Remove files from tracker
+        // Archive files
+        var archivedCount = 0;
+        var errorCount = 0;
+        var errorMessages = new List<string>();
+
         foreach (var trackedFile in selectedFiles)
         {
-          releaseTracker.RemoveFile(trackedFile.FileName);
+          try
+          {
+            if (releaseTracker.ArchiveFile(trackedFile))
+            {
+              archivedCount++;
+            }
+            else
+            {
+              errorCount++;
+              errorMessages.Add($"{trackedFile.FileName} (archive failed)");
+            }
+          }
+          catch (Exception ex)
+          {
+            errorCount++;
+            errorMessages.Add($"{trackedFile.FileName}: {ex.Message}");
+            Program.Log($"SawQueueDialog: Error archiving file '{trackedFile.FileName}'", ex);
+          }
         }
 
         // Refresh the release list
         RefreshReleaseList();
 
-        MessageBox.Show($"Removed {selectedFiles.Count} file(s) from tracking.", "Removal Complete",
-          MessageBoxButtons.OK, MessageBoxIcon.Information);
+        // Show result message
+        if (errorCount == 0)
+        {
+          MessageBox.Show($"Successfully archived {archivedCount} file(s).",
+            "Archive Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        else
+        {
+          var errorMsg = $"Archived {archivedCount} file(s).\n\nErrors occurred with {errorCount} file(s):\n" +
+            string.Join("\n", errorMessages.Take(5));
+          if (errorMessages.Count > 5)
+          {
+            errorMsg += $"\n... and {errorMessages.Count - 5} more error(s)";
+          }
+          MessageBox.Show(errorMsg, "Archive Complete with Errors",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
       }
       catch (Exception ex)
       {
-        Program.Log("SawQueueDialog: Error removing files from tracking", ex);
-        MessageBox.Show($"Error removing files: {ex.Message}", "Remove Error",
+        Program.Log("SawQueueDialog: Error in archive operation", ex);
+        MessageBox.Show($"Error archiving files: {ex.Message}", "Archive Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
     }
 
+    // Context menu handler for release grid - Remove
     // Helper class to represent file display items with metadata
     private class FileDisplayItem
     {
@@ -2362,16 +2694,18 @@ namespace WorkOrderBlender
       private readonly List<TrackedReleaseFile> trackedFiles;
       private readonly string csvFilePath;
       private readonly FileSystemWatcher csvWatcher;
+      private readonly int maxTrackedFiles;
       private bool isSaving = false; // Flag to ignore changes we make ourselves
       private DateTime lastChangeTime = DateTime.MinValue; // For debouncing rapid changes
-      private const int MaxTrackedFiles = 100;
       private const int ChangeDebounceMs = 500; // Debounce window for file changes
 
       // Event fired when CSV file changes (from another instance)
       public event EventHandler CsvFileChanged;
 
-      public ReleaseFileTracker(string releaseDirectory)
+      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 200)
       {
+        this.maxTrackedFiles = maxTrackedFiles;
+
         // Store CSV file in the release directory so multiple users can share the same tracking file
         if (string.IsNullOrWhiteSpace(releaseDirectory))
         {
@@ -2734,10 +3068,10 @@ namespace WorkOrderBlender
 
         trackedFiles.Add(file);
 
-        // Keep only the last MaxTrackedFiles
-        if (trackedFiles.Count > MaxTrackedFiles)
+        // Keep only the last maxTrackedFiles
+        if (trackedFiles.Count > maxTrackedFiles)
         {
-          var toRemove = trackedFiles.OrderBy(f => f.SentToRelease).Take(trackedFiles.Count - MaxTrackedFiles).ToList();
+          var toRemove = trackedFiles.OrderBy(f => f.SentToRelease).Take(trackedFiles.Count - maxTrackedFiles).ToList();
           foreach (var removeFile in toRemove)
           {
             trackedFiles.Remove(removeFile);
@@ -2806,7 +3140,61 @@ namespace WorkOrderBlender
         }
       }
 
-      // Remove a file from tracking by filename
+      // Archive a file to yearly archive CSV and remove from tracking
+      public bool ArchiveFile(TrackedReleaseFile file)
+      {
+        try
+        {
+          // Get the archive directory (subdirectory of release directory)
+          var archiveDir = Path.Combine(Path.GetDirectoryName(csvFilePath), "archive");
+
+          // Ensure archive directory exists
+          if (!Directory.Exists(archiveDir))
+          {
+            Directory.CreateDirectory(archiveDir);
+            Program.Log($"ReleaseFileTracker: Created archive directory: {archiveDir}");
+          }
+
+          // Determine the year from the file's SentToRelease date
+          var year = file.SentToRelease.Year;
+          var archiveFileName = $"release_history_{year}.csv";
+          var archiveFilePath = Path.Combine(archiveDir, archiveFileName);
+
+          // Append the file record to the archive CSV
+          var sentToSawStr = file.SentToSaw.HasValue ? file.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm:ss") : "";
+          var csvLine = $"{EscapeCsvField(file.FileName)},{EscapeCsvField(file.FilePath)},{EscapeCsvField(file.JobName)},{EscapeCsvField(file.Status)},{file.SentToRelease:yyyy-MM-dd HH:mm:ss},{sentToSawStr}";
+
+          // Append to archive file (create if doesn't exist, append if it does)
+          var fileExists = File.Exists(archiveFilePath);
+          using (var writer = new StreamWriter(archiveFilePath, append: true, Encoding.UTF8))
+          {
+            // Write header if this is a new file
+            if (!fileExists)
+            {
+              writer.WriteLine("FileName,FilePath,JobName,Status,SentToRelease,SentToSaw");
+            }
+            writer.WriteLine(csvLine);
+          }
+
+          // Remove from active tracking
+          var removed = trackedFiles.RemoveAll(f => string.Equals(f.FileName, file.FileName, StringComparison.OrdinalIgnoreCase));
+          if (removed > 0)
+          {
+            SaveToCsv();
+            Program.Log($"ReleaseFileTracker: Archived file '{file.FileName}' to {archiveFileName}");
+            return true;
+          }
+
+          return false;
+        }
+        catch (Exception ex)
+        {
+          Program.Log($"ReleaseFileTracker: Error archiving file '{file.FileName}'", ex);
+          return false;
+        }
+      }
+
+      // Remove a file from tracking by filename (without archiving)
       public void RemoveFile(string fileName)
       {
         var removed = trackedFiles.RemoveAll(f => string.Equals(f.FileName, fileName, StringComparison.OrdinalIgnoreCase));

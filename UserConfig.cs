@@ -131,6 +131,7 @@ namespace WorkOrderBlender
     // Saw Queue directories
     public string StagingDir { get; set; } = @"P:\CadLinkPTX\staging";
     public string ReleaseDir { get; set; } = @"P:\CadLinkPTX\release";
+    public int MaxTrackedFiles { get; set; } = 100; // Maximum number of tracked release files to keep
 
     // Update management
     public string SkippedVersion { get; set; } = string.Empty;
