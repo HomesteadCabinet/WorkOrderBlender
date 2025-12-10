@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
@@ -27,6 +28,8 @@ namespace WorkOrderBlender
         static PortableUpdateManager()
         {
             httpClient.DefaultRequestHeaders.Add("User-Agent", USER_AGENT);
+            // Set timeout to prevent hanging (5 seconds for update check)
+            httpClient.Timeout = TimeSpan.FromSeconds(5);
             // Initialize deploy key for portable mode
             isDeployKeyAvailable = DeployKeyManager.InitializeDeployKey();
         }
@@ -36,7 +39,7 @@ namespace WorkOrderBlender
 
 
         /// <summary>
-        /// Checks for updates using the deploy key if available, falls back to HTTP if not
+        /// Checks for updates using HTTP (fast method), with optional Git-based release notes
         /// </summary>
         public static async Task<UpdateInfo> CheckForUpdatesAsync()
         {
@@ -44,19 +47,34 @@ namespace WorkOrderBlender
             {
                 Program.Log("PortableUpdateManager: Checking for updates...");
 
-                // Try deploy key method first if available
-                if (isDeployKeyAvailable)
+                // Always use HTTP method first - it's much faster than Git operations
+                // Only use Git for release notes if needed and available
+                var updateInfo = await CheckForUpdatesWithHttpAsync();
+
+                // If update is available and we want release notes, try to get them (non-blocking, fast timeout)
+                if (updateInfo?.IsUpdateAvailable == true && isDeployKeyAvailable)
                 {
-                    var updateInfo = await CheckForUpdatesWithDeployKeyAsync();
-                    if (updateInfo != null)
+                    // Don't wait for release notes - they're optional and can be slow
+                    // Fire and forget - if it completes quickly, great, otherwise skip it
+                    _ = Task.Run(async () =>
                     {
-                        return updateInfo;
-                    }
-                    Program.Log("PortableUpdateManager: Deploy key method failed, falling back to HTTP");
+                        try
+                        {
+                            var releaseNotes = await GetLatestCommitMessageAsync();
+                            if (!string.IsNullOrWhiteSpace(releaseNotes))
+                            {
+                                // Update release notes if we got them (though dialog may already be shown)
+                                updateInfo.ReleaseNotes = releaseNotes;
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore - release notes are optional
+                        }
+                    });
                 }
 
-                // Fall back to HTTP method
-                return await CheckForUpdatesWithHttpAsync();
+                return updateInfo;
             }
             catch (Exception ex)
             {
@@ -143,7 +161,7 @@ namespace WorkOrderBlender
         }
 
         /// <summary>
-        /// Checks for updates using HTTP (fallback method)
+        /// Checks for updates using HTTP (fast method)
         /// </summary>
         private static async Task<UpdateInfo> CheckForUpdatesWithHttpAsync()
         {
@@ -152,28 +170,11 @@ namespace WorkOrderBlender
                 var updateXml = await DownloadUpdateXmlAsync();
                 if (updateXml == null) return null;
 
-                // Parse update info first (don't wait for release notes)
+                // Parse update info - don't wait for release notes
                 var updateInfo = ParseUpdateInfo(updateXml, null);
 
-                // Try to get release notes from latest commit if Git is available (non-blocking, timeout after 2 seconds)
-                // Release notes are optional - don't delay the update check for them
-                if (IsGitAvailable() && updateInfo?.IsUpdateAvailable == true)
-                {
-                    try
-                    {
-                        var releaseNotesTask = GetLatestCommitMessageAsync();
-                        var timeoutTask = Task.Delay(2000); // 2 second timeout
-                        var completedTask = await Task.WhenAny(releaseNotesTask, timeoutTask);
-                        if (completedTask == releaseNotesTask && !string.IsNullOrWhiteSpace(releaseNotesTask.Result))
-                        {
-                            updateInfo.ReleaseNotes = releaseNotesTask.Result;
-                        }
-                    }
-                    catch
-                    {
-                        // Ignore errors - release notes are optional
-                    }
-                }
+                // Release notes are now fetched asynchronously after returning (if needed)
+                // This keeps the update check fast
 
                 return updateInfo;
             }
@@ -402,15 +403,26 @@ namespace WorkOrderBlender
         }
 
         /// <summary>
-        /// Downloads and parses the update.xml file (HTTP fallback method)
+        /// Downloads and parses the update.xml file (HTTP method)
         /// </summary>
         private static async Task<XElement> DownloadUpdateXmlAsync()
         {
             try
             {
-                var response = await httpClient.GetStringAsync(UPDATE_XML_URL);
-                var doc = XDocument.Parse(response);
-                return doc.Root;
+                // Use GetAsync with timeout for better control
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                {
+                    var response = await httpClient.GetAsync(UPDATE_XML_URL, cts.Token);
+                    response.EnsureSuccessStatusCode();
+                    var content = await response.Content.ReadAsStringAsync();
+                    var doc = XDocument.Parse(content);
+                    return doc.Root;
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                Program.Log("PortableUpdateManager: Timeout downloading update.xml");
+                return null;
             }
             catch (Exception ex)
             {

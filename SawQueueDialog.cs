@@ -181,13 +181,24 @@ namespace WorkOrderBlender
       var editJobNameMenuItem = new ToolStripMenuItem("Edit Job Name");
       editJobNameMenuItem.Click += StagingContextMenu_EditJobName_Click;
 
+      var showPartsMenuItem = new ToolStripMenuItem("Show Parts");
+      showPartsMenuItem.Click += StagingContextMenu_ShowParts_Click;
+
+      var compareFilesMenuItem = new ToolStripMenuItem("Compare Files");
+      compareFilesMenuItem.Click += StagingContextMenu_CompareFiles_Click;
+
       var deleteMenuItem = new ToolStripMenuItem("Delete");
       deleteMenuItem.Click += StagingContextMenu_Delete_Click;
 
       stagingContextMenu.Items.Add(editJobNameMenuItem);
+      stagingContextMenu.Items.Add(showPartsMenuItem);
+      stagingContextMenu.Items.Add(compareFilesMenuItem);
       stagingContextMenu.Items.Add(moveMenuItem);
       stagingContextMenu.Items.Add(new ToolStripSeparator());
       stagingContextMenu.Items.Add(deleteMenuItem);
+
+      // Add Opening event handler to enable/disable menu items based on selection
+      stagingContextMenu.Opening += StagingContextMenu_Opening;
 
       stagingDataGrid.ContextMenuStrip = stagingContextMenu;
 
@@ -1615,6 +1626,161 @@ namespace WorkOrderBlender
       EditJobNameForSelectedRow();
     }
 
+    // Context menu handler for staging grid - Show Parts
+    private void StagingContextMenu_ShowParts_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        // Check if exactly one row is selected
+        if (stagingDataGrid.SelectedRows.Count != 1)
+        {
+          MessageBox.Show("Please select exactly one file to show parts.",
+            "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var selectedRow = stagingDataGrid.SelectedRows[0];
+        if (!(selectedRow.Tag is FileDisplayItem fileItem))
+        {
+          MessageBox.Show("Unable to get file information.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        // Read and parse parts from PTX file
+        var parts = ExtractPartsFromPtx(fileItem.FilePath);
+        if (parts == null || parts.Count == 0)
+        {
+          MessageBox.Show("No parts found in this PTX file.", "No Parts", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        // Show parts dialog
+        using (var partsDialog = new PartsListDialog(fileItem.FileName, parts))
+        {
+          partsDialog.ShowDialog(this);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error showing parts", ex);
+        MessageBox.Show($"Error showing parts: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Context menu Opening event handler - Enable/disable menu items based on selection
+    private void StagingContextMenu_Opening(object sender, System.ComponentModel.CancelEventArgs e)
+    {
+      try
+      {
+        var contextMenu = sender as ContextMenuStrip;
+        if (contextMenu == null) return;
+
+        // Find the menu items
+        var editJobNameMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Edit Job Name");
+
+        var showPartsMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Show Parts");
+
+        var compareFilesMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Compare Files");
+
+        var selectedCount = stagingDataGrid.SelectedRows.Count;
+
+        // "Edit Job Name" is only enabled if exactly one file is selected
+        if (editJobNameMenuItem != null)
+        {
+          editJobNameMenuItem.Enabled = selectedCount == 1;
+        }
+
+        // "Show Parts" is only enabled if exactly one file is selected
+        if (showPartsMenuItem != null)
+        {
+          showPartsMenuItem.Enabled = selectedCount == 1;
+        }
+
+        // "Compare Files" is only enabled if exactly two files are selected
+        if (compareFilesMenuItem != null)
+        {
+          compareFilesMenuItem.Enabled = selectedCount == 2;
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error in staging context menu Opening event", ex);
+      }
+    }
+
+    // Context menu handler for staging grid - Compare Files
+    private void StagingContextMenu_CompareFiles_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        // Check if exactly two rows are selected
+        if (stagingDataGrid.SelectedRows.Count != 2)
+        {
+          MessageBox.Show("Please select exactly two files to compare.",
+            "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        // Get selected FileDisplayItem objects
+        var selectedItems = new List<FileDisplayItem>();
+        foreach (DataGridViewRow row in stagingDataGrid.SelectedRows)
+        {
+          if (row.Tag is FileDisplayItem fileItem)
+          {
+            selectedItems.Add(fileItem);
+          }
+        }
+
+        if (selectedItems.Count != 2)
+        {
+          MessageBox.Show("Unable to get file information for comparison.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        // Extract parts from both PTX files
+        var parts1 = ExtractPartsFromPtx(selectedItems[0].FilePath);
+        var parts2 = ExtractPartsFromPtx(selectedItems[1].FilePath);
+
+        if (parts1 == null || parts1.Count == 0)
+        {
+          MessageBox.Show($"No parts found in {selectedItems[0].FileName}.", "No Parts", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        if (parts2 == null || parts2.Count == 0)
+        {
+          MessageBox.Show($"No parts found in {selectedItems[1].FileName}.", "No Parts", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        // Check if files are identical
+        if (ArePartsIdentical(parts1, parts2))
+        {
+          MessageBox.Show(
+            $"The files '{selectedItems[0].FileName}' and '{selectedItems[1].FileName}' are identical.\n\n" +
+            $"Both files contain {parts1.Count} part(s) with matching part IDs, names, materials, dimensions, and quantities.",
+            "Files Are Identical",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+          return;
+        }
+
+        // Show comparison dialog
+        using (var compareDialog = new PartsCompareDialog(selectedItems[0].FileName, selectedItems[1].FileName, parts1, parts2))
+        {
+          compareDialog.ShowDialog(this);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error comparing files", ex);
+        MessageBox.Show($"Error comparing files: {ex.Message}", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     // Context menu handler for staging grid - Delete
     private void StagingContextMenu_Delete_Click(object sender, EventArgs e)
     {
@@ -2038,6 +2204,156 @@ namespace WorkOrderBlender
       public string Status { get; set; }
       public DateTime SentToRelease { get; set; }
       public DateTime? SentToSaw { get; set; }
+    }
+
+    // Helper class to represent part information from PTX file
+    private class PartInfo
+    {
+      public int PartId { get; set; }
+      public string PartName { get; set; }
+      public double LengthInches { get; set; }
+      public double WidthInches { get; set; }
+      public int Quantity { get; set; }
+      public string Material { get; set; }
+    }
+
+    // Extract parts from PTX file by reading PARTS_REQ records and matching with MATERIALS
+    private List<PartInfo> ExtractPartsFromPtx(string filePath)
+    {
+      var parts = new List<PartInfo>();
+      var materials = new Dictionary<int, string>(); // Material ID -> Material Name
+
+      try
+      {
+        if (!File.Exists(filePath))
+        {
+          Program.Log($"SawQueueDialog: PTX file not found: {filePath}");
+          return parts;
+        }
+
+        // Read all lines from the file
+        var lines = File.ReadAllLines(filePath, Encoding.UTF8);
+
+        // First pass: Extract MATERIALS records to build material lookup
+        foreach (var line in lines)
+        {
+          if (line.StartsWith("MATERIALS,", StringComparison.OrdinalIgnoreCase))
+          {
+            try
+            {
+              var fields = line.Split(',');
+              // MATERIALS format: MATERIALS,JobIndex,MaterialId,MaterialName,...
+              if (fields.Length >= 4)
+              {
+                var materialId = int.Parse(fields[2]);
+                var materialName = fields[3];
+                materials[materialId] = materialName;
+              }
+            }
+            catch (Exception ex)
+            {
+              Program.Log($"SawQueueDialog: Error parsing MATERIALS line: {line}", ex);
+            }
+          }
+        }
+
+        // Second pass: Extract PARTS_REQ records and match with materials
+        foreach (var line in lines)
+        {
+          // Check if this is a PARTS_REQ record
+          if (line.StartsWith("PARTS_REQ,", StringComparison.OrdinalIgnoreCase))
+          {
+            try
+            {
+              var fields = line.Split(',');
+              // PARTS_REQ format: PARTS_REQ,JobIndex,PartId,PartName,MaterialRef,Length(mm),Width(mm),Quantity,...
+              if (fields.Length >= 8)
+              {
+                var partId = int.Parse(fields[2]);
+                var partName = fields[3];
+                var materialRef = int.Parse(fields[4]);
+                var lengthMm = double.Parse(fields[5]);
+                var widthMm = double.Parse(fields[6]);
+                var quantity = int.Parse(fields[7]);
+
+                // Convert mm to inches (1 mm = 0.0393701 inches)
+                var lengthInches = lengthMm * 0.0393701;
+                var widthInches = widthMm * 0.0393701;
+
+                // Get material name from lookup, or use "Unknown" if not found
+                var materialName = materials.ContainsKey(materialRef) ? materials[materialRef] : "Unknown";
+
+                parts.Add(new PartInfo
+                {
+                  PartId = partId,
+                  PartName = partName,
+                  LengthInches = lengthInches,
+                  WidthInches = widthInches,
+                  Quantity = quantity,
+                  Material = materialName
+                });
+              }
+            }
+            catch (Exception ex)
+            {
+              Program.Log($"SawQueueDialog: Error parsing PARTS_REQ line: {line}", ex);
+            }
+          }
+        }
+
+        Program.Log($"SawQueueDialog: Extracted {parts.Count} parts from {filePath}");
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"SawQueueDialog: Error extracting parts from {filePath}", ex);
+      }
+
+      return parts;
+    }
+
+    // Check if two part lists are identical
+    private bool ArePartsIdentical(List<PartInfo> parts1, List<PartInfo> parts2)
+    {
+      try
+      {
+        // Check if counts match
+        if (parts1.Count != parts2.Count)
+          return false;
+
+        // Build dictionaries for quick lookup by PartId
+        var parts1Dict = parts1.ToDictionary(p => p.PartId);
+        var parts2Dict = parts2.ToDictionary(p => p.PartId);
+
+        // Check if all PartIds match
+        if (parts1Dict.Keys.Count != parts2Dict.Keys.Count)
+          return false;
+
+        // Check each part for exact match
+        foreach (var part1 in parts1)
+        {
+          if (!parts2Dict.ContainsKey(part1.PartId))
+            return false;
+
+          var part2 = parts2Dict[part1.PartId];
+
+          // Compare all properties (with tolerance for floating point)
+          if (Math.Abs(part1.LengthInches - part2.LengthInches) > 0.01 ||
+              Math.Abs(part1.WidthInches - part2.WidthInches) > 0.01 ||
+              part1.Quantity != part2.Quantity ||
+              !string.Equals(part1.Material, part2.Material, StringComparison.OrdinalIgnoreCase) ||
+              !string.Equals(part1.PartName, part2.PartName, StringComparison.OrdinalIgnoreCase))
+          {
+            return false;
+          }
+        }
+
+        return true;
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error checking if parts are identical", ex);
+        return false; // If error, assume not identical to be safe
+      }
     }
 
     // Class to track release file history with CSV persistence
@@ -2505,6 +2821,586 @@ namespace WorkOrderBlender
       public List<TrackedReleaseFile> GetTrackedFiles()
       {
         return trackedFiles.OrderByDescending(f => f.SentToRelease).ToList();
+      }
+    }
+
+    // Dialog to display parts list from PTX file
+    private sealed class PartsListDialog : Form
+    {
+      public PartsListDialog(string fileName, List<PartInfo> parts)
+      {
+        InitializeDialog(fileName, parts);
+      }
+
+      private void InitializeDialog(string fileName, List<PartInfo> parts)
+      {
+        Text = $"Parts List - {fileName}";
+        StartPosition = FormStartPosition.CenterParent;
+        Width = 800;
+        Height = 600;
+        MinimumSize = new Size(600, 400);
+        Icon = SystemIcons.Application;
+        ShowInTaskbar = false;
+        MaximizeBox = true;
+
+        // Create main panel
+        var mainPanel = new Panel { Dock = DockStyle.Fill };
+
+        // Create header label
+        var headerLabel = new Label
+        {
+          Text = $"Parts in {fileName}",
+          Dock = DockStyle.Top,
+          Height = 40,
+          Padding = new Padding(10, 10, 10, 5),
+          Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+          BackColor = Color.FromArgb(240, 240, 240),
+          TextAlign = ContentAlignment.MiddleLeft
+        };
+
+        // Create DataGridView for parts
+        var partsGrid = new DataGridView
+        {
+          Dock = DockStyle.Fill,
+          Font = GetNonMonospaceFont(9F),
+          AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+          SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+          ReadOnly = true,
+          AllowUserToAddRows = false,
+          AllowUserToDeleteRows = false,
+          AllowUserToResizeRows = false,
+          RowHeadersVisible = false,
+          BackgroundColor = SystemColors.Window,
+          BorderStyle = BorderStyle.None
+        };
+
+        // Set up columns
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "PartId",
+          HeaderText = "Part ID",
+          DataPropertyName = "PartId",
+          FillWeight = 8
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "PartName",
+          HeaderText = "Part Name",
+          DataPropertyName = "PartName",
+          FillWeight = 30
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Material",
+          HeaderText = "Material",
+          DataPropertyName = "Material",
+          FillWeight = 20
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Length",
+          HeaderText = "Length (in)",
+          DataPropertyName = "Length",
+          FillWeight = 12
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Width",
+          HeaderText = "Width (in)",
+          DataPropertyName = "Width",
+          FillWeight = 12
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Quantity",
+          HeaderText = "Qty",
+          DataPropertyName = "Quantity",
+          FillWeight = 8
+        });
+
+        // Create display items with formatted sizes
+        var displayItems = parts.Select(p => new
+        {
+          PartId = p.PartId,
+          PartName = p.PartName,
+          Material = p.Material,
+          Length = $"{p.LengthInches:F2}",
+          Width = $"{p.WidthInches:F2}",
+          Quantity = p.Quantity
+        }).ToList();
+
+        partsGrid.DataSource = displayItems;
+
+        // Create status label
+        var statusLabel = new Label
+        {
+          Text = $"{parts.Count} part(s) found",
+          Dock = DockStyle.Bottom,
+          Height = 30,
+          Padding = new Padding(10, 5, 10, 5),
+          BackColor = Color.FromArgb(250, 250, 250),
+          ForeColor = Color.DarkBlue,
+          TextAlign = ContentAlignment.MiddleLeft
+        };
+
+        // Create button panel
+        var buttonPanel = new Panel
+        {
+          Dock = DockStyle.Bottom,
+          Height = 50,
+          Padding = new Padding(10, 5, 10, 10)
+        };
+
+        var btnClose = new Button
+        {
+          Text = "Close",
+          AutoSize = true,
+          Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+          BackColor = Color.FromArgb(215, 218, 222),
+          ForeColor = Color.Black,
+          FlatStyle = FlatStyle.Flat,
+          Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+          UseVisualStyleBackColor = false,
+          Padding = new Padding(12, 6, 12, 6),
+          Margin = new Padding(4, 0, 4, 0),
+          Width = 80,
+          DialogResult = DialogResult.OK
+        };
+        btnClose.FlatAppearance.BorderSize = 1;
+        btnClose.Location = new Point(buttonPanel.Width - btnClose.Width - 10, 10);
+
+        buttonPanel.Controls.Add(btnClose);
+        buttonPanel.Resize += (s, e) =>
+        {
+          btnClose.Location = new Point(buttonPanel.Width - btnClose.Width - 10, 10);
+        };
+
+        // Add controls to form
+        mainPanel.Controls.Add(partsGrid);
+        mainPanel.Controls.Add(headerLabel);
+        mainPanel.Controls.Add(statusLabel);
+        Controls.Add(mainPanel);
+        Controls.Add(buttonPanel);
+
+        AcceptButton = btnClose;
+      }
+
+      // Helper method to get a non-monospace font, preferring Noto Sans
+      private Font GetNonMonospaceFont(float size)
+      {
+        try
+        {
+          var testFont = new Font("Noto Sans", size);
+          testFont.Dispose();
+          return new Font("Noto Sans", size);
+        }
+        catch
+        {
+          return new Font("Segoe UI", size);
+        }
+      }
+    }
+
+    // Dialog to compare parts from two PTX files side by side
+    private sealed class PartsCompareDialog : Form
+    {
+      private readonly List<PartInfo> parts1;
+      private readonly List<PartInfo> parts2;
+      private readonly Dictionary<int, PartInfo> parts1Dict; // PartId -> PartInfo
+      private readonly Dictionary<int, PartInfo> parts2Dict; // PartId -> PartInfo
+      private DataGridView leftGrid;
+      private DataGridView rightGrid;
+      private bool isScrolling = false; // Flag to prevent infinite scroll loops
+
+      public PartsCompareDialog(string fileName1, string fileName2, List<PartInfo> parts1, List<PartInfo> parts2)
+      {
+        this.parts1 = parts1;
+        this.parts2 = parts2;
+        // Build dictionaries for quick lookup by PartId
+        this.parts1Dict = parts1.ToDictionary(p => p.PartId);
+        this.parts2Dict = parts2.ToDictionary(p => p.PartId);
+        InitializeDialog(fileName1, fileName2, parts1, parts2);
+      }
+
+      private void InitializeDialog(string fileName1, string fileName2, List<PartInfo> parts1, List<PartInfo> parts2)
+      {
+        Text = $"Compare Parts - {fileName1} vs {fileName2}";
+        StartPosition = FormStartPosition.CenterParent;
+        Width = 1400;
+        Height = 700;
+        MinimumSize = new Size(1000, 500);
+        Icon = SystemIcons.Application;
+        ShowInTaskbar = false;
+        MaximizeBox = true;
+
+        // Create main split container for left/right view (50/50 split)
+        var mainSplitContainer = new SplitContainer
+        {
+          Dock = DockStyle.Fill,
+          Orientation = Orientation.Vertical,
+          SplitterDistance = (int)(this.ClientSize.Width * 0.50),
+          BorderStyle = BorderStyle.Fixed3D
+        };
+
+        // Create left panel for file 1
+        var panel1 = CreatePartsPanel(fileName1, parts1, "Left", parts1Dict, parts2Dict, out leftGrid);
+
+        // Create right panel for file 2
+        var panel2 = CreatePartsPanel(fileName2, parts2, "Right", parts2Dict, parts1Dict, out rightGrid);
+
+        mainSplitContainer.Panel1.Controls.Add(panel1);
+        mainSplitContainer.Panel2.Controls.Add(panel2);
+
+        // Set up scroll synchronization
+        SetupScrollSynchronization();
+
+        // Create button panel at the bottom
+        var buttonPanel = new Panel
+        {
+          Dock = DockStyle.Bottom,
+          Height = 50,
+          Padding = new Padding(10, 5, 10, 10)
+        };
+
+        var btnClose = new Button
+        {
+          Text = "Close",
+          AutoSize = true,
+          Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
+          BackColor = Color.FromArgb(215, 218, 222),
+          ForeColor = Color.Black,
+          FlatStyle = FlatStyle.Flat,
+          Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+          UseVisualStyleBackColor = false,
+          Padding = new Padding(12, 6, 12, 6),
+          Margin = new Padding(4, 0, 4, 0),
+          Width = 80,
+          DialogResult = DialogResult.OK
+        };
+        btnClose.FlatAppearance.BorderSize = 1;
+        btnClose.Location = new Point(buttonPanel.Width - btnClose.Width - 10, 10);
+
+        buttonPanel.Controls.Add(btnClose);
+        buttonPanel.Resize += (s, e) =>
+        {
+          btnClose.Location = new Point(buttonPanel.Width - btnClose.Width - 10, 10);
+        };
+
+        // Add controls to form
+        Controls.Add(mainSplitContainer);
+        Controls.Add(buttonPanel);
+
+        AcceptButton = btnClose;
+
+        // Set splitter to 50% on load
+        Load += (s, e) =>
+        {
+          if (mainSplitContainer != null && this.ClientSize.Width > 0)
+          {
+            mainSplitContainer.SplitterDistance = (int)(this.ClientSize.Width * 0.50);
+          }
+        };
+      }
+
+      private void SetupScrollSynchronization()
+      {
+        if (leftGrid == null || rightGrid == null) return;
+
+        // Synchronize left grid scrolling to right grid
+        leftGrid.Scroll += (s, e) =>
+        {
+          if (!isScrolling && rightGrid != null)
+          {
+            isScrolling = true;
+            try
+            {
+              // Check if grids are ready and have rows
+              if (leftGrid.Rows.Count == 0 || rightGrid.Rows.Count == 0)
+                return;
+
+              var sourceIndex = leftGrid.FirstDisplayedScrollingRowIndex;
+
+              // Validate source index
+              if (sourceIndex < 0 || sourceIndex >= leftGrid.Rows.Count)
+                return;
+
+              // Calculate proportional scroll position
+              var sourceScrollRatio = (double)sourceIndex / leftGrid.Rows.Count;
+              var targetIndex = (int)(sourceScrollRatio * rightGrid.Rows.Count);
+
+              // Ensure target index is within bounds
+              targetIndex = Math.Max(0, Math.Min(targetIndex, rightGrid.Rows.Count - 1));
+
+              // Only update if the target index is valid
+              if (targetIndex >= 0 && targetIndex < rightGrid.Rows.Count)
+              {
+                rightGrid.FirstDisplayedScrollingRowIndex = targetIndex;
+              }
+            }
+            catch (Exception ex)
+            {
+              // Silently handle scroll errors to prevent UI disruption
+              Program.Log("PartsCompareDialog: Error synchronizing scroll from left to right", ex);
+            }
+            finally
+            {
+              isScrolling = false;
+            }
+          }
+        };
+
+        // Synchronize right grid scrolling to left grid
+        rightGrid.Scroll += (s, e) =>
+        {
+          if (!isScrolling && leftGrid != null)
+          {
+            isScrolling = true;
+            try
+            {
+              // Check if grids are ready and have rows
+              if (leftGrid.Rows.Count == 0 || rightGrid.Rows.Count == 0)
+                return;
+
+              var sourceIndex = rightGrid.FirstDisplayedScrollingRowIndex;
+
+              // Validate source index
+              if (sourceIndex < 0 || sourceIndex >= rightGrid.Rows.Count)
+                return;
+
+              // Calculate proportional scroll position
+              var sourceScrollRatio = (double)sourceIndex / rightGrid.Rows.Count;
+              var targetIndex = (int)(sourceScrollRatio * leftGrid.Rows.Count);
+
+              // Ensure target index is within bounds
+              targetIndex = Math.Max(0, Math.Min(targetIndex, leftGrid.Rows.Count - 1));
+
+              // Only update if the target index is valid
+              if (targetIndex >= 0 && targetIndex < leftGrid.Rows.Count)
+              {
+                leftGrid.FirstDisplayedScrollingRowIndex = targetIndex;
+              }
+            }
+            catch (Exception ex)
+            {
+              // Silently handle scroll errors to prevent UI disruption
+              Program.Log("PartsCompareDialog: Error synchronizing scroll from right to left", ex);
+            }
+            finally
+            {
+              isScrolling = false;
+            }
+          }
+        };
+      }
+
+      private Panel CreatePartsPanel(string fileName, List<PartInfo> parts, string side,
+        Dictionary<int, PartInfo> currentDict, Dictionary<int, PartInfo> otherDict, out DataGridView grid)
+      {
+        var panel = new Panel { Dock = DockStyle.Fill };
+
+        // Create header label
+        var headerLabel = new Label
+        {
+          Text = $"{fileName} ({parts.Count} parts)",
+          Dock = DockStyle.Top,
+          Height = 40,
+          Padding = new Padding(10, 10, 10, 5),
+          Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+          BackColor = side == "Left" ? Color.FromArgb(240, 245, 255) : Color.FromArgb(255, 245, 240),
+          TextAlign = ContentAlignment.MiddleLeft
+        };
+
+        // Create DataGridView for parts
+        var partsGrid = new DataGridView
+        {
+          Dock = DockStyle.Fill,
+          Font = GetNonMonospaceFont(9F),
+          AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+          SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+          ReadOnly = true,
+          AllowUserToAddRows = false,
+          AllowUserToDeleteRows = false,
+          AllowUserToResizeRows = false,
+          RowHeadersVisible = false,
+          BackgroundColor = SystemColors.Window,
+          BorderStyle = BorderStyle.None
+        };
+
+        // Set up columns (same as PartsListDialog)
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "PartId",
+          HeaderText = "Part ID",
+          DataPropertyName = "PartId",
+          FillWeight = 8
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "PartName",
+          HeaderText = "Part Name",
+          DataPropertyName = "PartName",
+          FillWeight = 30
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Material",
+          HeaderText = "Material",
+          DataPropertyName = "Material",
+          FillWeight = 20
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Length",
+          HeaderText = "Length (in)",
+          DataPropertyName = "Length",
+          FillWeight = 12
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Width",
+          HeaderText = "Width (in)",
+          DataPropertyName = "Width",
+          FillWeight = 12
+        });
+        partsGrid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+          Name = "Quantity",
+          HeaderText = "Qty",
+          DataPropertyName = "Quantity",
+          FillWeight = 8
+        });
+
+        // Create display items with formatted sizes
+        var displayItems = parts.Select(p => new
+        {
+          PartId = p.PartId,
+          PartName = p.PartName,
+          Material = p.Material,
+          Length = $"{p.LengthInches:F2}",
+          Width = $"{p.WidthInches:F2}",
+          Quantity = p.Quantity
+        }).ToList();
+
+        partsGrid.DataSource = displayItems;
+
+        // Store PartInfo in row Tag after data binding for comparison
+        partsGrid.DataBindingComplete += (s, e) =>
+        {
+          for (int i = 0; i < partsGrid.Rows.Count && i < parts.Count; i++)
+          {
+            partsGrid.Rows[i].Tag = parts[i];
+          }
+        };
+
+        // Add CellFormatting event to highlight differences
+        partsGrid.CellFormatting += (s, e) =>
+        {
+          try
+          {
+            if (e.RowIndex < 0 || e.RowIndex >= partsGrid.Rows.Count) return;
+
+            var row = partsGrid.Rows[e.RowIndex];
+            if (!(row.Tag is PartInfo currentPart)) return;
+
+            // Check if this part exists in the other file
+            if (!otherDict.ContainsKey(currentPart.PartId))
+            {
+              // Part only exists in current file - highlight in yellow
+              e.CellStyle.BackColor = Color.FromArgb(255, 255, 200); // Light yellow
+              e.CellStyle.ForeColor = Color.Black;
+            }
+            else
+            {
+              // Part exists in both files - check for differences
+              var otherPart = otherDict[currentPart.PartId];
+              bool isDifferent = false;
+
+              // Compare values (with tolerance for floating point)
+              if (Math.Abs(currentPart.LengthInches - otherPart.LengthInches) > 0.01 ||
+                  Math.Abs(currentPart.WidthInches - otherPart.WidthInches) > 0.01 ||
+                  currentPart.Quantity != otherPart.Quantity ||
+                  !string.Equals(currentPart.Material, otherPart.Material, StringComparison.OrdinalIgnoreCase) ||
+                  !string.Equals(currentPart.PartName, otherPart.PartName, StringComparison.OrdinalIgnoreCase))
+              {
+                isDifferent = true;
+              }
+
+              if (isDifferent)
+              {
+                // Part exists but has different values - highlight in orange
+                e.CellStyle.BackColor = Color.FromArgb(255, 200, 150); // Light orange
+                e.CellStyle.ForeColor = Color.Black;
+              }
+              else
+              {
+                // Part is identical - use default styling
+                e.CellStyle.BackColor = partsGrid.DefaultCellStyle.BackColor;
+                e.CellStyle.ForeColor = partsGrid.DefaultCellStyle.ForeColor;
+              }
+            }
+          }
+          catch (Exception ex)
+          {
+            Program.Log("PartsCompareDialog: Error formatting cell", ex);
+          }
+        };
+
+        // Count differences for status label
+        var uniqueCount = parts.Count(p => !otherDict.ContainsKey(p.PartId));
+        var differentCount = parts.Count(p =>
+        {
+          if (!otherDict.ContainsKey(p.PartId)) return false;
+          var otherPart = otherDict[p.PartId];
+          return Math.Abs(p.LengthInches - otherPart.LengthInches) > 0.01 ||
+                 Math.Abs(p.WidthInches - otherPart.WidthInches) > 0.01 ||
+                 p.Quantity != otherPart.Quantity ||
+                 !string.Equals(p.Material, otherPart.Material, StringComparison.OrdinalIgnoreCase) ||
+                 !string.Equals(p.PartName, otherPart.PartName, StringComparison.OrdinalIgnoreCase);
+        });
+        var identicalCount = parts.Count - uniqueCount - differentCount;
+
+        // Create status label with difference summary
+        var statusText = $"{parts.Count} part(s)";
+        if (uniqueCount > 0 || differentCount > 0)
+        {
+          statusText += $" - {identicalCount} identical";
+          if (uniqueCount > 0) statusText += $", {uniqueCount} unique";
+          if (differentCount > 0) statusText += $", {differentCount} different";
+        }
+        var statusLabel = new Label
+        {
+          Text = statusText,
+          Dock = DockStyle.Bottom,
+          Height = 30,
+          Padding = new Padding(10, 5, 10, 5),
+          BackColor = Color.FromArgb(250, 250, 250),
+          ForeColor = Color.DarkBlue,
+          TextAlign = ContentAlignment.MiddleLeft
+        };
+
+        panel.Controls.Add(partsGrid);
+        panel.Controls.Add(headerLabel);
+        panel.Controls.Add(statusLabel);
+
+        // Set the grid out parameter
+        grid = partsGrid;
+
+        return panel;
+      }
+
+      // Helper method to get a non-monospace font, preferring Noto Sans
+      private Font GetNonMonospaceFont(float size)
+      {
+        try
+        {
+          var testFont = new Font("Noto Sans", size);
+          testFont.Dispose();
+          return new Font("Noto Sans", size);
+        }
+        catch
+        {
+          return new Font("Segoe UI", size);
+        }
       }
     }
   }
