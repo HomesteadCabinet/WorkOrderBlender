@@ -1,6 +1,9 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.8</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.8/WorkOrderBlender-v1.7.8.zip</url>
+  <version>1.7.9</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.9/WorkOrderBlender-v1.7.9.zip</url>
   <mandatory>false</mandatory>
+  <releaseNotes>
+  - Fixed a bug where the grid would not refresh when the user unchecked all items.
+  </releaseNotes>
 </item>

@@ -71,14 +71,13 @@ namespace WorkOrderBlender
     private List<UserConfig.VirtualColumnDef> virtualColumnDefs = new List<UserConfig.VirtualColumnDef>();
     private readonly Dictionary<string, Dictionary<string, object>> virtualLookupCacheByColumn = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> virtualColumnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    // Refresh coalescing
-    private System.Windows.Forms.Timer metricsRefreshTimer;
-    private DateTime lastRefreshRequestUtc;
     private System.Windows.Forms.Timer metricsFilterTimer; // debounce timer for live filtering
     private DateTime lastFilterRequestUtc;
     private bool isRefreshingMetrics;
     private bool suppressTableSelectorChanged;
     private bool isScanningWorkOrders;
+    private bool isClearingGrid = false; // Flag to prevent duplicate clear/refresh calls
+    private bool suppressSelectionChangedRefresh = false; // Flag to prevent SelectedIndexChanged from triggering refresh when checkbox is toggled
 
     // Multi-column sorting state
     private List<SortColumn> sortColumns = new List<SortColumn>();
@@ -315,21 +314,8 @@ namespace WorkOrderBlender
       catch { }
 
       // Setup metrics grid refresh debounce
-      metricsRefreshTimer = new System.Windows.Forms.Timer();
-      metricsRefreshTimer.Interval = 50; // ms to coalesce repeated requests - reduced from 120ms for more responsive loading indicator
-      metricsRefreshTimer.Tick += (s, e2) =>
-      {
-        Program.Log($"metricsRefreshTimer.Tick: Timer tick fired - checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}, isRefreshingMetrics={isRefreshingMetrics}");
-        if ((DateTime.UtcNow - lastRefreshRequestUtc).TotalMilliseconds >= metricsRefreshTimer.Interval)
-        {
-          metricsRefreshTimer.Stop();
-          Program.Log($"metricsRefreshTimer.Tick: Timer fired, calling RefreshMetricsGrid (isRefreshingMetrics={isRefreshingMetrics})");
-          if (!isRefreshingMetrics)
-          {
-            RefreshMetricsGrid();
-          }
-        }
-      };
+      // Note: metricsRefreshTimer removed - calling RefreshMetricsGrid directly to avoid race conditions
+      // when items are rapidly selected/deselected
 
       // Setup metrics filter debounce so we don't filter on every keystroke
       metricsFilterTimer = new System.Windows.Forms.Timer();
@@ -520,12 +506,41 @@ namespace WorkOrderBlender
         if (hit.Location == ListViewHitTestLocations.StateImage || hit.SubItem == hit.Item.SubItems[0])
         {
           var dir = filteredWorkOrders[idx].DirectoryPath;
-          if (checkedDirs.Contains(dir)) checkedDirs.Remove(dir); else checkedDirs.Add(dir);
+          bool wasChecked = checkedDirs.Contains(dir);
+          if (wasChecked) checkedDirs.Remove(dir); else checkedDirs.Add(dir);
           listWorkOrders.Invalidate(hit.Item.Bounds);
-          RequestRefreshMetricsGrid();
 
-          // Update work order name based on selection
-          UpdateWorkOrderNameFromSelection();
+          // Set flag to prevent SelectedIndexChanged from triggering a refresh
+          // We'll handle the refresh/clear here in MouseDown
+          suppressSelectionChangedRefresh = true;
+          try
+          {
+            // If no items are checked after this toggle, clear the grid immediately
+            if (checkedDirs.Count == 0)
+            {
+              Program.Log("listWorkOrders_MouseDown: last item unchecked, clearing grid");
+              isClearingGrid = true; // Set flag to prevent duplicate clears
+              ClearMetricsGridFast();
+            }
+            else if (!isClearingGrid && !isRefreshingMetrics)
+            {
+              // Only request refresh if we're not already clearing or refreshing
+              Program.Log("listWorkOrders_MouseDown: items checked, requesting refresh");
+              RequestRefreshMetricsGrid();
+            }
+
+            // Update work order name based on selection
+            UpdateWorkOrderNameFromSelection();
+          }
+          finally
+          {
+            // Reset flag after event cycle completes (using BeginInvoke)
+            this.BeginInvoke(new Action(() =>
+            {
+              suppressSelectionChangedRefresh = false;
+              isClearingGrid = false;
+            }));
+          }
         }
       }
     }
@@ -541,10 +556,36 @@ namespace WorkOrderBlender
           if (checkedDirs.Contains(dir)) checkedDirs.Remove(dir); else checkedDirs.Add(dir);
         }
         listWorkOrders.Invalidate();
-        RequestRefreshMetricsGrid();
 
-        // Update work order name based on selection
-        UpdateWorkOrderNameFromSelection();
+        // Set flag to prevent SelectedIndexChanged from triggering a refresh
+        suppressSelectionChangedRefresh = true;
+        try
+        {
+          // If no items are checked after this toggle, clear the grid immediately
+          if (checkedDirs.Count == 0)
+          {
+            Program.Log("listWorkOrders_KeyDown: all items unchecked, clearing grid");
+            isClearingGrid = true;
+            ClearMetricsGridFast();
+          }
+          else if (!isClearingGrid && !isRefreshingMetrics)
+          {
+            Program.Log("listWorkOrders_KeyDown: items checked, requesting refresh");
+            RequestRefreshMetricsGrid();
+          }
+
+          // Update work order name based on selection
+          UpdateWorkOrderNameFromSelection();
+        }
+        finally
+        {
+          // Reset flag after event cycle completes (using BeginInvoke)
+          this.BeginInvoke(new Action(() =>
+          {
+            suppressSelectionChangedRefresh = false;
+            isClearingGrid = false;
+          }));
+        }
 
         e.Handled = true;
       }
@@ -729,15 +770,16 @@ namespace WorkOrderBlender
 
         ShowLoadingIndicator(false);
         isScanningWorkOrders = false;
-        // Only request refresh if there are actually selected work orders
-        if (checkedDirs.Count > 0 || listWorkOrders.SelectedIndices.Count > 0)
+        // Only request refresh if there are actually checked work orders
+        // Note: We only use CHECKED items, not SELECTED (highlighted) items
+        if (checkedDirs.Count > 0)
         {
-          Program.Log("ScanWorkOrders: work orders selected, requesting refresh");
+          Program.Log("ScanWorkOrders: work orders checked, requesting refresh");
           RequestRefreshMetricsGrid();
         }
         else
         {
-          Program.Log("ScanWorkOrders: no work orders selected, skipping refresh");
+          Program.Log("ScanWorkOrders: no work orders checked, skipping refresh");
         }
       }
     }
@@ -1095,25 +1137,59 @@ namespace WorkOrderBlender
     {
       try
       {
-        Program.Log($"listWorkOrders_SelectedIndexChanged: checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}");
+        Program.Log($"listWorkOrders_SelectedIndexChanged: checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}, suppressSelectionChangedRefresh={suppressSelectionChangedRefresh}, isClearingGrid={isClearingGrid}");
+
+        // If this change was caused by a checkbox toggle in MouseDown, skip refresh logic
+        // MouseDown will handle the refresh/clear itself
+        if (suppressSelectionChangedRefresh)
+        {
+          Program.Log("listWorkOrders_SelectedIndexChanged: suppressed (checkbox toggle handled in MouseDown), skipping refresh");
+          // Still update work order name, but don't trigger refresh
+          UpdateWorkOrderNameFromSelection();
+          return;
+        }
+
+        // If we're already clearing the grid, skip to avoid duplicate clears
+        if (isClearingGrid)
+        {
+          Program.Log("listWorkOrders_SelectedIndexChanged: grid is already being cleared, skipping");
+          return;
+        }
 
         // Update work order name based on selection
         UpdateWorkOrderNameFromSelection();
 
-        // If no work orders are selected at all, clear the metrics grid and return early
-        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        // If no work orders are checked, clear the metrics grid and return early
+        // Note: We only use CHECKED items, not SELECTED (highlighted) items
+        if (checkedDirs.Count == 0)
         {
-          Program.Log("listWorkOrders_SelectedIndexChanged: no work orders selected, clearing grid and returning early");
-          ClearMetricsGridFast();
-          // Also hide the loading indicator as there's nothing to load
-          ShowLoadingIndicator(false);
+          Program.Log("listWorkOrders_SelectedIndexChanged: no work orders checked, clearing grid and returning early");
+          isClearingGrid = true;
+          try
+          {
+            ClearMetricsGridFast();
+            // Also hide the loading indicator as there's nothing to load
+            ShowLoadingIndicator(false);
+          }
+          finally
+          {
+            // Reset flag after event cycle completes (using BeginInvoke)
+            this.BeginInvoke(new Action(() => { isClearingGrid = false; }));
+          }
           return; // Exit early to prevent PopulateTableSelector from triggering a refresh
         }
 
-        Program.Log("listWorkOrders_SelectedIndexChanged: work orders selected, proceeding with refresh");
+        // Only proceed if we're not already refreshing
+        if (isRefreshingMetrics)
+        {
+          Program.Log("listWorkOrders_SelectedIndexChanged: already refreshing, skipping duplicate refresh");
+          return;
+        }
+
+        Program.Log("listWorkOrders_SelectedIndexChanged: work orders checked, proceeding with refresh");
         // Show loading immediately when work order selection changes
         ShowLoadingIndicator(true, "Loading work order data...");
-        Application.DoEvents();
+        // Note: Removed Application.DoEvents() to prevent event ordering issues
 
         PopulateTableSelector();
         RequestRefreshMetricsGrid();
@@ -1123,36 +1199,42 @@ namespace WorkOrderBlender
 
     private void RequestRefreshMetricsGrid()
     {
-      // Start timing to diagnose performance around refresh requests
-      var reqStart = DateTime.Now; // capture start time
+      // If we're already clearing, don't do anything
+      if (isClearingGrid)
+      {
+        Program.Log("RequestRefreshMetricsGrid: grid is being cleared, skipping refresh request");
+        return;
+      }
 
-      // If nothing is selected or checked, clear immediately and skip refresh
+      // If nothing is checked, clear immediately and skip refresh
+      // Note: We only use CHECKED items, not SELECTED (highlighted) items
       try
       {
-        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        if (checkedDirs.Count == 0)
         {
-          Program.Log("RequestRefreshMetricsGrid: no work orders selected or checked; clearing metrics grid and skipping refresh");
-          ClearMetricsGridFast();
-          // Stop the timer to prevent it from firing and reloading data
-          if (metricsRefreshTimer.Enabled)
+          Program.Log("RequestRefreshMetricsGrid: no work orders checked; clearing metrics grid and skipping refresh");
+          if (!isClearingGrid) // Only clear if not already clearing
           {
-            metricsRefreshTimer.Stop();
-            Program.Log("RequestRefreshMetricsGrid: stopped timer to prevent reload after clearing");
+            isClearingGrid = true;
+            ClearMetricsGridFast();
+            // Reset flag after event cycle completes (using BeginInvoke)
+            this.BeginInvoke(new Action(() => { isClearingGrid = false; }));
           }
           return;
         }
       }
       catch { }
 
-      lastRefreshRequestUtc = DateTime.UtcNow; // record last request
-      Program.Log($"RequestRefreshMetricsGrid: start, timerEnabled={metricsRefreshTimer.Enabled}, isRefreshingMetrics={isRefreshingMetrics}, isRefreshingTable={isRefreshingTable}, intervalMs={metricsRefreshTimer.Interval}");
-      if (!metricsRefreshTimer.Enabled)
+      // Call RefreshMetricsGrid directly (removed timer-based debouncing to avoid race conditions)
+      Program.Log($"RequestRefreshMetricsGrid: calling RefreshMetricsGrid directly, isRefreshingMetrics={isRefreshingMetrics}, isRefreshingTable={isRefreshingTable}");
+      if (!isRefreshingMetrics)
       {
-        metricsRefreshTimer.Start();
+        RefreshMetricsGrid();
       }
-      var reqEnd = DateTime.Now; // capture end time
-      var reqDuration = reqEnd - reqStart; // compute duration
-      Program.Log($"RequestRefreshMetricsGrid: completed in {reqDuration.TotalMilliseconds:F0}ms; timerEnabled={metricsRefreshTimer.Enabled}");
+      else
+      {
+        Program.Log("RequestRefreshMetricsGrid: skipping refresh - already refreshing");
+      }
     }
 
     private string currentMetricsFilter = string.Empty; // stores active metrics filter text
@@ -1275,6 +1357,25 @@ namespace WorkOrderBlender
       try
       {
         Program.Log($"PopulateTableSelector: ENTRY - checkedDirs.Count={checkedDirs.Count}, selectedIndices.Count={listWorkOrders.SelectedIndices.Count}");
+
+        // If nothing is checked, clear the table selector and return early
+        // Note: We only use CHECKED items, not SELECTED (highlighted) items
+        if (checkedDirs.Count == 0)
+        {
+          Program.Log("PopulateTableSelector: no work orders checked, clearing table selector and returning early");
+          suppressTableSelectorChanged = true;
+          try
+          {
+            cmbTableSelector.Items.Clear();
+            cmbTableSelector.SelectedIndex = -1;
+          }
+          finally
+          {
+            suppressTableSelectorChanged = false;
+          }
+          return;
+        }
+
         suppressTableSelectorChanged = true;
         try
         {
@@ -1353,10 +1454,11 @@ namespace WorkOrderBlender
           return;
         }
 
-        // If no work orders are selected, don't trigger a refresh
-        if (checkedDirs.Count == 0 && listWorkOrders.SelectedIndices.Count == 0)
+        // If no work orders are checked, don't trigger a refresh
+        // Note: We only use CHECKED items, not SELECTED (highlighted) items
+        if (checkedDirs.Count == 0)
         {
-          Program.Log("cmbTableSelector_SelectedIndexChanged: no work orders selected; skipping refresh");
+          Program.Log("cmbTableSelector_SelectedIndexChanged: no work orders checked; skipping refresh");
           return;
         }
 
@@ -1367,9 +1469,7 @@ namespace WorkOrderBlender
 
         // Show loading indicator immediately when table selector changes
         ShowLoadingIndicator(true, "Loading table data...");
-
-        // Ensure the loading indicator stays visible by forcing a UI update
-        Application.DoEvents();
+        // Note: Removed Application.DoEvents() to prevent event ordering issues
 
         // Update fronts filter button state immediately
         UpdateFilterButtonStates();
@@ -1388,6 +1488,17 @@ namespace WorkOrderBlender
       var refreshStart = DateTime.Now;
       var caller = new System.Diagnostics.StackTrace().GetFrame(1)?.GetMethod()?.Name ?? "Unknown";
       Program.Log($"=== REFRESH METRICS GRID STARTED at {refreshStart:HH:mm:ss.fff} - Called by: {caller} ===");
+
+      // Early return if no items are checked - prevents repopulating after clearing
+      // Note: We only use CHECKED items, not SELECTED (highlighted) items, to avoid confusion
+      if (checkedDirs.Count == 0)
+      {
+        Program.Log("RefreshMetricsGrid: no work orders checked, clearing grid and returning early");
+        ClearMetricsGridFast();
+        isRefreshingMetrics = false;
+        ShowLoadingIndicator(false);
+        return;
+      }
 
       // Set refresh flag to prevent concurrent refreshes
       isRefreshingMetrics = true;
@@ -1413,39 +1524,20 @@ namespace WorkOrderBlender
           var sourcePathsStart = DateTime.Now;
           currentSelectedTable = selectedTable.TableName;
 
-          // Get source paths
+          // Get source paths - ONLY use checked work orders, not selected (highlighted) items
+          // This prevents the grid from reverting to "selected" data when unchecking items
           List<string> sourcePaths;
           if (checkedDirs.Count > 0)
           {
-            // Use checked work orders
+            // Use checked work orders only
             sourcePaths = filteredWorkOrders
               .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
               .Select(wo => wo.SdfPath)
               .ToList();
           }
-          else if (listWorkOrders.SelectedIndices.Count > 0)
-          {
-            // Use selected work order
-            int idx = listWorkOrders.SelectedIndices[0];
-            if (idx >= 0 && idx < filteredWorkOrders.Count)
-            {
-              var wo = filteredWorkOrders[idx];
-              if (File.Exists(wo.SdfPath))
-              {
-                sourcePaths = new List<string> { wo.SdfPath };
-              }
-              else
-              {
-                sourcePaths = new List<string>();
-              }
-            }
-            else
-            {
-              sourcePaths = new List<string>();
-            }
-          }
           else
           {
+            // No checked items - clear the grid
             sourcePaths = new List<string>();
           }
 
@@ -1574,6 +1666,13 @@ namespace WorkOrderBlender
             metricsGrid.Visible = false;
             try
             {
+              // Clear BindingSource data if it exists, then clear DataSource
+              if (metricsGrid.DataSource is BindingSource bs)
+              {
+                bs.DataSource = null;
+                bs.ResetBindings(false);
+                Program.Log("RefreshMetricsGrid: cleared BindingSource data when no sources");
+              }
               metricsGrid.DataSource = null;
               metricsGrid.Rows.Clear();
             }
@@ -1617,19 +1716,54 @@ namespace WorkOrderBlender
       try
       {
         Program.Log("ClearMetricsGridFast: clearing metrics grid due to no selection");
-        Program.Log($"ClearMetricsGridFast: timer state before clearing - Enabled={metricsRefreshTimer.Enabled}, Interval={metricsRefreshTimer.Interval}");
+
+        // Clear all state and caches
         currentSourcePaths = new List<string>();
+        currentSelectedTable = null; // Reset selected table to prevent stale references
         ClearVirtualColumnCaches(); // Clear caches when clearing source data
+
+        // Reset filter states
+        isFrontsFilterActive = false;
+        originalPartsData = null;
+        isSubassemblyFilterActive = false;
+        originalSubassemblyData = null;
+
+        // Reset the isRefreshingMetrics flag to allow future refreshes
+        isRefreshingMetrics = false;
+        isRefreshingTable = false;
+
+        // Stop the filter timer if running
+        if (metricsFilterTimer != null && metricsFilterTimer.Enabled)
+        {
+          metricsFilterTimer.Stop();
+          Program.Log("ClearMetricsGridFast: stopped filter timer");
+        }
+
         if (metricsGrid == null) return;
         metricsGrid.SuspendLayout();
         var prevVisible = metricsGrid.Visible;
         metricsGrid.Visible = false;
         try
         {
+          // Clear BindingSource data if it exists, then clear DataSource
+          if (metricsGrid.DataSource is BindingSource bs)
+          {
+            // Fully disconnect the BindingSource
+            bs.SuspendBinding();
+            bs.DataSource = null;
+            bs.ResetBindings(false);
+            bs.ResumeBinding();
+            Program.Log("ClearMetricsGridFast: cleared BindingSource data");
+          }
           metricsGrid.DataSource = null;
+          metricsGrid.Columns.Clear(); // Also clear columns to prevent stale column references
           metricsGrid.Rows.Clear();
+          Program.Log($"ClearMetricsGridFast: grid DataSource={metricsGrid.DataSource}, Rows={metricsGrid.Rows.Count}, Cols={metricsGrid.Columns.Count}");
         }
-        catch { }
+        catch (Exception ex)
+        {
+          Program.Log($"ClearMetricsGridFast: error during clear - {ex.Message}");
+        }
         finally
         {
           metricsGrid.Visible = prevVisible;
@@ -1637,9 +1771,29 @@ namespace WorkOrderBlender
           metricsGrid.Refresh();
           panelMetricsBorder.Refresh();
         }
+
+        // Clear the table selector
+        suppressTableSelectorChanged = true;
+        try
+        {
+          cmbTableSelector.Items.Clear();
+          cmbTableSelector.SelectedIndex = -1;
+        }
+        finally
+        {
+          suppressTableSelectorChanged = false;
+        }
+
+        // Note: Do NOT reset isClearingGrid here - let the caller manage it
+        // This allows the flag to persist through the event cycle
+
         Program.Log("ClearMetricsGridFast: grid cleared successfully");
       }
-      catch { }
+      catch (Exception ex)
+      {
+        Program.Log($"ClearMetricsGridFast: outer exception - {ex.Message}");
+        // Note: Do NOT reset isClearingGrid here - let the caller manage it
+      }
     }
 
     private void WireUpGridEvents()
@@ -6030,6 +6184,22 @@ namespace WorkOrderBlender
       try
       {
       Program.Log("MetricsGrid_DataBindingComplete: fired");
+
+        // Early return if nothing is checked - don't apply layout to empty/clearing grid
+        // Note: We only use CHECKED items, not SELECTED (highlighted) items
+        if (checkedDirs.Count == 0)
+        {
+          Program.Log("MetricsGrid_DataBindingComplete: no work orders checked, skipping layout");
+          return;
+        }
+
+        // Early return if DataSource is null or empty
+        if (metricsGrid?.DataSource == null)
+        {
+          Program.Log("MetricsGrid_DataBindingComplete: DataSource is null, skipping layout");
+          return;
+        }
+
       LogCurrentGridColumns("on-DataBindingComplete entry");
         if (!applyLayoutAfterBinding)
         {

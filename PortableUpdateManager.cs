@@ -167,7 +167,7 @@ namespace WorkOrderBlender
                     return new UpdateInfo
                     {
                         IsUpdateAvailable = true,
-                        CurrentVersion = currentVersion.ToString(),
+                        CurrentVersion = FormatVersion3Part(currentVersion),
                         AvailableVersion = availableVersion.ToString(),
                         DownloadUrl = updateXml.Element("url")?.Value,
                         ChangelogUrl = updateXml.Element("changelog")?.Value,
@@ -414,6 +414,15 @@ namespace WorkOrderBlender
         }
 
         /// <summary>
+        /// Formats a Version object as a 3-part version string (x.x.x)
+        /// </summary>
+        private static string FormatVersion3Part(Version version)
+        {
+            if (version == null) return "1.0.0";
+            return $"{version.Major}.{version.Minor}.{version.Build}";
+        }
+
+        /// <summary>
         /// Parses a version string into a Version object
         /// </summary>
         private static Version ParseVersion(string versionString)
@@ -535,7 +544,7 @@ namespace WorkOrderBlender
         {
             var currentDir = AppDomain.CurrentDomain.BaseDirectory;
             var exeName = "WorkOrderBlender.exe";
-            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0)).ToString();
+            var versionStr = FormatVersion3Part(GetCurrentVersion() ?? new Version(1,0,0));
             var logsDir = Path.Combine(currentDir, "logs");
 
             return $@"@echo off
@@ -590,7 +599,7 @@ exit
         {
             var currentDir = AppDomain.CurrentDomain.BaseDirectory;
             var exeName = "WorkOrderBlender.exe";
-            var versionStr = (GetCurrentVersion() ?? new Version(1,0,0)).ToString();
+            var versionStr = FormatVersion3Part(GetCurrentVersion() ?? new Version(1,0,0));
             var logsDir = Path.Combine(currentDir, "logs");
 
             return $@"# WorkOrderBlender Update Script
