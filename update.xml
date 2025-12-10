@@ -1,9 +1,9 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.9</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.9/WorkOrderBlender-v1.7.9.zip</url>
+  <version>1.7.10</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.10/WorkOrderBlender-v1.7.10.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>
-  - Fixed a bug where the grid would not refresh when the user unchecked all items.
-  </releaseNotes>
+  <releaseNotes>Will automatically append the batch ID to the job name.
+Added numMaxTrackedFiles as a setting. When the number of programs sent to the saw exceed this amount they will be moved into a yearly archive.
+Added archive function to release files. </releaseNotes>
 </item>

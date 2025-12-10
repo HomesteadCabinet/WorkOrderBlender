@@ -25,6 +25,7 @@ namespace WorkOrderBlender
     // Saw Queue directories
     public string StagingDir { get; set; }
     public string ReleaseDir { get; set; }
+    public int MaxTrackedFiles { get; set; }
 
     // Event for Check for Updates functionality
     public event EventHandler CheckForUpdatesRequested;
@@ -46,6 +47,7 @@ namespace WorkOrderBlender
     private bool originalMssqlEnabled;
     private string originalStagingDir;
     private string originalReleaseDir;
+    private int originalMaxTrackedFiles;
 
     public SettingsDialog()
     {
@@ -231,6 +233,19 @@ namespace WorkOrderBlender
       table.Controls.Add(btnBrowseReleaseDir, 2, 6);
       table.SetColumnSpan(txtReleaseDir, 1);
 
+      // Saw Queue Max Tracked Files
+      var lblMaxTrackedFiles = new Label { Text = "Max Tracked Files:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var numMaxTrackedFiles = new NumericUpDown
+      {
+        Minimum = 1,
+        Maximum = 10000,
+        Value = 200,
+        Anchor = AnchorStyles.Left,
+        Width = 100
+      };
+      table.Controls.Add(lblMaxTrackedFiles, 0, 7);
+      table.Controls.Add(numMaxTrackedFiles, 1, 7);
+
       // MSSQL Connection Settings Section
       var lblMssqlHeader = new Label
       {
@@ -410,6 +425,7 @@ namespace WorkOrderBlender
       this.txtSubassemblyFilter = txtSubassemblyFilter;
       this.txtStagingDir = txtStagingDir;
       this.txtReleaseDir = txtReleaseDir;
+      this.numMaxTrackedFiles = numMaxTrackedFiles;
       this.btnSave = btnSave;
       this.btnDiscard = btnDiscard;
 
@@ -436,6 +452,7 @@ namespace WorkOrderBlender
       // Load Saw Queue directories
       StagingDir = cfg.StagingDir ?? @"P:\CadLinkPTX\staging";
       ReleaseDir = cfg.ReleaseDir ?? @"P:\CadLinkPTX\release";
+      MaxTrackedFiles = cfg.MaxTrackedFiles;
 
       // Clean up any existing duplicated values in the configuration
       FrontFilterKeywords = (cfg.FrontFilterKeywords ?? new List<string> { "Slab", "Drawer Front" })
@@ -462,6 +479,7 @@ namespace WorkOrderBlender
       originalMssqlEnabled = MssqlEnabled;
       originalStagingDir = StagingDir;
       originalReleaseDir = ReleaseDir;
+      originalMaxTrackedFiles = MaxTrackedFiles;
 
       // Update UI controls - ensure clean values without duplication
       if (txtRootLocal != null) txtRootLocal.Text = DefaultRoot;
@@ -479,6 +497,7 @@ namespace WorkOrderBlender
       // Update Saw Queue UI controls
       if (txtStagingDir != null) txtStagingDir.Text = StagingDir;
       if (txtReleaseDir != null) txtReleaseDir.Text = ReleaseDir;
+      if (numMaxTrackedFiles != null) numMaxTrackedFiles.Value = MaxTrackedFiles;
 
       // Set filter text fields with proper values, ensuring no duplication
       if (txtFrontFilter != null)
@@ -544,6 +563,7 @@ namespace WorkOrderBlender
       // Save Saw Queue directories
       cfg.StagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
       cfg.ReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
+      cfg.MaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 100);
 
       // Parse and save front filter keywords - remove duplicates
       var frontFilterText = (txtFrontFilter?.Text ?? string.Empty).Trim();
@@ -728,6 +748,7 @@ namespace WorkOrderBlender
       if (txtMssqlPassword != null) txtMssqlPassword.TextChanged += OnSettingChanged;
       if (txtStagingDir != null) txtStagingDir.TextChanged += OnSettingChanged;
       if (txtReleaseDir != null) txtReleaseDir.TextChanged += OnSettingChanged;
+      if (numMaxTrackedFiles != null) numMaxTrackedFiles.ValueChanged += OnSettingChanged;
     }
 
     private void OnSettingChanged(object sender, EventArgs e)
@@ -770,6 +791,7 @@ namespace WorkOrderBlender
       // Check Saw Queue directories
       hasChanges |= (txtStagingDir?.Text ?? string.Empty).Trim() != originalStagingDir;
       hasChanges |= (txtReleaseDir?.Text ?? string.Empty).Trim() != originalReleaseDir;
+      hasChanges |= (int)(numMaxTrackedFiles?.Value ?? 100) != originalMaxTrackedFiles;
 
       hasUnsavedChanges = hasChanges;
       UpdateButtonStates();
@@ -819,6 +841,7 @@ namespace WorkOrderBlender
         originalMssqlEnabled = chkMssqlEnabled?.Checked ?? true;
         originalStagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
         originalReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
+        originalMaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 100);
 
         hasUnsavedChanges = false;
         UpdateButtonStates();
@@ -876,6 +899,7 @@ namespace WorkOrderBlender
       if (txtMssqlPassword != null) txtMssqlPassword.Text = originalMssqlPassword;
       if (txtStagingDir != null) txtStagingDir.Text = originalStagingDir;
       if (txtReleaseDir != null) txtReleaseDir.Text = originalReleaseDir;
+      if (numMaxTrackedFiles != null) numMaxTrackedFiles.Value = originalMaxTrackedFiles;
 
       hasUnsavedChanges = false;
       UpdateButtonStates();
@@ -891,6 +915,7 @@ namespace WorkOrderBlender
     private TextBox txtSubassemblyFilter;
     private TextBox txtStagingDir;
     private TextBox txtReleaseDir;
+    private NumericUpDown numMaxTrackedFiles;
     private CheckBox chkMssqlEnabled;
     private TextBox txtMssqlServer;
     private TextBox txtMssqlDatabase;
