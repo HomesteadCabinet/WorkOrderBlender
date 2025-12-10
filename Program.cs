@@ -197,8 +197,20 @@ namespace WorkOrderBlender
         else if (!silent && !isStartupCheck)
         {
           // Only show "no updates available" message for manual checks, not startup checks
-          MessageBox.Show("You are using the latest version.", "No Updates Available",
-            MessageBoxButtons.OK, MessageBoxIcon.Information);
+          // Ensure we're on the UI thread
+          if (Application.OpenForms.Count > 0)
+          {
+            Application.OpenForms[0]?.Invoke(new Action(() =>
+            {
+              MessageBox.Show("You are using the latest version.", "No Updates Available",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }));
+          }
+          else
+          {
+            MessageBox.Show("You are using the latest version.", "No Updates Available",
+              MessageBoxButtons.OK, MessageBoxIcon.Information);
+          }
         }
 
         // Update last check time
@@ -210,8 +222,20 @@ namespace WorkOrderBlender
         Log("Portable update check failed", ex);
         if (!silent)
         {
-          MessageBox.Show("Failed to check for updates: " + ex.Message + "\n\nPlease check your internet connection and try again.", "Update Check",
-            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          // Ensure we're on the UI thread
+          if (Application.OpenForms.Count > 0)
+          {
+            Application.OpenForms[0]?.Invoke(new Action(() =>
+            {
+              MessageBox.Show("Failed to check for updates: " + ex.Message + "\n\nPlease check your internet connection and try again.", "Update Check",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }));
+          }
+          else
+          {
+            MessageBox.Show("Failed to check for updates: " + ex.Message + "\n\nPlease check your internet connection and try again.", "Update Check",
+              MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          }
         }
       }
     }
