@@ -1173,6 +1173,10 @@ namespace WorkOrderBlender
       try
       {
         Program.Log("SawQueueDialog: Refresh button clicked");
+
+        // Re-save all staging files in ASCII format to remove any BOM
+        ReSaveStagingFilesAsAscii();
+
         LoadFiles();
         MessageBox.Show("File lists refreshed successfully.", "Refresh Complete",
           MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1182,6 +1186,69 @@ namespace WorkOrderBlender
         Program.Log("SawQueueDialog: Error refreshing files", ex);
         MessageBox.Show($"Error refreshing files: {ex.Message}", "Refresh Error",
           MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Re-save all staging PTX files in ASCII format to remove any BOM
+    private void ReSaveStagingFilesAsAscii()
+    {
+      try
+      {
+        if (!Directory.Exists(stagingDir))
+        {
+          Program.Log("SawQueueDialog: Staging directory does not exist, skipping ASCII conversion");
+          return;
+        }
+
+        var ptxFiles = Directory.GetFiles(stagingDir, "*.ptx", SearchOption.TopDirectoryOnly);
+        if (ptxFiles.Length == 0)
+        {
+          Program.Log("SawQueueDialog: No PTX files found in staging directory");
+          return;
+        }
+
+        Program.Log($"SawQueueDialog: Re-saving {ptxFiles.Length} PTX file(s) in ASCII format");
+
+        int successCount = 0;
+        int errorCount = 0;
+
+        foreach (var filePath in ptxFiles)
+        {
+          try
+          {
+            // Preserve the original file timestamps
+            var fileInfo = new FileInfo(filePath);
+            var originalLastWriteTime = fileInfo.LastWriteTime;
+            var originalLastAccessTime = fileInfo.LastAccessTime;
+            var originalCreationTime = fileInfo.CreationTime;
+
+            // Read all lines from the file (UTF-8 handles BOM automatically)
+            var lines = File.ReadAllLines(filePath, Encoding.UTF8);
+
+            // Write the lines back to the file in ASCII format (no BOM)
+            File.WriteAllLines(filePath, lines, Encoding.ASCII);
+
+            // Restore the original file timestamps
+            fileInfo.Refresh();
+            fileInfo.LastWriteTime = originalLastWriteTime;
+            fileInfo.LastAccessTime = originalLastAccessTime;
+            fileInfo.CreationTime = originalCreationTime;
+
+            successCount++;
+          }
+          catch (Exception ex)
+          {
+            errorCount++;
+            Program.Log($"SawQueueDialog: Error re-saving {Path.GetFileName(filePath)} in ASCII format", ex);
+          }
+        }
+
+        Program.Log($"SawQueueDialog: Re-saved {successCount} file(s) successfully, {errorCount} error(s)");
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error in ReSaveStagingFilesAsAscii", ex);
+        // Don't throw - allow refresh to continue even if ASCII conversion fails
       }
     }
 
@@ -1984,16 +2051,102 @@ namespace WorkOrderBlender
       }
     }
 
-    // Update job names in PTX file with batch ID from the JOBS line
-    // This method uses file locking to prevent concurrent modifications by multiple instances
-    private bool UpdateJobNamesWithBatchId(string filePath)
+    // Shared helper method to modify PTX files with optional file locking
+    // Returns true if file was modified, false if no changes needed, throws on error
+    private bool ModifyPtxFileWithLock(string filePath, Func<string[], bool> modifyFields, bool useLocking, string operationDescription)
     {
       const int maxRetries = 5;
       const int retryDelayMs = 200;
       var lockFilePath = filePath + ".lock";
       FileStream lockFile = null;
 
-      // Try to acquire file lock using a lock file
+      // Helper to perform the actual file modification
+      bool PerformModification()
+      {
+        // Preserve the original file timestamps before modifying
+        var fileInfo = new FileInfo(filePath);
+        var originalLastWriteTime = fileInfo.LastWriteTime;
+        var originalLastAccessTime = fileInfo.LastAccessTime;
+        var originalCreationTime = fileInfo.CreationTime;
+
+        // Read all lines from the file (UTF-8 handles BOM automatically)
+        var lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList();
+        bool found = false;
+        bool modified = false;
+
+        // Find and update the JOBS line
+        for (int i = 0; i < lines.Count; i++)
+        {
+          if (lines[i].StartsWith("JOBS,", StringComparison.OrdinalIgnoreCase))
+          {
+            var fields = lines[i].Split(',');
+            modified = modifyFields(fields);
+            if (modified)
+            {
+              lines[i] = string.Join(",", fields);
+            }
+            found = true;
+            break;
+          }
+        }
+
+        if (!found)
+        {
+          throw new InvalidOperationException("JOBS line not found in PTX file");
+        }
+
+        if (modified)
+        {
+          // Write the updated lines back to the file in ASCII format (no BOM)
+          File.WriteAllLines(filePath, lines, Encoding.ASCII);
+
+          // Restore the original file timestamps
+          fileInfo.Refresh();
+          fileInfo.LastWriteTime = originalLastWriteTime;
+          fileInfo.LastAccessTime = originalLastAccessTime;
+          fileInfo.CreationTime = originalCreationTime;
+
+          Program.Log($"SawQueueDialog: {operationDescription} in {Path.GetFileName(filePath)} (preserved timestamps)");
+          return true;
+        }
+
+        return false;
+      }
+
+      // Helper to clean up lock file
+      void CleanupLockFile()
+      {
+        if (lockFile != null)
+        {
+          try
+          {
+            lockFile.Close();
+            lockFile.Dispose();
+          }
+          catch { }
+          lockFile = null;
+        }
+
+        try
+        {
+          if (File.Exists(lockFilePath))
+          {
+            File.Delete(lockFilePath);
+          }
+        }
+        catch (Exception ex)
+        {
+          Program.Log($"SawQueueDialog: Error deleting lock file {Path.GetFileName(lockFilePath)}", ex);
+        }
+      }
+
+      // If not using locking, perform modification directly
+      if (!useLocking)
+      {
+        return PerformModification();
+      }
+
+      // Use file locking with retries
       for (int attempt = 0; attempt < maxRetries; attempt++)
       {
         try
@@ -2004,143 +2157,17 @@ namespace WorkOrderBlender
           // Lock acquired - we can proceed with modification
           try
           {
-            // Read all lines from the file
-            var lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList();
-            bool found = false;
-            bool modified = false;
-
-            // Find and update the JOBS line
-            for (int i = 0; i < lines.Count; i++)
-            {
-              if (lines[i].StartsWith("JOBS,", StringComparison.OrdinalIgnoreCase))
-              {
-                var fields = lines[i].Split(',');
-                // JOBS format: JOBS,JobIndex,JobName1,JobName2,Date1,Date2,BatchId,...
-                // Indices: 0=JOBS, 1=JobIndex, 2=JobName1, 3=JobName2, 4=Date1, 5=Date2, 6=BatchId
-                if (fields.Length >= 7)
-                {
-                  var batchId = fields[6]?.Trim();
-                  if (!string.IsNullOrWhiteSpace(batchId))
-                  {
-                    var jobName1 = fields[2]?.Trim() ?? "";
-                    var jobName2 = fields[3]?.Trim() ?? "";
-
-                    // Check if batch ID is already appended to job names
-                    var batchIdSuffix = "_" + batchId;
-                    var needsUpdate1 = !jobName1.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
-                    var needsUpdate2 = !jobName2.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
-
-                    if (needsUpdate1 || needsUpdate2)
-                    {
-                      // Append batch ID to job names if not already present
-                      if (needsUpdate1)
-                      {
-                        fields[2] = jobName1 + batchIdSuffix;
-                      }
-                      if (needsUpdate2)
-                      {
-                        fields[3] = jobName2 + batchIdSuffix;
-                      }
-
-                      lines[i] = string.Join(",", fields);
-                      modified = true;
-                      found = true;
-                      Program.Log($"SawQueueDialog: Updating job names with batch ID '{batchId}' in {Path.GetFileName(filePath)}");
-                      break;
-                    }
-                    else
-                    {
-                      // Batch ID already present, no update needed
-                      found = true;
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-
-            if (!found)
-            {
-              Program.Log($"SawQueueDialog: JOBS line not found or invalid format in {Path.GetFileName(filePath)}");
-              return false;
-            }
-
-            if (modified)
-            {
-              // Preserve the original file timestamps before modifying
-              var fileInfo = new FileInfo(filePath);
-              var originalLastWriteTime = fileInfo.LastWriteTime;
-              var originalLastAccessTime = fileInfo.LastAccessTime;
-              var originalCreationTime = fileInfo.CreationTime;
-
-              // Write the updated lines back to the file
-              File.WriteAllLines(filePath, lines, Encoding.UTF8);
-
-              // Restore the original file timestamps
-              fileInfo.Refresh();
-              fileInfo.LastWriteTime = originalLastWriteTime;
-              fileInfo.LastAccessTime = originalLastAccessTime;
-              fileInfo.CreationTime = originalCreationTime;
-
-              Program.Log($"SawQueueDialog: Successfully updated job names with batch ID in {Path.GetFileName(filePath)} (preserved timestamps)");
-              return true;
-            }
-            else
-            {
-              // No modification needed - batch ID already present
-              return false;
-            }
+            return PerformModification();
           }
           finally
           {
-            // Always close and dispose the lock file stream first
-            if (lockFile != null)
-            {
-              try
-              {
-                lockFile.Close();
-                lockFile.Dispose();
-              }
-              catch { }
-              lockFile = null;
-            }
-
-            // Then delete the lock file
-            try
-            {
-              if (File.Exists(lockFilePath))
-              {
-                File.Delete(lockFilePath);
-              }
-            }
-            catch (Exception ex)
-            {
-              Program.Log($"SawQueueDialog: Error deleting lock file {Path.GetFileName(lockFilePath)}", ex);
-            }
+            CleanupLockFile();
           }
         }
         catch (IOException) when (attempt < maxRetries - 1)
         {
           // Lock file exists - another instance is modifying the file
-          // Clean up any partial lock file we might have created
-          if (lockFile != null)
-          {
-            try
-            {
-              lockFile.Close();
-              lockFile.Dispose();
-            }
-            catch { }
-            lockFile = null;
-          }
-          try
-          {
-            if (File.Exists(lockFilePath))
-            {
-              File.Delete(lockFilePath);
-            }
-          }
-          catch { }
+          CleanupLockFile();
 
           // Wait and retry
           Program.Log($"SawQueueDialog: File locked by another instance, retrying ({attempt + 1}/{maxRetries}): {Path.GetFileName(filePath)}");
@@ -2148,28 +2175,9 @@ namespace WorkOrderBlender
         }
         catch (Exception ex)
         {
-          // Clean up lock file on any error
-          if (lockFile != null)
-          {
-            try
-            {
-              lockFile.Close();
-              lockFile.Dispose();
-            }
-            catch { }
-            lockFile = null;
-          }
-          try
-          {
-            if (File.Exists(lockFilePath))
-            {
-              File.Delete(lockFilePath);
-            }
-          }
-          catch { }
-
-          Program.Log($"SawQueueDialog: Error updating job names with batch ID in {Path.GetFileName(filePath)}", ex);
-          return false;
+          CleanupLockFile();
+          Program.Log($"SawQueueDialog: Error {operationDescription.ToLower()} in {Path.GetFileName(filePath)}", ex);
+          throw;
         }
       }
 
@@ -2178,59 +2186,61 @@ namespace WorkOrderBlender
       return false;
     }
 
-    // Update job name in PTX file
-    private void UpdateJobNameInPtx(string filePath, string newJobName)
+    // Update job names in PTX file with batch ID from the JOBS line
+    // This method uses file locking to prevent concurrent modifications by multiple instances
+    private bool UpdateJobNamesWithBatchId(string filePath)
     {
-      try
+      return ModifyPtxFileWithLock(filePath, fields =>
       {
-        // Preserve the original file timestamps before modifying
-        var fileInfo = new FileInfo(filePath);
-        var originalLastWriteTime = fileInfo.LastWriteTime;
-        var originalLastAccessTime = fileInfo.LastAccessTime;
-        var originalCreationTime = fileInfo.CreationTime;
-
-        // Read all lines from the file
-        var lines = File.ReadAllLines(filePath, Encoding.UTF8).ToList();
-        bool found = false;
-
-        // Find and update the JOBS line
-        for (int i = 0; i < lines.Count; i++)
+        // JOBS format: JOBS,JobIndex,JobName1,JobName2,Date1,Date2,BatchId,...
+        // Indices: 0=JOBS, 1=JobIndex, 2=JobName1, 3=JobName2, 4=Date1, 5=Date2, 6=BatchId
+        if (fields.Length >= 7)
         {
-          if (lines[i].StartsWith("JOBS,", StringComparison.OrdinalIgnoreCase))
+          var batchId = fields[6]?.Trim();
+          if (!string.IsNullOrWhiteSpace(batchId))
           {
-            var fields = lines[i].Split(',');
-            if (fields.Length >= 3)
+            var jobName1 = fields[2]?.Trim() ?? "";
+            var jobName2 = fields[3]?.Trim() ?? "";
+
+            // Check if batch ID is already appended to jobName1 and jobName2
+            var batchIdSuffix = "_" + batchId;
+            var needsUpdate1 = !jobName1.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
+            var needsUpdate2 = !jobName2.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
+
+            if (needsUpdate1 || needsUpdate2)
             {
-              // Update the third field (index 2) which contains the job name
-              fields[2] = newJobName;
-              lines[i] = string.Join(",", fields);
-              found = true;
-              break;
+              // Append batch ID to job names if not already present
+              if (needsUpdate1)
+              {
+                fields[2] = jobName1 + batchIdSuffix;
+              }
+              if (needsUpdate2)
+              {
+                fields[3] = jobName2 + batchIdSuffix;
+              }
+
+              Program.Log($"SawQueueDialog: Updating name with batch ID '{batchId}' in {Path.GetFileName(filePath)}");
+              return true;
             }
           }
         }
+        return false;
+      }, useLocking: true, operationDescription: "Successfully updated job names with batch ID");
+    }
 
-        if (!found)
-        {
-          throw new InvalidOperationException("JOBS line not found in PTX file");
-        }
-
-        // Write the updated lines back to the file
-        File.WriteAllLines(filePath, lines, Encoding.UTF8);
-
-        // Restore the original file timestamps
-        fileInfo.Refresh();
-        fileInfo.LastWriteTime = originalLastWriteTime;
-        fileInfo.LastAccessTime = originalLastAccessTime;
-        fileInfo.CreationTime = originalCreationTime;
-
-        Program.Log($"SawQueueDialog: Updated job name in {filePath} to '{newJobName}' (preserved timestamps)");
-      }
-      catch (Exception ex)
+    // Update job name in PTX file
+    private void UpdateJobNameInPtx(string filePath, string newJobName)
+    {
+      ModifyPtxFileWithLock(filePath, fields =>
       {
-        Program.Log($"SawQueueDialog: Error updating job name in {filePath}", ex);
-        throw;
-      }
+        if (fields.Length >= 3)
+        {
+          // Update the third field (index 2) which contains the job name
+          fields[2] = newJobName;
+          return true;
+        }
+        return false;
+      }, useLocking: false, operationDescription: $"Updated job name to '{newJobName}'");
     }
 
     // Context menu Opening event handler - Enable/disable menu items based on selection

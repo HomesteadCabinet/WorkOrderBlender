@@ -71,9 +71,9 @@ namespace WorkOrderBlender
       {
         Dock = DockStyle.Top,
         ColumnCount = 4,
-        RowCount = 14,
+        RowCount = 16,
         Padding = new Padding(10, 10, 10, 10),
-        Height = 400,
+        Height = this.ClientSize.Height - 80,
       };
       table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
       table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -85,14 +85,19 @@ namespace WorkOrderBlender
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Saw Queue Header
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Staging Dir
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Release Dir
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Max Tracked Files
 
       table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // 100% vertical spacer
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-      table.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Header
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Enable
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Server
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Database
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Username
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Password
+      table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // 100% vertical spacer
 
       this.Controls.Add(table);
 
@@ -193,6 +198,19 @@ namespace WorkOrderBlender
       table.Controls.Add(chkDynamicSheetCosts, 1, 4);
       table.SetColumnSpan(chkDynamicSheetCosts, 1);
 
+      // Saw Queue Settings Section
+      var lblSawQueueHeader = new Label
+      {
+        Text = "Saw Queue Settings:",
+        AutoSize = true,
+        Anchor = AnchorStyles.Left,
+        // Add top margin to visually separate the Saw Queue section from above controls
+        Margin = new Padding(0, 16, 0, 0),
+        Font = new System.Drawing.Font(this.Font, System.Drawing.FontStyle.Bold)
+      };
+      table.Controls.Add(lblSawQueueHeader, 0, 5);
+      table.SetColumnSpan(lblSawQueueHeader, 4);
+
       // Saw Queue Staging Directory
       var lblStagingDir = new Label { Text = "Saw Queue Staging Dir:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtStagingDir = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 400 };
@@ -208,9 +226,9 @@ namespace WorkOrderBlender
           }
         }
       };
-      table.Controls.Add(lblStagingDir, 0, 5);
-      table.Controls.Add(txtStagingDir, 1, 5);
-      table.Controls.Add(btnBrowseStagingDir, 2, 5);
+      table.Controls.Add(lblStagingDir, 0, 6);
+      table.Controls.Add(txtStagingDir, 1, 6);
+      table.Controls.Add(btnBrowseStagingDir, 2, 6);
       table.SetColumnSpan(txtStagingDir, 1);
 
       // Saw Queue Release Directory
@@ -228,13 +246,13 @@ namespace WorkOrderBlender
           }
         }
       };
-      table.Controls.Add(lblReleaseDir, 0, 6);
-      table.Controls.Add(txtReleaseDir, 1, 6);
-      table.Controls.Add(btnBrowseReleaseDir, 2, 6);
+      table.Controls.Add(lblReleaseDir, 0, 7);
+      table.Controls.Add(txtReleaseDir, 1, 7);
+      table.Controls.Add(btnBrowseReleaseDir, 2, 7);
       table.SetColumnSpan(txtReleaseDir, 1);
 
       // Saw Queue Max Tracked Files
-      var lblMaxTrackedFiles = new Label { Text = "Max Tracked Files:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var lblMaxTrackedFiles = new Label { Text = "Max Released Files in Saw Queue:", AutoSize = true, Anchor = AnchorStyles.Left };
       var numMaxTrackedFiles = new NumericUpDown
       {
         Minimum = 1,
@@ -243,8 +261,11 @@ namespace WorkOrderBlender
         Anchor = AnchorStyles.Left,
         Width = 100
       };
-      table.Controls.Add(lblMaxTrackedFiles, 0, 7);
-      table.Controls.Add(numMaxTrackedFiles, 1, 7);
+      table.Controls.Add(lblMaxTrackedFiles, 0, 8);
+      table.Controls.Add(numMaxTrackedFiles, 1, 8);
+
+      // Empty row for spacing between Saw Queue and MSSQL sections
+      // Row 9 is intentionally left empty
 
       // MSSQL Connection Settings Section
       var lblMssqlHeader = new Label
@@ -254,10 +275,10 @@ namespace WorkOrderBlender
         Anchor = AnchorStyles.Left,
         // Add top margin to visually separate the MSSQL section from above controls
         Margin = new Padding(0, 16, 0, 0),
-
+        Padding = new Padding(0, 16, 0, 0),
         Font = new System.Drawing.Font(this.Font, System.Drawing.FontStyle.Bold)
       };
-      table.Controls.Add(lblMssqlHeader, 0, 8);
+      table.Controls.Add(lblMssqlHeader, 0, 10);
       table.SetColumnSpan(lblMssqlHeader, 4);
 
       // MSSQL Enable checkbox
@@ -267,35 +288,35 @@ namespace WorkOrderBlender
         AutoSize = true,
         Anchor = AnchorStyles.Left
       };
-      table.Controls.Add(chkMssqlEnabled, 0, 9);
+      table.Controls.Add(chkMssqlEnabled, 0, 11);
       table.SetColumnSpan(chkMssqlEnabled, 4);
 
       // MSSQL Server
       var lblMssqlServer = new Label { Text = "Server:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlServer = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlServer, 0, 10);
-      table.Controls.Add(txtMssqlServer, 1, 10);
+      table.Controls.Add(lblMssqlServer, 0, 12);
+      table.Controls.Add(txtMssqlServer, 1, 12);
       table.SetColumnSpan(txtMssqlServer, 3);
 
       // MSSQL Database
       var lblMssqlDatabase = new Label { Text = "Database:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlDatabase = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlDatabase, 0, 11);
-      table.Controls.Add(txtMssqlDatabase, 1, 11);
+      table.Controls.Add(lblMssqlDatabase, 0, 13);
+      table.Controls.Add(txtMssqlDatabase, 1, 13);
       table.SetColumnSpan(txtMssqlDatabase, 3);
 
       // MSSQL Username
       var lblMssqlUsername = new Label { Text = "Username:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlUsername = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlUsername, 0, 12);
-      table.Controls.Add(txtMssqlUsername, 1, 12);
+      table.Controls.Add(lblMssqlUsername, 0, 14);
+      table.Controls.Add(txtMssqlUsername, 1, 14);
       table.SetColumnSpan(txtMssqlUsername, 3);
 
       // MSSQL Password
       var lblMssqlPassword = new Label { Text = "Password:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlPassword = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200, UseSystemPasswordChar = true };
-      table.Controls.Add(lblMssqlPassword, 0, 13);
-      table.Controls.Add(txtMssqlPassword, 1, 13);
+      table.Controls.Add(lblMssqlPassword, 0, 15);
+      table.Controls.Add(txtMssqlPassword, 1, 15);
       table.SetColumnSpan(txtMssqlPassword, 3);
 
       // Store control references
