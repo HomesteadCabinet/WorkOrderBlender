@@ -1,7 +1,8 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.11</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.11/WorkOrderBlender-v1.7.11.zip</url>
+  <version>1.7.12</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.12/WorkOrderBlender-v1.7.12.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>Fixes issue where modified staging files would be saved with an incompatible encoding. </releaseNotes>
+  <releaseNotes>When a job name is longer than 50 characters prompt the user for a new name. 
+Will attempt to shrink the name automatically, if it fits, prompt the user if they want to use it or not. </releaseNotes>
 </item>

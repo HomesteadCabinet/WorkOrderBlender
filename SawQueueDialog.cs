@@ -1168,6 +1168,116 @@ namespace WorkOrderBlender
       return null; // Return null if job name not found
     }
 
+    // Validate both job name fields in PTX file
+    // Returns a tuple: (isValid, jobName1, jobName2, errorMessage)
+    private (bool isValid, string jobName1, string jobName2, string errorMessage) ValidateJobNameFields(string filePath)
+    {
+      try
+      {
+        // Read the file line by line to find the JOBS line
+        using (var reader = new StreamReader(filePath))
+        {
+          string line;
+          while ((line = reader.ReadLine()) != null)
+          {
+            // Check if this is a JOBS line (starts with "JOBS,")
+            if (line.StartsWith("JOBS,", StringComparison.OrdinalIgnoreCase))
+            {
+              // Split by comma and get both job name fields (index 2 and 3)
+              var fields = line.Split(',');
+              if (fields.Length < 4)
+              {
+                return (false, null, null, "JOBS line does not have enough fields");
+              }
+
+              var jobName1 = fields.Length > 2 ? fields[2].Trim() : string.Empty;
+              var jobName2 = fields.Length > 3 ? fields[3].Trim() : string.Empty;
+
+              // Check if both fields are empty
+              if (string.IsNullOrWhiteSpace(jobName1) && string.IsNullOrWhiteSpace(jobName2))
+              {
+                return (false, jobName1, jobName2, "Both job name fields are empty");
+              }
+
+              // Check if fields are identical
+              if (!string.Equals(jobName1, jobName2, StringComparison.Ordinal))
+              {
+                return (false, jobName1, jobName2, $"Job name fields are not identical. Field 1: '{jobName1}', Field 2: '{jobName2}'");
+              }
+
+              // Check if both are within 50 character limit
+              if (jobName1.Length > 50)
+              {
+                return (false, jobName1, jobName2, $"Job name is {jobName1.Length} characters long (maximum 50 allowed)");
+              }
+
+              if (jobName2.Length > 50)
+              {
+                return (false, jobName1, jobName2, $"Second job name field is {jobName2.Length} characters long (maximum 50 allowed)");
+              }
+
+              // Both fields are valid
+              return (true, jobName1, jobName2, null);
+            }
+          }
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"SawQueueDialog: Error validating job name fields from {filePath}", ex);
+        return (false, null, null, $"Error reading file: {ex.Message}");
+      }
+
+      return (false, null, null, "JOBS line not found in file");
+    }
+
+    private string CondenseName(string name)
+    {
+      if (string.IsNullOrEmpty(name))
+        return name;
+
+      // Dictionary of words to their condensed replacements
+      var shortNames = new Dictionary<string, string>
+      {
+        { "Kitchen", "Kitn" },
+        { "Island", "Isl" },
+        { "Bedroom", "Bedrm" },
+        { "Bathroom", "Bathrm" },
+        { "Living", "Liv" },
+        { "Dining", "Din" },
+        { "Family", "Fam" },
+        { "Office", "Off" },
+        { "Room", "RM" },
+      };
+
+      // Remove extra spaces
+      var condensed = name.Replace("  ", " ").Replace(" - ", "-").Replace(" -", "-").Replace("- ", "-").Trim();
+
+      // Apply case-insensitive find-replace for each entry in the dictionary
+      // Process longer words first to avoid substring replacement issues (e.g., "Room" in "Bedroom")
+      var sortedEntries = shortNames.OrderByDescending(kvp => kvp.Key.Length);
+
+      foreach (var kvp in sortedEntries)
+      {
+        var searchText = kvp.Key;
+        var replacement = kvp.Value;
+
+        // Find all occurrences case-insensitively and replace
+        int index = 0;
+        while ((index = condensed.IndexOf(searchText, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+          // Replace the found occurrence
+          condensed = condensed.Substring(0, index) + replacement + condensed.Substring(index + searchText.Length);
+          index += replacement.Length; // Move past the replacement
+        }
+      }
+
+      // Trim any extra spaces that might have been created
+      condensed = condensed.Replace("  ", " ").Trim();
+
+      return condensed;
+    }
+
     private void BtnRefresh_Click(object sender, EventArgs e)
     {
       try
@@ -1265,14 +1375,14 @@ namespace WorkOrderBlender
         }
 
         // Confirm the move operation
-        var result = MessageBox.Show(
-          $"Are you sure you want to move {stagingDataGrid.SelectedRows.Count} file(s) from staging to release?",
-          "Confirm Move",
-          MessageBoxButtons.YesNo,
-          MessageBoxIcon.Question);
+        // var result = MessageBox.Show(
+        //   $"Are you sure you want to move {stagingDataGrid.SelectedRows.Count} file(s) from staging to release?",
+        //   "Confirm Move",
+        //   MessageBoxButtons.YesNo,
+        //   MessageBoxIcon.Question);
 
-        if (result != DialogResult.Yes)
-          return;
+        // if (result != DialogResult.Yes)
+        //   return;
 
         // Ensure release directory exists
         if (!Directory.Exists(releaseDir))
@@ -1300,6 +1410,94 @@ namespace WorkOrderBlender
         {
           try
           {
+            // Validate both job name fields before moving
+            var (isValid, jobName1, jobName2, errorMessage) = ValidateJobNameFields(item.FilePath);
+
+            // If validation failed, prompt user to edit
+            if (!isValid)
+            {
+              var editResult = MessageBox.Show(
+                $"The job name for '{item.FileName}' has validation issues:\n\n{errorMessage}\n\n" +
+
+                "Would you like to edit the job name now?",
+                "Job Name Too Long",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+
+              if (editResult == DialogResult.Yes)
+              {
+                // Get the current job name from the file (use validated jobName1 if available, otherwise extract)
+                var currentJobName = jobName1 ?? ExtractJobNameFromPtx(item.FilePath) ?? item.JobName;
+
+                // Suggest a condensed version
+                var condensedJobName = CondenseName(currentJobName);
+
+                string newJobName = null;
+
+                // If condensed name is 50 or fewer characters, offer to accept or edit
+                if (condensedJobName.Length <= 50)
+                {
+                  var acceptResult = MessageBox.Show(
+                    "We have suggested a job name that will fit within the 50 character limit. Would you like to use this name?" + "\n\n" +
+                    "Suggested job name: \n\n" + condensedJobName + "\n\n" +
+                    "Click 'Yes' to accept this name, or 'No' to edit it.",
+                    "Accept Suggested Name?",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+
+                  if (acceptResult == DialogResult.Yes)
+                  {
+                    // User accepted the condensed name - update the PTX file directly
+                    UpdateJobNameInPtx(item.FilePath, condensedJobName);
+                    newJobName = condensedJobName;
+                    Program.Log($"SawQueueDialog: Accepted condensed job name '{condensedJobName}' for file '{item.FileName}'");
+                  }
+                  else
+                  {
+                    // User wants to edit - show the edit dialog with condensed name pre-filled
+                    item.JobName = condensedJobName;
+                    newJobName = EditJobNameForFileItem(item);
+                  }
+                }
+                else
+                {
+                  // Condensed name is still too long - show edit dialog with condensed name as starting point
+                  item.JobName = condensedJobName;
+                  newJobName = EditJobNameForFileItem(item);
+                }
+
+                if (newJobName == null)
+                {
+                  // User cancelled or didn't change - skip this file
+                  Program.Log($"SawQueueDialog: Skipping file '{item.FileName}' - job name not updated");
+                  continue;
+                }
+
+                // Re-validate after update to verify both fields are now valid
+                var (isValidAfterEdit, updatedJobName1, updatedJobName2, updatedErrorMessage) = ValidateJobNameFields(item.FilePath);
+
+                if (!isValidAfterEdit)
+                {
+                  MessageBox.Show(
+                    $"The job name for '{item.FileName}' still has validation issues:\n\n{updatedErrorMessage}\n\n" +
+                    (updatedJobName1 != null && updatedJobName2 != null
+                      ? $"Field 1: '{updatedJobName1}'\nField 2: '{updatedJobName2}'\n\n"
+                      : "") +
+                    "This file will be skipped. Please edit the job name manually and try again.",
+                    "Job Name Still Invalid",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                  continue;
+                }
+              }
+              else
+              {
+                // User chose not to edit - skip this file
+                Program.Log($"SawQueueDialog: Skipping file '{item.FileName}' - job name validation failed and user declined to edit");
+                continue;
+              }
+            }
+
             var sourceFile = item.FilePath;
             var destFile = Path.Combine(releaseDir, item.FileName);
 
@@ -1324,6 +1522,7 @@ namespace WorkOrderBlender
             File.Move(sourceFile, destFile);
 
             // Track the file in release history with "pending" status
+            // Re-extract job name from moved file to ensure we have the latest value
             var jobName = ExtractJobNameFromPtx(destFile);
             releaseTracker.AddFile(item.FileName, destFile, jobName ?? item.FileName, "pending");
 
@@ -1690,23 +1889,16 @@ namespace WorkOrderBlender
     }
 
     // Edit job name for the currently selected row in staging grid
-    private void EditJobNameForSelectedRow()
+    // Helper method to edit job name for a specific file item
+    // Returns the new job name if changed, null if cancelled or unchanged
+    private string EditJobNameForFileItem(FileDisplayItem fileItem)
     {
       try
       {
-        // Check if exactly one row is selected
-        if (stagingDataGrid.SelectedRows.Count != 1)
-        {
-          MessageBox.Show("Please select exactly one file to edit the job name.",
-            "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
-          return;
-        }
-
-        var selectedRow = stagingDataGrid.SelectedRows[0];
-        if (!(selectedRow.Tag is FileDisplayItem fileItem))
+        if (fileItem == null)
         {
           MessageBox.Show("Unable to get file information.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-          return;
+          return null;
         }
 
         // Get current job name
@@ -1772,7 +1964,7 @@ namespace WorkOrderBlender
 
         if (string.IsNullOrWhiteSpace(newJobName) || newJobName == currentJobName)
         {
-          return; // User cancelled or didn't change
+          return null; // User cancelled or didn't change
         }
 
         // Update the job name in the PTX file
@@ -1780,6 +1972,39 @@ namespace WorkOrderBlender
 
         // Refresh the staging list to show updated job name
         LoadFiles();
+
+        return newJobName;
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error editing job name", ex);
+        MessageBox.Show($"Error editing job name: {ex.Message}", "Edit Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+        return null;
+      }
+    }
+
+    private void EditJobNameForSelectedRow()
+    {
+      try
+      {
+        // Check if exactly one row is selected
+        if (stagingDataGrid.SelectedRows.Count != 1)
+        {
+          MessageBox.Show("Please select exactly one file to edit the job name.",
+            "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var selectedRow = stagingDataGrid.SelectedRows[0];
+        if (!(selectedRow.Tag is FileDisplayItem fileItem))
+        {
+          MessageBox.Show("Unable to get file information.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        // Use the helper method to edit the job name
+        EditJobNameForFileItem(fileItem);
 
         // MessageBox.Show("Job name updated successfully.", "Success",
         //   MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -2202,22 +2427,38 @@ namespace WorkOrderBlender
             var jobName1 = fields[2]?.Trim() ?? "";
             var jobName2 = fields[3]?.Trim() ?? "";
 
-            // Check if batch ID is already appended to jobName1 and jobName2
             var batchIdSuffix = "_" + batchId;
-            var needsUpdate1 = !jobName1.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
-            var needsUpdate2 = !jobName2.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
 
-            if (needsUpdate1 || needsUpdate2)
+            // Helper function to remove existing batch ID and ensure it's at the end
+            string ProcessJobNameWithBatchId(string jobName)
             {
-              // Append batch ID to job names if not already present
-              if (needsUpdate1)
+              if (string.IsNullOrEmpty(jobName))
+                return jobName + batchIdSuffix;
+
+              // Remove the first occurrence of the batch ID suffix (case-insensitive)
+              var index = jobName.IndexOf(batchIdSuffix, StringComparison.OrdinalIgnoreCase);
+              if (index >= 0)
               {
-                fields[2] = jobName1 + batchIdSuffix;
+                jobName = jobName.Substring(0, index) + jobName.Substring(index + batchIdSuffix.Length);
               }
-              if (needsUpdate2)
+
+              // Ensure the batch ID is at the end
+              if (!jobName.EndsWith(batchIdSuffix, StringComparison.OrdinalIgnoreCase))
               {
-                fields[3] = jobName2 + batchIdSuffix;
+                jobName = jobName + batchIdSuffix;
               }
+
+              return jobName;
+            }
+
+            var updatedJobName1 = ProcessJobNameWithBatchId(jobName1);
+            var updatedJobName2 = ProcessJobNameWithBatchId(jobName2);
+
+            // Check if updates are needed
+            if (updatedJobName1 != jobName1 || updatedJobName2 != jobName2)
+            {
+              fields[2] = updatedJobName1;
+              fields[3] = updatedJobName2;
 
               Program.Log($"SawQueueDialog: Updating name with batch ID '{batchId}' in {Path.GetFileName(filePath)}");
               return true;
@@ -2233,10 +2474,12 @@ namespace WorkOrderBlender
     {
       ModifyPtxFileWithLock(filePath, fields =>
       {
-        if (fields.Length >= 3)
+        // Ensure we have at least 4 fields (indices 0-3) to update both job name fields
+        if (fields.Length >= 4)
         {
-          // Update the third field (index 2) which contains the job name
+          // Update both job name fields (index 2 and 3) to ensure they are identical
           fields[2] = newJobName;
+          fields[3] = newJobName;
           return true;
         }
         return false;
