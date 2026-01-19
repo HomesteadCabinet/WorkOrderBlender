@@ -2503,6 +2503,10 @@ namespace WorkOrderBlender
       var tempFiles = new List<string>();
       try
       {
+        // Parts name cleanup counters (avoid per-row logging).
+        int partsNamesCleaned = 0; // count of rows whose Name was modified
+        bool isPartsTable = string.Equals(tableName, "Parts", StringComparison.OrdinalIgnoreCase); // fast check
+
         // Derive schema from first available source
         foreach (var path in sourcePaths)
         {
@@ -2573,6 +2577,23 @@ namespace WorkOrderBlender
                     try { row[col] = reader[col]; } catch { row[col] = DBNull.Value; }
                   }
 
+                  // Clean up Parts.Name as the data is loaded.
+                  if (isPartsTable && dataTable.Columns.Contains("Name"))
+                  {
+                    try
+                    {
+                      var rawNameObj = row["Name"];
+                      var rawName = (rawNameObj == null || rawNameObj == DBNull.Value) ? null : Convert.ToString(rawNameObj);
+                      var cleanedName = PartNameUtils.CleanPartName(rawName);
+                      if (!string.Equals(rawName, cleanedName, StringComparison.Ordinal))
+                      {
+                        row["Name"] = cleanedName ?? (object)DBNull.Value;
+                        partsNamesCleaned++;
+                      }
+                    }
+                    catch { }
+                  }
+
                   // Apply in-memory overrides by LinkID if present; do not filter here so we can style excluded rows
                   try
                   {
@@ -2616,6 +2637,12 @@ namespace WorkOrderBlender
 
         // Log summary of data loading
         Program.Log($"BuildDataTableFromSources completed for table '{tableName}': {totalRowsLoaded} total rows loaded from {sourcePaths.Count} source(s)");
+
+        // Log Parts name cleanup summary once per build.
+        if (isPartsTable && partsNamesCleaned > 0)
+        {
+          Program.Log($"BuildDataTableFromSources: cleaned Parts.Name on {partsNamesCleaned} row(s) (removed markers like [NODRAW])");
+        }
       }
       finally
       {
