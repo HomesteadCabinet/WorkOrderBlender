@@ -1,8 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.12</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.12/WorkOrderBlender-v1.7.12.zip</url>
+  <version>1.7.13</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.13/WorkOrderBlender-v1.7.13.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>When a job name is longer than 50 characters prompt the user for a new name. 
-Will attempt to shrink the name automatically, if it fits, prompt the user if they want to use it or not. </releaseNotes>
+  <releaseNotes>Removes [NoDraw] from part names</releaseNotes>
 </item>
