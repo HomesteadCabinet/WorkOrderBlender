@@ -14,15 +14,78 @@ namespace WorkOrderBlender
     private static readonly string LogDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "WorkOrderBlender.log");
     public static readonly InMemoryEditStore Edits = new InMemoryEditStore();
+    private static bool? cachedAllowFileLogging; // null = unknown; lazily resolved from settings.xml
 
     public static void Log(string message, Exception ex = null)
     {
       try
       {
+        if (!IsFileLoggingEnabled()) return;
         if (!Directory.Exists(LogDirectory)) Directory.CreateDirectory(LogDirectory);
         File.AppendAllText(LogFilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}{(ex != null ? ex + Environment.NewLine : string.Empty)}");
       }
       catch { /* ignore logging errors */ }
+    }
+
+    // Determine whether file logging is enabled by reading AllowLogging from settings.xml.
+    // Must not call Program.Log (avoid recursion); default is enabled when missing/unknown.
+    private static bool IsFileLoggingEnabled()
+    {
+      try
+      {
+        if (cachedAllowFileLogging.HasValue) return cachedAllowFileLogging.Value;
+
+        // Default to true for backward compatibility (older settings files won't have AllowLogging).
+        var allow = true;
+
+        // Check common config locations: alongside exe and LocalAppData copy.
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        var exeConfigPath = Path.Combine(baseDir, "settings.xml");
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var userConfigPath = Path.Combine(localAppData, "WorkOrderBlender", "settings.xml");
+
+        string xml = null;
+        if (File.Exists(userConfigPath))
+        {
+          xml = SafeReadAllText(userConfigPath);
+        }
+        else if (File.Exists(exeConfigPath))
+        {
+          xml = SafeReadAllText(exeConfigPath);
+        }
+
+        if (!string.IsNullOrEmpty(xml))
+        {
+          // Very small/robust parse: look for <AllowLogging>true/false</AllowLogging> (case-insensitive).
+          var idx = xml.IndexOf("<AllowLogging>", StringComparison.OrdinalIgnoreCase);
+          if (idx >= 0)
+          {
+            var end = xml.IndexOf("</AllowLogging>", idx, StringComparison.OrdinalIgnoreCase);
+            if (end > idx)
+            {
+              var innerStart = idx + "<AllowLogging>".Length;
+              var inner = xml.Substring(innerStart, end - innerStart).Trim();
+              if (bool.TryParse(inner, out var parsed))
+              {
+                allow = parsed;
+              }
+            }
+          }
+        }
+
+        cachedAllowFileLogging = allow;
+        return allow;
+      }
+      catch
+      {
+        cachedAllowFileLogging = true;
+        return true;
+      }
+    }
+
+    private static string SafeReadAllText(string path)
+    {
+      try { return File.ReadAllText(path); } catch { return null; }
     }
 
     [STAThread]
@@ -38,10 +101,13 @@ namespace WorkOrderBlender
       // Clear previous session log on startup
       try
       {
-        if (!Directory.Exists(LogDirectory)) Directory.CreateDirectory(LogDirectory);
-        if (File.Exists(LogFilePath))
+        if (IsFileLoggingEnabled())
         {
-          File.Delete(LogFilePath);
+          if (!Directory.Exists(LogDirectory)) Directory.CreateDirectory(LogDirectory);
+          if (File.Exists(LogFilePath))
+          {
+            File.Delete(LogFilePath);
+          }
         }
       }
       catch { /* ignore log cleanup errors */ }

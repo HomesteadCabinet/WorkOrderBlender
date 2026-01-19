@@ -20,6 +20,7 @@ namespace WorkOrderBlender
     public int MainWindowY { get; set; } = -1; // -1 = center/start default
     public bool HidePurchasing { get; set; } = true; // default to true
     public bool DynamicSheetCosts { get; set; } = false; // default to false
+    public bool AllowLogging { get; set; } = false; // default to true (create/use WorkOrderBlender.log)
 
     // MSSQL connection settings for Microvellum database
     public string MssqlServer { get; set; } = "SERVER2019\\HSSQL";

@@ -12,6 +12,7 @@ namespace WorkOrderBlender
     public string SdfFileName { get; set; }
     public bool HidePurchasing { get; set; }
     public bool DynamicSheetCosts { get; set; }
+    public bool AllowLogging { get; set; }
     public List<string> FrontFilterKeywords { get; set; }
     public List<string> SubassemblyFilterKeywords { get; set; }
 
@@ -38,6 +39,7 @@ namespace WorkOrderBlender
     private string originalSdfFileName;
     private bool originalHidePurchasing;
     private bool originalDynamicSheetCosts;
+    private bool originalAllowLogging;
     private List<string> originalFrontFilterKeywords;
     private List<string> originalSubassemblyFilterKeywords;
     private string originalMssqlServer;
@@ -152,6 +154,20 @@ namespace WorkOrderBlender
         "and thickness of the sheet. This will replace values we may have added in the database."
       );
 
+      // Allow Logging option
+      var chkAllowLogging = new CheckBox
+      {
+        Text = "Allow Logging",
+        AutoSize = true,
+        Anchor = AnchorStyles.Left,
+        Tag = "AllowLogging"
+      };
+      var toolTipAllowLogging = new ToolTip();
+      toolTipAllowLogging.SetToolTip(
+        chkAllowLogging,
+        "If unchecked, WorkOrderBlender will not create or write to logs\\WorkOrderBlender.log."
+      );
+
       // Front Filter Keywords
       var lblFrontFilter = new Label { Text = "Parts Front Filter Keywords:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtFrontFilter = new TextBox
@@ -197,6 +213,10 @@ namespace WorkOrderBlender
       // Add Dynamic Sheet Costs on its own row spanning available columns
       table.Controls.Add(chkDynamicSheetCosts, 1, 4);
       table.SetColumnSpan(chkDynamicSheetCosts, 1);
+
+      // Add Allow Logging to the right of Dynamic Sheet Costs
+      table.Controls.Add(chkAllowLogging, 2, 4);
+      table.SetColumnSpan(chkAllowLogging, 1);
 
       // Saw Queue Settings Section
       var lblSawQueueHeader = new Label
@@ -442,6 +462,7 @@ namespace WorkOrderBlender
       this.txtSdfLocal = txtSdfLocal;
       this.chkHidePurchasing = chkHidePurchasing;
       this.chkDynamicSheetCosts = chkDynamicSheetCosts;
+      this.chkAllowLogging = chkAllowLogging;
       this.txtFrontFilter = txtFrontFilter;
       this.txtSubassemblyFilter = txtSubassemblyFilter;
       this.txtStagingDir = txtStagingDir;
@@ -462,6 +483,7 @@ namespace WorkOrderBlender
       SdfFileName = cfg.SdfFileName ?? string.Empty;
       HidePurchasing = cfg.HidePurchasing;
       DynamicSheetCosts = cfg.DynamicSheetCosts;
+      AllowLogging = cfg.AllowLogging;
 
       // Load MSSQL settings
       MssqlServer = cfg.MssqlServer ?? "SERVER\\SQL";
@@ -491,6 +513,7 @@ namespace WorkOrderBlender
       originalSdfFileName = SdfFileName;
       originalHidePurchasing = HidePurchasing;
       originalDynamicSheetCosts = DynamicSheetCosts;
+      originalAllowLogging = AllowLogging;
       originalFrontFilterKeywords = new List<string>(FrontFilterKeywords);
       originalSubassemblyFilterKeywords = new List<string>(SubassemblyFilterKeywords);
       originalMssqlServer = MssqlServer;
@@ -507,6 +530,7 @@ namespace WorkOrderBlender
       if (txtSdfLocal != null) txtSdfLocal.Text = SdfFileName;
       if (chkHidePurchasing != null) chkHidePurchasing.Checked = HidePurchasing;
       if (chkDynamicSheetCosts != null) chkDynamicSheetCosts.Checked = DynamicSheetCosts;
+      if (chkAllowLogging != null) chkAllowLogging.Checked = AllowLogging;
 
       // Update MSSQL UI controls
       if (chkMssqlEnabled != null) chkMssqlEnabled.Checked = MssqlEnabled;
@@ -573,6 +597,7 @@ namespace WorkOrderBlender
       cfg.SdfFileName = (txtSdfLocal?.Text ?? string.Empty).Trim();
       cfg.HidePurchasing = chkHidePurchasing?.Checked ?? true;
       cfg.DynamicSheetCosts = chkDynamicSheetCosts?.Checked ?? false;
+      cfg.AllowLogging = chkAllowLogging?.Checked ?? true;
 
       // Save MSSQL settings
       cfg.MssqlServer = (txtMssqlServer?.Text ?? string.Empty).Trim();
@@ -760,6 +785,7 @@ namespace WorkOrderBlender
       if (txtSdfLocal != null) txtSdfLocal.TextChanged += OnSettingChanged;
       if (chkHidePurchasing != null) chkHidePurchasing.CheckedChanged += OnSettingChanged;
       if (chkDynamicSheetCosts != null) chkDynamicSheetCosts.CheckedChanged += OnSettingChanged;
+      if (chkAllowLogging != null) chkAllowLogging.CheckedChanged += OnSettingChanged;
       if (txtFrontFilter != null) txtFrontFilter.TextChanged += OnSettingChanged;
       if (txtSubassemblyFilter != null) txtSubassemblyFilter.TextChanged += OnSettingChanged;
       if (chkMssqlEnabled != null) chkMssqlEnabled.CheckedChanged += OnSettingChanged;
@@ -788,6 +814,7 @@ namespace WorkOrderBlender
       hasChanges |= (txtSdfLocal?.Text ?? string.Empty).Trim() != originalSdfFileName;
       hasChanges |= (chkHidePurchasing?.Checked ?? true) != originalHidePurchasing;
       hasChanges |= (chkDynamicSheetCosts?.Checked ?? false) != originalDynamicSheetCosts;
+      hasChanges |= (chkAllowLogging?.Checked ?? true) != originalAllowLogging;
 
       // Check filter keywords
       var currentFrontFilter = (txtFrontFilter?.Text ?? string.Empty).Trim();
@@ -844,6 +871,7 @@ namespace WorkOrderBlender
         originalSdfFileName = (txtSdfLocal?.Text ?? string.Empty).Trim();
         originalHidePurchasing = chkHidePurchasing?.Checked ?? true;
         originalDynamicSheetCosts = chkDynamicSheetCosts?.Checked ?? false;
+        originalAllowLogging = chkAllowLogging?.Checked ?? true;
 
         var currentFrontFilter = (txtFrontFilter?.Text ?? string.Empty).Trim();
         originalFrontFilterKeywords = string.IsNullOrEmpty(currentFrontFilter)
@@ -911,6 +939,7 @@ namespace WorkOrderBlender
       if (txtSdfLocal != null) txtSdfLocal.Text = originalSdfFileName;
       if (chkHidePurchasing != null) chkHidePurchasing.Checked = originalHidePurchasing;
       if (chkDynamicSheetCosts != null) chkDynamicSheetCosts.Checked = originalDynamicSheetCosts;
+      if (chkAllowLogging != null) chkAllowLogging.Checked = originalAllowLogging;
       if (txtFrontFilter != null) txtFrontFilter.Text = string.Join(", ", originalFrontFilterKeywords);
       if (txtSubassemblyFilter != null) txtSubassemblyFilter.Text = string.Join(", ", originalSubassemblyFilterKeywords);
       if (chkMssqlEnabled != null) chkMssqlEnabled.Checked = originalMssqlEnabled;
@@ -932,6 +961,7 @@ namespace WorkOrderBlender
     private TextBox txtSdfLocal;
     private CheckBox chkHidePurchasing;
     private CheckBox chkDynamicSheetCosts;
+    private CheckBox chkAllowLogging;
     private TextBox txtFrontFilter;
     private TextBox txtSubassemblyFilter;
     private TextBox txtStagingDir;
