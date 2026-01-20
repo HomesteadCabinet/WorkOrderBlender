@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.14</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.14/WorkOrderBlender-v1.7.14.zip</url>
+  <version>1.7.15</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.15/WorkOrderBlender-v1.7.15.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>Added toggle for logging </releaseNotes>
+  <releaseNotes>Added export data to CSV ability </releaseNotes>
 </item>

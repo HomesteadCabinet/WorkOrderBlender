@@ -4528,9 +4528,11 @@ namespace WorkOrderBlender
         exportJpeg.Click += (s, e) => ExportStreamsForSelection("JPEGStream");
         var exportWmf = new ToolStripMenuItem("Export WMF Streams");
         exportWmf.Click += (s, e) => ExportStreamsForSelection("WMFStream");
+        var exportData = new ToolStripMenuItem("Export Data to CSV");
+        exportData.Click += (s, e) => ExportData(rowIndex);
+        export.DropDownItems.Add(exportData);
         export.DropDownItems.Add(exportJpeg);
         export.DropDownItems.Add(exportWmf);
-
         // Add sequence menu item for Parts and Subassemblies tables
         ToolStripMenuItem sequenceMenuItem = null;
         if (!string.IsNullOrEmpty(currentSelectedTable) &&
@@ -6060,8 +6062,135 @@ namespace WorkOrderBlender
 
     private void ExportData(object keyValue)
     {
-      // Placeholder for export functionality
-      MessageBox.Show($"Export action for ID: {keyValue}", "Export", MessageBoxButtons.OK, MessageBoxIcon.Information);
+      try
+      {
+        // Export all rows/columns for the currently displayed table (respect current filter/sort).
+        if (metricsGrid == null || metricsGrid.DataSource == null)
+        {
+          MessageBox.Show("No data loaded. Please select a table first.", "No Data",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        // Build a list of visible columns in display order (lets users hide huge stream columns before exporting).
+        var exportCols = metricsGrid.Columns
+          .Cast<DataGridViewColumn>()
+          .Where(c => c.Visible)
+          .OrderBy(c => c.DisplayIndex)
+          .ToList();
+
+        if (exportCols.Count == 0)
+        {
+          MessageBox.Show("No visible columns to export.", "Export",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        // Count rows to export (skip the new row placeholder).
+        int rowCount = metricsGrid.Rows.Cast<DataGridViewRow>().Count(r => !r.IsNewRow);
+        if (rowCount == 0)
+        {
+          MessageBox.Show("No rows to export.", "Export",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var safeTable = string.IsNullOrWhiteSpace(currentSelectedTable) ? "Data" : currentSelectedTable.Trim();
+        var defaultName = MakeSafeFileName($"{safeTable}_{DateTime.Now:yyyyMMdd_HHmmss}.csv");
+
+        using (var sfd = new SaveFileDialog())
+        {
+          sfd.Title = "Export Data to CSV";
+          sfd.Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*";
+          sfd.FileName = defaultName;
+          sfd.OverwritePrompt = true;
+          sfd.AddExtension = true;
+          sfd.DefaultExt = "csv";
+
+          if (sfd.ShowDialog(this) != DialogResult.OK) return;
+
+          var path = sfd.FileName;
+          Program.Log($"ExportData: exporting table='{safeTable}', rows={rowCount}, cols={exportCols.Count}, path='{path}'");
+
+          // Use UTF-8 BOM for Excel-friendly CSV.
+          using (var writer = new StreamWriter(path, false, new System.Text.UTF8Encoding(true)))
+          {
+            // Header row.
+            writer.WriteLine(string.Join(",", exportCols.Select(c => ToCsvField(c.HeaderText))));
+
+            // Data rows (use DataBoundItem when available; fall back to cell values).
+            foreach (DataGridViewRow gridRow in metricsGrid.Rows)
+            {
+              if (gridRow == null || gridRow.IsNewRow) continue;
+
+              if (gridRow.DataBoundItem is DataRowView drv)
+              {
+                var row = drv.Row;
+                var values = new List<string>(exportCols.Count);
+                foreach (var col in exportCols)
+                {
+                  var key = !string.IsNullOrWhiteSpace(col.DataPropertyName) ? col.DataPropertyName : col.Name;
+                  object val = null;
+                  try
+                  {
+                    if (row.Table.Columns.Contains(key)) val = row[key];
+                    else val = gridRow.Cells[col.Index]?.Value;
+                  }
+                  catch { val = null; }
+                  values.Add(ToCsvField(val));
+                }
+                writer.WriteLine(string.Join(",", values));
+              }
+              else
+              {
+                var values = new List<string>(exportCols.Count);
+                foreach (var col in exportCols)
+                {
+                  object val = null;
+                  try { val = gridRow.Cells[col.Index]?.Value; } catch { val = null; }
+                  values.Add(ToCsvField(val));
+                }
+                writer.WriteLine(string.Join(",", values));
+              }
+            }
+          }
+
+          MessageBox.Show($"Exported {rowCount} row(s) to:\n\n{path}", "Export Complete",
+            MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("ExportData failed", ex);
+        MessageBox.Show("Export failed: " + ex.Message, "Export Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
+    // Convert a value into a CSV-safe field string.
+    private static string ToCsvField(object value)
+    {
+      try
+      {
+        if (value == null || value == DBNull.Value) return "";
+        var s = Convert.ToString(value);
+        return EscapeCsv(s);
+      }
+      catch { return ""; }
+    }
+
+    // Escape CSV field using RFC4180-style quoting.
+    private static string EscapeCsv(string s)
+    {
+      if (s == null) return "";
+      bool mustQuote =
+        s.Contains(",") ||
+        s.Contains("\"") ||
+        s.Contains("\r") ||
+        s.Contains("\n") ||
+        (s.Length > 0 && (s[0] == ' ' || s[s.Length - 1] == ' ')); // preserve leading/trailing spaces
+      if (!mustQuote) return s;
+      return "\"" + s.Replace("\"", "\"\"") + "\"";
     }
 
     private void ApplyHeaderStyles(DataGridViewColumn col)
