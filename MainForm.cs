@@ -974,17 +974,62 @@ namespace WorkOrderBlender
       try
       {
         RunConsolidation(selected.Select(s => (s.Directory, s.SdfPath)).ToList(), destPath);
-        MessageBox.Show($"Consolidation complete. File created at:\n{destPath}");
+        MessageBox.Show(
+          $"Consolidation complete!\n\n" +
+          $"Successfully merged {selected.Count} work order(s).\n\n" +
+          $"Output file:\n{destPath}",
+          "Consolidation Successful",
+          MessageBoxButtons.OK,
+          MessageBoxIcon.Information);
 
         // Reset progress bar after successful consolidation
         progress.Value = 0;
       }
+      catch (ConsolidationException cex)
+      {
+        // Handle consolidation-specific errors with detailed feedback
+        Program.Log("Consolidation error (ConsolidationException)", cex);
+
+        if (cex.IsPartialSuccess)
+        {
+          // Some sources succeeded - show warning but note partial success
+          MessageBox.Show(
+            $"{cex.Message}\n\n" +
+            $"The consolidated database was created but may be incomplete.\n\n" +
+            $"Output file:\n{destPath}",
+            "Consolidation Completed with Warnings",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Warning);
+        }
+        else
+        {
+          // All sources failed
+          MessageBox.Show(
+            $"{cex.Message}\n\n" +
+            "Please check the log file for more details.",
+            "Consolidation Failed",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Error);
+        }
+
+        // Reset progress bar on error
+        progress.Value = 0;
+      }
       catch (Exception ex)
       {
-        Program.Log("Consolidation error", ex);
-        MessageBox.Show("Error: " + ex.Message);
+        // Handle unexpected errors
+        Program.Log("Consolidation error (unexpected)", ex);
 
-        // Reset progress bar on error as well
+        string detailedMessage = GetDetailedErrorMessage(ex);
+        MessageBox.Show(
+          $"An unexpected error occurred during consolidation:\n\n" +
+          $"{detailedMessage}\n\n" +
+          "Please check the log file for more details.",
+          "Consolidation Error",
+          MessageBoxButtons.OK,
+          MessageBoxIcon.Error);
+
+        // Reset progress bar on error
         progress.Value = 0;
       }
     }
@@ -5385,12 +5430,20 @@ namespace WorkOrderBlender
       progress.Value = 0;
       progress.Maximum = sources.Count;
 
+      // Track consolidation results for each source
+      var successfulSources = new List<string>();
+      var failedSources = new List<(string SourceName, string ErrorMessage)>();
+
+      Program.Log($"Starting consolidation of {sources.Count} source(s) to: {destinationPath}");
+
       if (File.Exists(destinationPath))
       {
+        Program.Log($"Deleting existing destination file: {destinationPath}");
         File.Delete(destinationPath);
       }
 
       CreateEmptyDatabase(destinationPath);
+      Program.Log($"Created empty destination database: {destinationPath}");
 
       using (var dest = new SqlCeConnection($"Data Source={destinationPath};"))
       {
@@ -5400,9 +5453,110 @@ namespace WorkOrderBlender
         {
           // Combined mode with source metadata columns
           string sourceTag = new DirectoryInfo(src.WorkOrderDir).Name;
-          CopyDatabaseCombined(src.SdfPath, dest, sourceTag, src.WorkOrderDir);
+          Program.Log($"Processing source: {sourceTag} ({src.SdfPath})");
+
+          try
+          {
+            CopyDatabaseCombined(src.SdfPath, dest, sourceTag, src.WorkOrderDir);
+            successfulSources.Add(sourceTag);
+            Program.Log($"Successfully processed source: {sourceTag}");
+          }
+          catch (Exception ex)
+          {
+            // Log the error but continue with other sources
+            string errorDetail = GetDetailedErrorMessage(ex);
+            Program.Log($"Failed to process source {sourceTag}: {errorDetail}", ex);
+            failedSources.Add((sourceTag, errorDetail));
+          }
+
           progress.Value += 1;
         }
+      }
+
+      // Log consolidation summary
+      Program.Log($"Consolidation summary: {successfulSources.Count} succeeded, {failedSources.Count} failed");
+
+      // If all sources failed, throw an exception
+      if (successfulSources.Count == 0 && failedSources.Count > 0)
+      {
+        var errorSummary = string.Join("\n", failedSources.Select(f => $"  - {f.SourceName}: {f.ErrorMessage}"));
+        throw new ConsolidationException(
+          $"Consolidation failed. All {failedSources.Count} source(s) encountered errors:\n{errorSummary}",
+          failedSources);
+      }
+
+      // Compact and verify the database after consolidation to ensure file integrity
+      CompactAndVerifyDatabase(destinationPath);
+
+      // If some sources failed, throw an exception with partial success info
+      if (failedSources.Count > 0)
+      {
+        var errorSummary = string.Join("\n", failedSources.Select(f => $"  - {f.SourceName}: {f.ErrorMessage}"));
+        throw new ConsolidationException(
+          $"Consolidation completed with errors.\n\n" +
+          $"Successful: {successfulSources.Count} source(s)\n" +
+          $"Failed: {failedSources.Count} source(s):\n{errorSummary}",
+          failedSources,
+          isPartialSuccess: true);
+      }
+    }
+
+    // Custom exception to carry consolidation error details
+    private class ConsolidationException : Exception
+    {
+      public List<(string SourceName, string ErrorMessage)> FailedSources { get; }
+      public bool IsPartialSuccess { get; }
+
+      public ConsolidationException(string message, List<(string SourceName, string ErrorMessage)> failedSources, bool isPartialSuccess = false)
+        : base(message)
+      {
+        FailedSources = failedSources;
+        IsPartialSuccess = isPartialSuccess;
+      }
+    }
+
+    // Extract detailed error message including inner exceptions
+    private static string GetDetailedErrorMessage(Exception ex)
+    {
+      var messages = new List<string>();
+      var current = ex;
+      while (current != null)
+      {
+        messages.Add(current.Message);
+        current = current.InnerException;
+      }
+      return string.Join(" -> ", messages);
+    }
+
+    private static void CompactAndVerifyDatabase(string databasePath)
+    {
+      try
+      {
+        Program.Log($"Compacting and verifying database: {databasePath}");
+        string connectionString = $"Data Source={databasePath};";
+
+        // Compact the database to optimize and ensure data is flushed to disk
+        using (var engine = new SqlCeEngine(connectionString))
+        {
+          engine.Compact(null);
+        }
+
+        // Verify the database integrity
+        using (var engine = new SqlCeEngine(connectionString))
+        {
+          if (!engine.Verify())
+          {
+            Program.Log($"WARNING: Database verification failed for {databasePath}");
+            throw new InvalidOperationException("Database verification failed after consolidation. The database may be corrupted.");
+          }
+        }
+
+        Program.Log($"Database compaction and verification successful: {databasePath}");
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"Error during database compaction/verification: {ex.Message}", ex);
+        throw; // Re-throw to notify caller of the issue
       }
     }
 
@@ -5410,8 +5564,11 @@ namespace WorkOrderBlender
 
     private static void CreateEmptyDatabase(string path)
     {
-      var engine = new SqlCeEngine($"Data Source={path};");
-      engine.CreateDatabase();
+      // Dispose engine properly to ensure database file is fully written
+      using (var engine = new SqlCeEngine($"Data Source={path};"))
+      {
+        engine.CreateDatabase();
+      }
     }
 
     // removed legacy prefixed consolidation path
@@ -5437,10 +5594,17 @@ namespace WorkOrderBlender
     private static void CopyDatabaseCombined(string sourcePath, SqlCeConnection destConn, string sourceTag, string sourcePathDir)
     {
       string tempCopyPath;
+      string currentTable = null; // Track current table for error reporting
+      int tablesProcessed = 0;
+
       using (var srcConn = SqlCeUtils.OpenWithFallback(sourcePath, out tempCopyPath))
       {
+        // Use transaction to ensure atomicity for each source file
+        SqlCeTransaction transaction = null;
         try
         {
+          transaction = destConn.BeginTransaction();
+
           // Ensure schema is loaded from resources/wo_schema.xml
           EnsureSchemaLoaded();
 
@@ -5452,6 +5616,9 @@ namespace WorkOrderBlender
               while (r.Read()) tables.Add(r.GetString(0));
             }
           }
+
+          Program.Log($"Source {sourceTag}: Found {tables.Count} tables to process");
+
           foreach (string table in tables)
           {
             if (table.StartsWith("__")) continue;
@@ -5459,17 +5626,49 @@ namespace WorkOrderBlender
             // Only process tables present in the schema XML
             if (!SchemaTables.Contains(table)) continue;
 
+            currentTable = table; // Track for error reporting
+
             // Always ensure destination table exists (schema conformance), even if we skip data
-            EnsureDestinationTableCombined(destConn, srcConn, table);
+            EnsureDestinationTableCombined(destConn, srcConn, table, transaction);
 
             // Skip copying data for excluded tables
             if (ExcludedDataTables.Contains(table)) continue;
 
-            CopyRowsCombined(srcConn, destConn, table, sourceTag, sourcePathDir);
+            CopyRowsCombined(srcConn, destConn, table, sourceTag, sourcePathDir, transaction);
+            tablesProcessed++;
           }
+
+          // Commit transaction after all tables from this source are copied successfully
+          transaction.Commit();
+          Program.Log($"Successfully committed data from source: {sourceTag} ({tablesProcessed} tables processed)");
+        }
+        catch (Exception ex)
+        {
+          // Build detailed error message with context
+          string errorContext = currentTable != null
+            ? $"Error copying table '{currentTable}' from source '{sourceTag}'"
+            : $"Error copying from source '{sourceTag}'";
+
+          Program.Log($"{errorContext}, rolling back ({tablesProcessed} tables were processed before error): {ex.Message}", ex);
+
+          try
+          {
+            transaction?.Rollback();
+            Program.Log($"Successfully rolled back transaction for source: {sourceTag}");
+          }
+          catch (Exception rollbackEx)
+          {
+            Program.Log($"Rollback failed for source {sourceTag}: {rollbackEx.Message}", rollbackEx);
+          }
+
+          // Wrap the exception with context about which table failed
+          throw new InvalidOperationException(
+            $"{errorContext}: {ex.Message}",
+            ex);
         }
         finally
         {
+          transaction?.Dispose();
           if (!string.IsNullOrEmpty(tempCopyPath))
           {
             try { File.Delete(tempCopyPath); } catch { }
@@ -5480,10 +5679,11 @@ namespace WorkOrderBlender
 
     // removed legacy prefixed consolidation path
 
-    private static void EnsureDestinationTableCombined(SqlCeConnection dest, SqlCeConnection src, string tableName)
+    private static void EnsureDestinationTableCombined(SqlCeConnection dest, SqlCeConnection src, string tableName, SqlCeTransaction transaction = null)
     {
       using (var cmd = new SqlCeCommand($"SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @t", dest))
       {
+        cmd.Transaction = transaction;
         cmd.Parameters.AddWithValue("@t", tableName);
         var exists = Convert.ToInt32(cmd.ExecuteScalar()) > 0;
         if (!exists)
@@ -5526,53 +5726,55 @@ namespace WorkOrderBlender
           string createSql = $"CREATE TABLE [{tableName}] (" + string.Join(", ", columnDefs) + ")";
           using (var create = new SqlCeCommand(createSql, dest))
           {
+            create.Transaction = transaction;
             create.ExecuteNonQuery();
           }
         }
         else
         {
-          try
+          // Get virtual columns to exclude from consolidation
+          var virtualColumns = GetVirtualColumnsForTable(tableName);
+
+          // Add missing schema-defined columns only (schema conformance)
+          var allowedCols = new HashSet<string>(GetAllowedSchemaColumns(tableName), StringComparer.OrdinalIgnoreCase);
+          var srcCols = src.GetSchema("Columns", new[] { null, null, tableName, null });
+          var srcColsMap = new Dictionary<string, DataRow>(StringComparer.OrdinalIgnoreCase);
+          foreach (DataRow row in srcCols.Rows)
           {
-            // Get virtual columns to exclude from consolidation
-            var virtualColumns = GetVirtualColumnsForTable(tableName);
-
-            // Add missing schema-defined columns only (schema conformance)
-            var allowedCols = new HashSet<string>(GetAllowedSchemaColumns(tableName), StringComparer.OrdinalIgnoreCase);
-            var srcCols = src.GetSchema("Columns", new[] { null, null, tableName, null });
-            var srcColsMap = new Dictionary<string, DataRow>(StringComparer.OrdinalIgnoreCase);
-            foreach (DataRow row in srcCols.Rows)
-            {
-              var name = Convert.ToString(row["COLUMN_NAME"]);
-              if (!srcColsMap.ContainsKey(name)) srcColsMap[name] = row;
-            }
-
-            var destCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var dc = new SqlCeCommand($"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=@t", dest))
-            {
-              dc.Parameters.AddWithValue("@t", tableName);
-              using (var r = dc.ExecuteReader())
-              {
-                while (r.Read()) destCols.Add(r.GetString(0));
-              }
-            }
-
-            foreach (var colName in allowedCols)
-            {
-              if (destCols.Contains(colName)) continue;
-              if (virtualColumns.Contains(colName)) continue;
-
-              string typeSql = "NVARCHAR(255)";
-              if (srcColsMap.TryGetValue(colName, out var col))
-              {
-                string dataType = Convert.ToString(col["DATA_TYPE"]);
-                int length = srcCols.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
-                typeSql = MapType(dataType, length);
-              }
-              using (var alter = new SqlCeCommand($"ALTER TABLE [" + tableName + "] ADD [" + colName + "] " + typeSql + " NULL", dest)) alter.ExecuteNonQuery();
-            }
-            // No metadata columns in consolidated database
+            var name = Convert.ToString(row["COLUMN_NAME"]);
+            if (!srcColsMap.ContainsKey(name)) srcColsMap[name] = row;
           }
-          catch { }
+
+          var destCols = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+          using (var dc = new SqlCeCommand($"SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=@t", dest))
+          {
+            dc.Transaction = transaction;
+            dc.Parameters.AddWithValue("@t", tableName);
+            using (var r = dc.ExecuteReader())
+            {
+              while (r.Read()) destCols.Add(r.GetString(0));
+            }
+          }
+
+          foreach (var colName in allowedCols)
+          {
+            if (destCols.Contains(colName)) continue;
+            if (virtualColumns.Contains(colName)) continue;
+
+            string typeSql = "NVARCHAR(255)";
+            if (srcColsMap.TryGetValue(colName, out var col))
+            {
+              string dataType = Convert.ToString(col["DATA_TYPE"]);
+              int length = srcCols.Columns.Contains("CHARACTER_MAXIMUM_LENGTH") && col["CHARACTER_MAXIMUM_LENGTH"] != DBNull.Value ? Convert.ToInt32(col["CHARACTER_MAXIMUM_LENGTH"]) : -1;
+              typeSql = MapType(dataType, length);
+            }
+            using (var alter = new SqlCeCommand($"ALTER TABLE [" + tableName + "] ADD [" + colName + "] " + typeSql + " NULL", dest))
+            {
+              alter.Transaction = transaction;
+              alter.ExecuteNonQuery();
+            }
+          }
+          // No metadata columns in consolidated database
         }
       }
     }
@@ -5629,7 +5831,7 @@ namespace WorkOrderBlender
     // removed legacy prefixed consolidation path
 
         // Helper method to check if a sheet already exists in the destination database
-    private static bool SheetExistsInDestination(SqlCeConnection dest, string name, object width, object length, object thickness)
+    private static bool SheetExistsInDestination(SqlCeConnection dest, string name, object width, object length, object thickness, SqlCeTransaction transaction = null)
     {
       try
       {
@@ -5647,6 +5849,7 @@ namespace WorkOrderBlender
           "COALESCE(CAST([Thickness] AS NVARCHAR), '') = @thickness",
           dest))
         {
+          cmd.Transaction = transaction;
           cmd.Parameters.AddWithValue("@name", nameStr);
           cmd.Parameters.AddWithValue("@width", widthStr);
           cmd.Parameters.AddWithValue("@length", lengthStr);
@@ -5663,7 +5866,7 @@ namespace WorkOrderBlender
       }
     }
 
-    private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir)
+    private static void CopyRowsCombined(SqlCeConnection src, SqlCeConnection dest, string tableName, string sourceTag, string sourcePathDir, SqlCeTransaction transaction = null)
     {
       // Get virtual columns to exclude from consolidation
       var virtualColumns = GetVirtualColumnsForTable(tableName);
@@ -5703,6 +5906,7 @@ namespace WorkOrderBlender
         string insertSql = $"INSERT INTO [" + tableName + "] (" + string.Join(", ", destColumns) + ") VALUES (" + string.Join(", ", destParams) + ")";
         using (var insert = new SqlCeCommand(insertSql, dest))
         {
+          insert.Transaction = transaction; // Associate with transaction for atomicity
           foreach (var name in colNames)
           {
             insert.Parameters.Add(new SqlCeParameter("@" + name, DBNull.Value));
@@ -5777,7 +5981,7 @@ namespace WorkOrderBlender
                   if (thicknessIndex >= 0) thickness = reader.GetValue(thicknessIndex);
 
                   // Check if this sheet already exists
-                  if (SheetExistsInDestination(dest, name, width, length, thickness))
+                  if (SheetExistsInDestination(dest, name, width, length, thickness, transaction))
                   {
                     Program.Log($"Skipping duplicate sheet: Name='{name}', Width={width}, Length={length}, Thickness={thickness}");
                     rowIndex++;
@@ -5871,11 +6075,19 @@ namespace WorkOrderBlender
             }
             catch (Exception ex)
             {
+              // Always log row-level insert failures with context
+              Program.Log($"Insert failed for table '{tableName}' at row {rowIndex} from source '{sourceTag}': {ex.Message}", ex);
+
+              // Log detailed debug info if enabled
               if (EnableCopyDebug)
               {
                 LogInsertFailure(dest, tableName, tableName, colNames, insert, rowIndex, ex, sourceTag, sourcePathDir);
               }
-              throw;
+
+              // Wrap exception with row context for better error reporting
+              throw new InvalidOperationException(
+                $"Failed to insert row {rowIndex} into table '{tableName}': {ex.Message}",
+                ex);
             }
             rowIndex++;
           }
