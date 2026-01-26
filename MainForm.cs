@@ -28,6 +28,9 @@ namespace WorkOrderBlender
       ("Parts", "Parts"),
       ("Subassemblies", "Subassemblies"),
       ("Sheets", "Sheets"),
+      ("PlacedSheets", "PlacedSheets"),
+      ("Edgebanding", "Edgebanding"),
+      ("OptimizationResults", "OptimizationResults"),
       ("Hardware", "Hardware"),
     };
 
