@@ -10,9 +10,9 @@
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <Version>1.7.16</Version>
-    <AssemblyVersion>1.7.16</AssemblyVersion>
-    <FileVersion>1.7.16</FileVersion>
+    <Version>1.7.17</Version>
+    <AssemblyVersion>1.7.17</AssemblyVersion>
+    <FileVersion>1.7.17</FileVersion>
     <Company>WorkOrderBlender</Company>
     <Product>Work Order SDF Consolidator</Product>
     <Copyright>Copyright © $(Company) $([System.DateTime]::Now.Year)</Copyright>
