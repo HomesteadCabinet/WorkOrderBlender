@@ -26,6 +26,14 @@ namespace WorkOrderBlender
     private FileSystemWatcher stagingDirWatcher;
     private List<FileDisplayItem> allStagingFiles; // Store original staging files for filtering
     private List<TrackedReleaseFile> allReleaseFiles; // Store original release files for filtering
+    private System.Windows.Forms.Timer stagingFilterTimer; // Debounce staging filter typing
+    private System.Windows.Forms.Timer stagingRefreshTimer; // Debounce staging list refresh from watcher
+    private int stagingSortColumnIndex = -1;
+    private bool stagingSortAscending = true;
+    private string stagingSortColumnName = null; // Column name for re-applying sort after filter
+    private int releaseSortColumnIndex = -1;
+    private bool releaseSortAscending = true;
+    private string releaseSortColumnName = null;
 
     public SawQueueDialog()
     {
@@ -118,6 +126,11 @@ namespace WorkOrderBlender
       };
       stagingFilterTextBox.TextChanged += StagingFilterTextBox_TextChanged;
 
+      // Debounce staging filter so we don't re-apply on every keystroke when many files
+      stagingFilterTimer = new System.Windows.Forms.Timer();
+      stagingFilterTimer.Interval = 300;
+      stagingFilterTimer.Tick += StagingFilterTimer_Tick;
+
       stagingSearchPanel.Controls.Add(stagingSearchLabel);
       stagingSearchPanel.Controls.Add(stagingFilterTextBox);
 
@@ -205,6 +218,19 @@ namespace WorkOrderBlender
 
       // Add double-click handler to edit job name when clicking on JobName column
       stagingDataGrid.CellDoubleClick += StagingDataGrid_CellDoubleClick;
+
+      stagingDataGrid.ColumnHeaderMouseClick += StagingDataGrid_ColumnHeaderMouseClick;
+
+      // Reduce flicker and improve paint performance with many rows
+      try
+      {
+        typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+          ?.SetValue(stagingDataGrid, true, null);
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"SawQueueDialog: Could not set DoubleBuffered on staging grid: {ex.Message}");
+      }
 
       leftPanel.Controls.Add(stagingDataGrid);
       leftPanel.Controls.Add(stagingHeaderPanel);
@@ -355,6 +381,19 @@ namespace WorkOrderBlender
 
       releaseDataGrid.ContextMenuStrip = releaseContextMenu;
 
+      releaseDataGrid.ColumnHeaderMouseClick += ReleaseDataGrid_ColumnHeaderMouseClick;
+
+      // Reduce flicker and improve paint performance with many rows
+      try
+      {
+        typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+          ?.SetValue(releaseDataGrid, true, null);
+      }
+      catch (Exception ex)
+      {
+        Program.Log($"SawQueueDialog: Could not set DoubleBuffered on release grid: {ex.Message}");
+      }
+
       releaseHeaderPanel.Controls.Add(releaseLabel);
       releaseHeaderPanel.Controls.Add(releaseSearchPanel);
 
@@ -378,6 +417,24 @@ namespace WorkOrderBlender
 
       // Set up form closing to dispose watcher
       FormClosing += SawQueueDialog_FormClosing;
+
+      // Debounce staging list refresh when watcher fires (e.g. many files dropped at once)
+      stagingRefreshTimer = new System.Windows.Forms.Timer();
+      stagingRefreshTimer.Interval = 400;
+      stagingRefreshTimer.Tick += StagingRefreshTimer_Tick;
+    }
+
+    private void StagingRefreshTimer_Tick(object sender, EventArgs e)
+    {
+      try
+      {
+        if (stagingRefreshTimer != null) stagingRefreshTimer.Stop();
+        RefreshStagingList();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error in staging refresh timer", ex);
+      }
     }
 
     private void InitializeDialog()
@@ -595,6 +652,13 @@ namespace WorkOrderBlender
         stagingDirWatcher = null;
         Program.Log("SawQueueDialog: Released staging directory watcher");
       }
+
+      stagingFilterTimer?.Stop();
+      stagingFilterTimer?.Dispose();
+      stagingFilterTimer = null;
+      stagingRefreshTimer?.Stop();
+      stagingRefreshTimer?.Dispose();
+      stagingRefreshTimer = null;
     }
 
     // Handle CSV file changes from other instances
@@ -860,15 +924,8 @@ namespace WorkOrderBlender
           }
         }
 
-        // Refresh staging list on UI thread
-        if (InvokeRequired)
-        {
-          Invoke(new Action(RefreshStagingList));
-        }
-        else
-        {
-          RefreshStagingList();
-        }
+        // Debounce refresh on UI thread (avoids N refreshes when many files are dropped)
+        ScheduleStagingRefresh();
       }
       catch (Exception ex)
       {
@@ -903,20 +960,31 @@ namespace WorkOrderBlender
             }
           }
 
-          // Refresh staging list on UI thread
-          if (InvokeRequired)
-          {
-            Invoke(new Action(RefreshStagingList));
-          }
-          else
-          {
-            RefreshStagingList();
-          }
+          // Debounce refresh on UI thread (avoids N refreshes when many files change)
+          ScheduleStagingRefresh();
         }
       }
       catch (Exception ex)
       {
         Program.Log("SawQueueDialog: Error handling file change event in staging directory", ex);
+      }
+    }
+
+    private void ScheduleStagingRefresh()
+    {
+      if (stagingRefreshTimer == null) return;
+      if (InvokeRequired)
+      {
+        Invoke(new Action(() =>
+        {
+          stagingRefreshTimer.Stop();
+          stagingRefreshTimer.Start();
+        }));
+      }
+      else
+      {
+        stagingRefreshTimer.Stop();
+        stagingRefreshTimer.Start();
       }
     }
 
@@ -1094,18 +1162,8 @@ namespace WorkOrderBlender
           try
           {
             var fileInfo = new FileInfo(filePath);
-
-            // Try to update job names with batch ID if needed (only if file is not locked)
-            // This ensures files are updated when the dialog loads
-            try
-            {
-              UpdateJobNamesWithBatchId(filePath);
-            }
-            catch (Exception updateEx)
-            {
-              // Log but don't fail - file might be locked by another instance
-              Program.Log($"SawQueueDialog: Could not update batch ID for {fileInfo.Name} during load: {updateEx.Message}");
-            }
+            // Batch ID updates happen only for the single file in watcher Created/Changed handlers
+            // to avoid N file writes on every refresh when many files are in staging
 
             // Extract job name from PTX file
             var jobName = ExtractJobNameFromPtx(filePath);
@@ -1603,16 +1661,31 @@ namespace WorkOrderBlender
       }
     }
 
-    // Handle staging filter text change
+    // Handle staging filter text change - debounce so we don't re-apply on every keystroke
     private void StagingFilterTextBox_TextChanged(object sender, EventArgs e)
     {
       try
       {
+        if (stagingFilterTimer == null) return;
+        stagingFilterTimer.Stop();
+        stagingFilterTimer.Start();
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error in staging filter TextChanged", ex);
+      }
+    }
+
+    private void StagingFilterTimer_Tick(object sender, EventArgs e)
+    {
+      try
+      {
+        if (stagingFilterTimer != null) stagingFilterTimer.Stop();
         ApplyStagingFilter();
       }
       catch (Exception ex)
       {
-        Program.Log("SawQueueDialog: Error applying staging filter", ex);
+        Program.Log("SawQueueDialog: Error applying staging filter (timer)", ex);
       }
     }
 
@@ -1653,6 +1726,17 @@ namespace WorkOrderBlender
           ).ToList();
         }
 
+        // Re-apply current sort so filter preserves sort order
+        if (!string.IsNullOrEmpty(stagingSortColumnName))
+        {
+          IEnumerable<FileDisplayItem> ordered = stagingSortColumnName == "JobName" ? filteredFiles.OrderBy(f => f.JobName, StringComparer.OrdinalIgnoreCase)
+            : stagingSortColumnName == "FileSize" ? filteredFiles.OrderBy(f => f.FileSize)
+            : stagingSortColumnName == "LastModified" ? filteredFiles.OrderBy(f => f.LastModified)
+            : (IEnumerable<FileDisplayItem>)filteredFiles;
+          if (!stagingSortAscending) ordered = ordered.Reverse();
+          filteredFiles = ordered.ToList();
+        }
+
         // Create display items for DataGridView
         var displayItems = filteredFiles.Select(f => new
         {
@@ -1661,12 +1745,21 @@ namespace WorkOrderBlender
           LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
         }).ToList();
 
-        stagingDataGrid.DataSource = displayItems;
-
-        // Store FileDisplayItem references in row Tag for easy access
-        for (int i = 0; i < stagingDataGrid.Rows.Count && i < filteredFiles.Count; i++)
+        // Suspend layout so grid doesn't repaint for every row during bind and Tag set
+        stagingDataGrid.SuspendLayout();
+        try
         {
-          stagingDataGrid.Rows[i].Tag = filteredFiles[i];
+          stagingDataGrid.DataSource = displayItems;
+
+          // Store FileDisplayItem references in row Tag for easy access
+          for (int i = 0; i < stagingDataGrid.Rows.Count && i < filteredFiles.Count; i++)
+          {
+            stagingDataGrid.Rows[i].Tag = filteredFiles[i];
+          }
+        }
+        finally
+        {
+          stagingDataGrid.ResumeLayout(true);
         }
 
         // Update status label to show filtered count
@@ -1722,12 +1815,16 @@ namespace WorkOrderBlender
           SentToSawDate = f.SentToSaw.HasValue ? f.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm") : ""
         }).ToList();
 
-        releaseDataGrid.DataSource = displayItems;
-
-        // Store TrackedReleaseFile references in row Tag for easy access
-        for (int i = 0; i < releaseDataGrid.Rows.Count && i < filteredFiles.Count; i++)
+        releaseDataGrid.SuspendLayout();
+        try
         {
-          releaseDataGrid.Rows[i].Tag = filteredFiles[i];
+          releaseDataGrid.DataSource = displayItems;
+          for (int i = 0; i < releaseDataGrid.Rows.Count && i < filteredFiles.Count; i++)
+            releaseDataGrid.Rows[i].Tag = filteredFiles[i];
+        }
+        finally
+        {
+          releaseDataGrid.ResumeLayout(true);
         }
 
         // Update status label to show filtered count
@@ -1749,6 +1846,116 @@ namespace WorkOrderBlender
       catch (Exception ex)
       {
         Program.Log("SawQueueDialog: Error applying release filter", ex);
+      }
+    }
+
+    private void StagingDataGrid_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+    {
+      try
+      {
+        if (allStagingFiles == null || stagingDataGrid.Rows.Count == 0) return;
+        var items = new List<FileDisplayItem>();
+        foreach (DataGridViewRow row in stagingDataGrid.Rows)
+        {
+          if (row.Tag is FileDisplayItem item) items.Add(item);
+        }
+        if (items.Count == 0) return;
+
+        var colName = stagingDataGrid.Columns[e.ColumnIndex].Name;
+        if (stagingSortColumnIndex == e.ColumnIndex)
+          stagingSortAscending = !stagingSortAscending;
+        else
+        {
+          stagingSortColumnIndex = e.ColumnIndex;
+          stagingSortColumnName = colName;
+          stagingSortAscending = true;
+        }
+        IEnumerable<FileDisplayItem> ordered = colName == "JobName" ? items.OrderBy(f => f.JobName, StringComparer.OrdinalIgnoreCase)
+          : colName == "FileSize" ? items.OrderBy(f => f.FileSize)
+          : colName == "LastModified" ? items.OrderBy(f => f.LastModified)
+          : (IEnumerable<FileDisplayItem>)items;
+        if (!stagingSortAscending)
+          ordered = ordered.Reverse();
+
+        var sorted = ordered.ToList();
+        var displayItems = sorted.Select(f => new
+        {
+          JobName = f.JobName,
+          FileSize = FormatFileSize(f.FileSize),
+          LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
+        }).ToList();
+
+        stagingDataGrid.SuspendLayout();
+        try
+        {
+          stagingDataGrid.DataSource = displayItems;
+          for (int i = 0; i < stagingDataGrid.Rows.Count && i < sorted.Count; i++)
+            stagingDataGrid.Rows[i].Tag = sorted[i];
+        }
+        finally
+        {
+          stagingDataGrid.ResumeLayout(true);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error sorting staging grid", ex);
+      }
+    }
+
+    private void ReleaseDataGrid_ColumnHeaderMouseClick(object sender, DataGridViewCellMouseEventArgs e)
+    {
+      try
+      {
+        if (allReleaseFiles == null || releaseDataGrid.Rows.Count == 0) return;
+        var items = new List<TrackedReleaseFile>();
+        foreach (DataGridViewRow row in releaseDataGrid.Rows)
+        {
+          if (row.Tag is TrackedReleaseFile item) items.Add(item);
+        }
+        if (items.Count == 0) return;
+
+        var colName = releaseDataGrid.Columns[e.ColumnIndex].Name;
+        if (releaseSortColumnIndex == e.ColumnIndex)
+          releaseSortAscending = !releaseSortAscending;
+        else
+        {
+          releaseSortColumnIndex = e.ColumnIndex;
+          releaseSortColumnName = colName;
+          releaseSortAscending = true;
+        }
+        IEnumerable<TrackedReleaseFile> ordered = colName == "JobName" ? items.OrderBy(f => f.JobName, StringComparer.OrdinalIgnoreCase)
+          : colName == "Status" ? items.OrderBy(f => f.Status ?? "", StringComparer.OrdinalIgnoreCase)
+          : colName == "ReleaseDate" ? items.OrderBy(f => f.SentToRelease)
+          : colName == "SentToSawDate" ? items.OrderBy(f => f.SentToSaw ?? DateTime.MinValue)
+          : (IEnumerable<TrackedReleaseFile>)items;
+        if (!releaseSortAscending)
+          ordered = ordered.Reverse();
+
+        var sorted = ordered.ToList();
+        var displayItems = sorted.Select(f => new
+        {
+          JobName = f.JobName,
+          Status = f.Status == "pending" ? "Pending" : "Sent to Saw",
+          ReleaseDate = f.SentToRelease.ToString("yyyy-MM-dd HH:mm"),
+          SentToSawDate = f.SentToSaw.HasValue ? f.SentToSaw.Value.ToString("yyyy-MM-dd HH:mm") : ""
+        }).ToList();
+
+        releaseDataGrid.SuspendLayout();
+        try
+        {
+          releaseDataGrid.DataSource = displayItems;
+          for (int i = 0; i < releaseDataGrid.Rows.Count && i < sorted.Count; i++)
+            releaseDataGrid.Rows[i].Tag = sorted[i];
+        }
+        finally
+        {
+          releaseDataGrid.ResumeLayout(true);
+        }
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error sorting release grid", ex);
       }
     }
 

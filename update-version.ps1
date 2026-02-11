@@ -137,6 +137,19 @@ function Get-CurrentVersion {
     return $null
 }
 
+# Function to compute default next version (bump patch: 1.7.17 -> 1.7.18)
+function Get-DefaultNextVersion {
+    param([string]$CurrentVersion)
+    if ([string]::IsNullOrWhiteSpace($CurrentVersion)) { return $null }
+    if (-not (Test-VersionFormat $CurrentVersion)) { return $null }
+    $parts = $CurrentVersion -split '\.'
+    if ($parts.Count -ne 3) { return $null }
+    $patchNum = 0
+    [int]::TryParse($parts[2], [ref]$patchNum) | Out-Null
+    $patch = $patchNum + 1
+    return "$($parts[0]).$($parts[1]).$patch"
+}
+
 # Function to get multiline release notes from user
 function Get-ReleaseNotes {
     Write-Host "`n[INFO] Enter release notes for this update:" -ForegroundColor Cyan
@@ -184,9 +197,22 @@ if ($currentVersion) {
 }
 Write-Host ""
 
+# Compute default next version (bump patch) for prompt and blank input
+$defaultVersion = Get-DefaultNextVersion $currentVersion
+
 # Prompt for new version if not provided
 if ([string]::IsNullOrWhiteSpace($NewVersion)) {
-    $NewVersion = Read-Host "Enter new version number (e.g., 1.0.2)"
+    $prompt = if ($defaultVersion) {
+        "Enter new version number (blank for default ($defaultVersion))"
+    } else {
+        "Enter new version number (e.g., 1.0.2)"
+    }
+    $inputVersion = Read-Host $prompt
+    $NewVersion = if ([string]::IsNullOrWhiteSpace($inputVersion) -and $defaultVersion) {
+        $defaultVersion
+    } else {
+        $inputVersion
+    }
 }
 
 # Set default commit message if not provided
