@@ -35,6 +35,8 @@ namespace WorkOrderBlender
     private bool releaseSortAscending = true;
     private string releaseSortColumnName = null;
 
+    private const int StagingFileCountWarningThreshold = 200;
+
     public SawQueueDialog()
     {
       // Load directories from configuration
@@ -1128,6 +1130,16 @@ namespace WorkOrderBlender
 
         // Load staging files - RefreshStagingList will handle the display and filtering
         RefreshStagingList();
+
+        // Prompt user to clean up staging if too many files (improve system speed)
+        if (allStagingFiles != null && allStagingFiles.Count > StagingFileCountWarningThreshold)
+        {
+          MessageBox.Show(
+            $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {StagingFileCountWarningThreshold} files in staging is recommended.",
+            "Staging File Count",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+        }
 
         // Load release tracking history instead of current files
 
@@ -3528,13 +3540,18 @@ namespace WorkOrderBlender
 
         trackedFiles.Add(file);
 
-        // Keep only the last maxTrackedFiles
+        // Keep only the last maxTrackedFiles; move oldest records to archive CSV
         if (trackedFiles.Count > maxTrackedFiles)
         {
-          var toRemove = trackedFiles.OrderBy(f => f.SentToRelease).Take(trackedFiles.Count - maxTrackedFiles).ToList();
-          foreach (var removeFile in toRemove)
+          var toArchive = trackedFiles.OrderBy(f => f.SentToRelease).Take(trackedFiles.Count - maxTrackedFiles).ToList();
+          foreach (var oldFile in toArchive)
           {
-            trackedFiles.Remove(removeFile);
+            if (!ArchiveFile(oldFile))
+            {
+              trackedFiles.RemoveAll(f => string.Equals(f.FileName, oldFile.FileName, StringComparison.OrdinalIgnoreCase));
+              Program.Log($"ReleaseFileTracker: Could not archive '{oldFile.FileName}', removed from tracking to enforce limit");
+              SaveToCsv();
+            }
           }
         }
 
