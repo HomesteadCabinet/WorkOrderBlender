@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.18</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.18/WorkOrderBlender-v1.7.18.zip</url>
+  <version>1.7.19</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.19/WorkOrderBlender-v1.7.19.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>Should improve Saw Queue sluggishness. </releaseNotes>
+  <releaseNotes>Fixes issue where having more than 100 released files was not archiving the oldest. </releaseNotes>
 </item>
