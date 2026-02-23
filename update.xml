@@ -1,7 +1,8 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.19</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.19/WorkOrderBlender-v1.7.19.zip</url>
+  <version>1.7.20</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.20/WorkOrderBlender-v1.7.20.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>Fixes issue where having more than 100 released files was not archiving the oldest. </releaseNotes>
+  <releaseNotes>Should prompt the user to change names when they exceed 50 characters. Copies the databases to the local system prior 
+to do any processing for speed and to prevent unintended data loss </releaseNotes>
 </item>

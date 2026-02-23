@@ -18,10 +18,15 @@ namespace WorkOrderBlender
     private const string DefaultRoot = @"M:\Homestead_Library\Work Orders";
     private const string DefaultOutput = @"M:\Homestead_Library\Work Orders";
     private const string SdfFileName = "MicrovellumWorkOrder.sdf";
+    private const string WorkDirName = "work";
     private UserConfig userConfig;
     private readonly List<WorkOrderEntry> allWorkOrders = new List<WorkOrderEntry>();
     private List<WorkOrderEntry> filteredWorkOrders = new List<WorkOrderEntry>();
     private readonly HashSet<string> checkedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    // Map DirectoryPath -> path of SDF copy in work/ (so we read from local copies after selection)
+    private readonly Dictionary<string, string> workDirSdfByDirectoryPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    // Reverse map: work copy path -> original DirectoryPath (for displaying work order name in grid)
+    private readonly Dictionary<string, string> workPathToDirectoryPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private readonly (string Label, string Table)[] breakdownMetrics = new (string, string)[]
     {
       ("Products", "Products"),
@@ -243,9 +248,11 @@ namespace WorkOrderBlender
         catch { }
       };
 
-      // Persist window size and position
+      // Persist window size and position; remove work copies on exit
       this.FormClosing += (s, e) =>
       {
+        try { RemoveAllWorkCopies(); }
+        catch (Exception ex) { Program.Log("MainForm: Error removing work copies on exit", ex); }
         try
         {
           var cfg = UserConfig.LoadOrDefault();
@@ -513,6 +520,8 @@ namespace WorkOrderBlender
           if (wasChecked) checkedDirs.Remove(dir); else checkedDirs.Add(dir);
           listWorkOrders.Invalidate(hit.Item.Bounds);
 
+          EnsureWorkCopiesForCheckedOrders(); // Copy SDFs to work/ when checked, remove when unchecked
+
           // Set flag to prevent SelectedIndexChanged from triggering a refresh
           // We'll handle the refresh/clear here in MouseDown
           suppressSelectionChangedRefresh = true;
@@ -559,6 +568,8 @@ namespace WorkOrderBlender
           if (checkedDirs.Contains(dir)) checkedDirs.Remove(dir); else checkedDirs.Add(dir);
         }
         listWorkOrders.Invalidate();
+
+        EnsureWorkCopiesForCheckedOrders(); // Copy SDFs to work/selected when checked, remove when unchecked
 
         // Set flag to prevent SelectedIndexChanged from triggering a refresh
         suppressSelectionChangedRefresh = true;
@@ -796,6 +807,7 @@ namespace WorkOrderBlender
         {
           checkedDirs.Add(wo.DirectoryPath);
         }
+        EnsureWorkCopiesForCheckedOrders(); // Copy all selected SDFs to work/
         listWorkOrders.Invalidate(); // Refresh the display
         RequestRefreshMetricsGrid(); // Update metrics if needed
 
@@ -816,6 +828,7 @@ namespace WorkOrderBlender
       {
         // Clear all selections by clearing checkedDirs
         checkedDirs.Clear();
+        EnsureWorkCopiesForCheckedOrders(); // Remove work copies and map entries
         listWorkOrders.Invalidate(); // Refresh the display
         RequestRefreshMetricsGrid(); // Update metrics if needed
 
@@ -846,9 +859,9 @@ namespace WorkOrderBlender
 
     private async void btnConsolidate_Click(object sender, EventArgs e)
     {
-      var selected = filteredWorkOrders
+        var selected = filteredWorkOrders
         .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
-        .Select(wo => new { Directory = wo.DirectoryPath, SdfPath = wo.SdfPath })
+        .Select(wo => new { Directory = wo.DirectoryPath, SdfPath = GetEffectiveSdfPath(wo) })
         .ToList();
 
       if (selected.Count == 0)
@@ -974,9 +987,20 @@ namespace WorkOrderBlender
       }
       catch { }
 
+      var sourcesList = selected.Select(s => (s.Directory, s.SdfPath)).ToList();
+      string workDestPath = null;
+
       try
       {
-        RunConsolidation(selected.Select(s => (s.Directory, s.SdfPath)).ToList(), destPath);
+        // All work in work/: sources are already copied there when checked; write consolidated output to work/ then move to destination
+        EnsureWorkCopiesForCheckedOrders();
+        string workBase = GetWorkDirectory();
+        if (!Directory.Exists(workBase))
+          Directory.CreateDirectory(workBase);
+        workDestPath = Path.Combine(workBase, SdfFileName);
+        Program.Log($"MainForm: Consolidate starting - {sourcesList.Count} source(s), output to work: {workDestPath}");
+        RunConsolidation(sourcesList, workDestPath);
+        MoveConsolidatedToDestination(workDestPath, destPath);
         MessageBox.Show(
           $"Consolidation complete!\n\n" +
           $"Successfully merged {selected.Count} work order(s).\n\n" +
@@ -985,17 +1009,15 @@ namespace WorkOrderBlender
           MessageBoxButtons.OK,
           MessageBoxIcon.Information);
 
-        // Reset progress bar after successful consolidation
         progress.Value = 0;
       }
       catch (ConsolidationException cex)
       {
-        // Handle consolidation-specific errors with detailed feedback
         Program.Log("Consolidation error (ConsolidationException)", cex);
 
-        if (cex.IsPartialSuccess)
+        if (cex.IsPartialSuccess && workDestPath != null)
         {
-          // Some sources succeeded - show warning but note partial success
+          MoveConsolidatedToDestination(workDestPath, destPath);
           MessageBox.Show(
             $"{cex.Message}\n\n" +
             $"The consolidated database was created but may be incomplete.\n\n" +
@@ -1006,7 +1028,6 @@ namespace WorkOrderBlender
         }
         else
         {
-          // All sources failed
           MessageBox.Show(
             $"{cex.Message}\n\n" +
             "Please check the log file for more details.",
@@ -1015,12 +1036,10 @@ namespace WorkOrderBlender
             MessageBoxIcon.Error);
         }
 
-        // Reset progress bar on error
         progress.Value = 0;
       }
       catch (Exception ex)
       {
-        // Handle unexpected errors
         Program.Log("Consolidation error (unexpected)", ex);
 
         string detailedMessage = GetDetailedErrorMessage(ex);
@@ -1032,8 +1051,15 @@ namespace WorkOrderBlender
           MessageBoxButtons.OK,
           MessageBoxIcon.Error);
 
-        // Reset progress bar on error
         progress.Value = 0;
+      }
+      finally
+      {
+        if (!string.IsNullOrEmpty(workDestPath) && File.Exists(workDestPath))
+        {
+          try { File.Delete(workDestPath); } catch { }
+          Program.Log($"MainForm: Cleaned up consolidated output from work: {workDestPath}");
+        }
       }
     }
 
@@ -1577,10 +1603,12 @@ namespace WorkOrderBlender
           List<string> sourcePaths;
           if (checkedDirs.Count > 0)
           {
-            // Use checked work orders only
+            // Use checked work orders only; read from work/ copies when available
+            EnsureWorkCopiesForCheckedOrders();
             sourcePaths = filteredWorkOrders
               .Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath))
-              .Select(wo => wo.SdfPath)
+              .Select(wo => GetEffectiveSdfPath(wo))
+              .Where(p => !string.IsNullOrEmpty(p) && File.Exists(p))
               .ToList();
           }
           else
@@ -2403,6 +2431,9 @@ namespace WorkOrderBlender
       try
       {
         if (string.IsNullOrWhiteSpace(sdfPath)) return "Unknown";
+        // If this path is a work copy, use the original directory so the grid shows the real work order name (not "selected")
+        if (workPathToDirectoryPath.TryGetValue(sdfPath, out var originalDirectoryPath))
+          return GetWorkOrderNameFromPath(originalDirectoryPath);
         var directory = Path.GetDirectoryName(sdfPath);
         if (string.IsNullOrWhiteSpace(directory)) return Path.GetFileNameWithoutExtension(sdfPath);
         return Path.GetFileName(directory);
@@ -5425,6 +5456,130 @@ namespace WorkOrderBlender
       public override string ToString()
       {
         return Label;
+      }
+    }
+
+    private string GetWorkDirectory()
+    {
+      string appDir = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+      return Path.Combine(appDir, WorkDirName);
+    }
+
+    /// <summary>
+    /// Copy SDF files for currently checked work orders into work/ so all data extraction uses local copies. Call when checked set changes.
+    /// </summary>
+    private void EnsureWorkCopiesForCheckedOrders()
+    {
+      string workBase = GetWorkDirectory();
+      if (!Directory.Exists(workBase))
+      {
+        Directory.CreateDirectory(workBase);
+        Program.Log($"MainForm: Created work directory: {workBase}");
+      }
+
+      // Remove map entries and delete files for dirs no longer checked
+      var toRemove = workDirSdfByDirectoryPath.Keys.Where(dir => !checkedDirs.Contains(dir)).ToList();
+      foreach (var dir in toRemove)
+      {
+        if (workDirSdfByDirectoryPath.TryGetValue(dir, out var workPath))
+        {
+          workPathToDirectoryPath.Remove(workPath);
+          if (File.Exists(workPath))
+          {
+            try { File.Delete(workPath); } catch (Exception ex) { Program.Log($"MainForm: Failed to delete work copy on uncheck: {ex.Message}", ex); }
+            Program.Log($"MainForm: Removed work copy (unchecked): {workPath}");
+          }
+        }
+        workDirSdfByDirectoryPath.Remove(dir);
+      }
+
+      if (filteredWorkOrders == null) return;
+      var checkedEntries = filteredWorkOrders.Where(wo => checkedDirs.Contains(wo.DirectoryPath) && File.Exists(wo.SdfPath)).ToList();
+      var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+      foreach (var wo in checkedEntries)
+      {
+        if (workDirSdfByDirectoryPath.TryGetValue(wo.DirectoryPath, out var existingPath) && File.Exists(existingPath))
+          continue; // Already have a valid copy
+        string sourceTag = new DirectoryInfo(wo.DirectoryPath).Name;
+        int suffix = 0;
+        string baseName = sourceTag + ".sdf";
+        while (usedNames.Contains(baseName))
+          baseName = sourceTag + "_" + (++suffix) + ".sdf";
+        usedNames.Add(baseName);
+        string workPath = Path.Combine(workBase, baseName);
+        try
+        {
+          File.Copy(wo.SdfPath, workPath, overwrite: true);
+          workDirSdfByDirectoryPath[wo.DirectoryPath] = workPath;
+          workPathToDirectoryPath[workPath] = wo.DirectoryPath;
+          Program.Log($"MainForm: Copied SDF to work (on select): {wo.SdfPath} -> {workPath}");
+        }
+        catch (Exception ex)
+        {
+          Program.Log($"MainForm: Failed to copy SDF to work: {wo.SdfPath}", ex);
+        }
+      }
+    }
+
+    /// <summary>
+    /// Remove all copied SDF files from work/ and clear the maps. Call on de-select (via EnsureWorkCopiesForCheckedOrders) and on application exit.
+    /// </summary>
+    private void RemoveAllWorkCopies()
+    {
+      foreach (var kv in workDirSdfByDirectoryPath.ToList())
+      {
+        var workPath = kv.Value;
+        workPathToDirectoryPath.Remove(workPath);
+        if (!string.IsNullOrEmpty(workPath) && File.Exists(workPath))
+        {
+          try
+          {
+            File.Delete(workPath);
+            Program.Log($"MainForm: Removed work copy (exit): {workPath}");
+          }
+          catch (Exception ex)
+          {
+            Program.Log($"MainForm: Failed to delete work copy on exit: {workPath}", ex);
+          }
+        }
+      }
+      workDirSdfByDirectoryPath.Clear();
+    }
+
+    /// <summary>
+    /// Returns the path to use for reading this work order's SDF (work copy if we have one, else original).
+    /// </summary>
+    private string GetEffectiveSdfPath(WorkOrderEntry wo)
+    {
+      if (wo == null) return null;
+      if (workDirSdfByDirectoryPath.TryGetValue(wo.DirectoryPath, out var workPath) && File.Exists(workPath))
+        return workPath;
+      return wo.SdfPath;
+    }
+
+    private static void MoveConsolidatedToDestination(string workDestPath, string destPath)
+    {
+      if (!File.Exists(workDestPath))
+      {
+        Program.Log($"MainForm: Work output not found: {workDestPath}");
+        return;
+      }
+      if (File.Exists(destPath))
+      {
+        try { File.Delete(destPath); } catch (Exception ex) { Program.Log($"MainForm: Failed to delete existing destination: {ex.Message}", ex); throw; }
+      }
+      try
+      {
+        File.Move(workDestPath, destPath);
+        Program.Log($"MainForm: Moved consolidated file to destination: {destPath}");
+      }
+      catch (IOException)
+      {
+        // Cross-drive or other move failure; copy then delete
+        File.Copy(workDestPath, destPath, overwrite: true);
+        File.Delete(workDestPath);
+        Program.Log($"MainForm: Copied consolidated file to destination (cross-drive): {destPath}");
       }
     }
 
