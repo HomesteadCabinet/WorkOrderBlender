@@ -225,55 +225,23 @@ namespace WorkOrderBlender
       AddWidth("Subassemblies", "_SourceFile", 120);
     }
 
+    /// <summary>
+    /// Clean duplicate keywords in memory only after load. Do not save - settings are only persisted on explicit user save.
+    /// </summary>
     private static void CleanupDuplicatesAfterDeserialization(UserConfig cfg)
     {
-      bool hasDuplicates = false;
-
-      // Clean up FrontFilterKeywords duplicates in the backing field
+      // Clean up FrontFilterKeywords duplicates in the backing field (in-memory only)
       if (cfg._frontFilterKeywords != null && cfg._frontFilterKeywords.Count != cfg._frontFilterKeywords.Distinct().Count())
       {
-        hasDuplicates = true;
         cfg._frontFilterKeywords = cfg._frontFilterKeywords.Distinct().ToList();
-        Program.Log("UserConfig: Cleaned up duplicate FrontFilterKeywords after XML deserialization");
+        Program.Log("UserConfig: Cleaned up duplicate FrontFilterKeywords after XML deserialization (in-memory only)");
       }
 
-      // Clean up SubassemblyFilterKeywords duplicates in the backing field
+      // Clean up SubassemblyFilterKeywords duplicates in the backing field (in-memory only)
       if (cfg._subassemblyFilterKeywords != null && cfg._subassemblyFilterKeywords.Count != cfg._subassemblyFilterKeywords.Distinct().Count())
       {
-        hasDuplicates = true;
         cfg._subassemblyFilterKeywords = cfg._subassemblyFilterKeywords.Distinct().ToList();
-        Program.Log("UserConfig: Cleaned up duplicate SubassemblyFilterKeywords after XML deserialization");
-      }
-
-      // Save the cleaned configuration if duplicates were found
-      if (hasDuplicates)
-      {
-        try
-        {
-          cfg.Save();
-          Program.Log("UserConfig: Saved cleaned configuration to remove duplicates after deserialization");
-        }
-        catch (IOException ex) when (ex.Message.Contains("being used by another process"))
-        {
-          Program.Log("UserConfig: Could not save cleaned configuration immediately due to file lock, will retry later");
-          // Schedule a delayed save to retry when the file is no longer locked
-          System.Threading.Tasks.Task.Delay(1000).ContinueWith(_ =>
-          {
-            try
-            {
-              cfg.Save();
-              Program.Log("UserConfig: Successfully saved cleaned configuration on retry");
-            }
-            catch (Exception retryEx)
-            {
-              Program.Log("UserConfig: Retry save also failed", retryEx);
-            }
-          });
-        }
-        catch (Exception ex)
-        {
-          Program.Log("UserConfig: Failed to save cleaned configuration", ex);
-        }
+        Program.Log("UserConfig: Cleaned up duplicate SubassemblyFilterKeywords after XML deserialization (in-memory only)");
       }
     }
 

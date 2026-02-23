@@ -1432,11 +1432,155 @@ namespace WorkOrderBlender
       }
     }
 
+    /// <summary>
+    /// Shared logic: move selected staging items to release with job name validation.
+    /// Handles multiple selected items; validates and optionally edits job name per file.
+    /// </summary>
+    /// <param name="selectedItems">Items to move (from staging grid selection).</param>
+    /// <returns>Number of files moved and number of errors.</returns>
+    private (int movedCount, int errorCount) MoveSelectedItemsToRelease(List<FileDisplayItem> selectedItems)
+    {
+      if (selectedItems == null || selectedItems.Count == 0)
+        return (0, 0);
+
+      if (!Directory.Exists(releaseDir))
+      {
+        Directory.CreateDirectory(releaseDir);
+        Program.Log($"SawQueueDialog: Created release directory: {releaseDir}");
+      }
+
+      var movedCount = 0;
+      var errorCount = 0;
+
+      foreach (var item in selectedItems)
+      {
+        try
+        {
+          // Validate both job name fields before moving
+          var (isValid, jobName1, jobName2, errorMessage) = ValidateJobNameFields(item.FilePath);
+
+          if (!isValid)
+          {
+            var editResult = MessageBox.Show(
+              $"The job name for '{item.FileName}' has validation issues:\n\n{errorMessage}\n\n" +
+              "Would you like to edit the job name now?",
+              "Job Name Too Long",
+              MessageBoxButtons.YesNo,
+              MessageBoxIcon.Warning);
+
+            if (editResult == DialogResult.Yes)
+            {
+              var currentJobName = jobName1 ?? ExtractJobNameFromPtx(item.FilePath) ?? item.JobName;
+              var condensedJobName = CondenseName(currentJobName);
+              string newJobName = null;
+
+              if (condensedJobName.Length <= 50)
+              {
+                var acceptResult = MessageBox.Show(
+                  "We have suggested a job name that will fit within the 50 character limit. Would you like to use this name?" + "\n\n" +
+                  "Suggested job name: \n\n" + condensedJobName + "\n\n" +
+                  "Click 'Yes' to accept this name, or 'No' to edit it.",
+                  "Accept Suggested Name?",
+                  MessageBoxButtons.YesNo,
+                  MessageBoxIcon.Question);
+
+                if (acceptResult == DialogResult.Yes)
+                {
+                  UpdateJobNameInPtx(item.FilePath, condensedJobName);
+                  newJobName = condensedJobName;
+                  Program.Log($"SawQueueDialog: Accepted condensed job name '{condensedJobName}' for file '{item.FileName}'");
+                }
+                else
+                {
+                  item.JobName = condensedJobName;
+                  newJobName = EditJobNameForFileItem(item);
+                }
+              }
+              else
+              {
+                item.JobName = condensedJobName;
+                newJobName = EditJobNameForFileItem(item);
+              }
+
+              if (newJobName == null)
+              {
+                Program.Log($"SawQueueDialog: Skipping file '{item.FileName}' - job name not updated");
+                continue;
+              }
+
+              var (isValidAfterEdit, updatedJobName1, updatedJobName2, updatedErrorMessage) = ValidateJobNameFields(item.FilePath);
+              if (!isValidAfterEdit)
+              {
+                MessageBox.Show(
+                  $"The job name for '{item.FileName}' still has validation issues:\n\n{updatedErrorMessage}\n\n" +
+                  (updatedJobName1 != null && updatedJobName2 != null
+                    ? $"Field 1: '{updatedJobName1}'\nField 2: '{updatedJobName2}'\n\n"
+                    : "") +
+                  "This file will be skipped. Please edit the job name manually and try again.",
+                  "Job Name Still Invalid",
+                  MessageBoxButtons.OK,
+                  MessageBoxIcon.Warning);
+                continue;
+              }
+            }
+            else
+            {
+              Program.Log($"SawQueueDialog: Skipping file '{item.FileName}' - job name validation failed and user declined to edit");
+              continue;
+            }
+          }
+
+          var sourceFile = item.FilePath;
+          var destFile = Path.Combine(releaseDir, item.FileName);
+
+          if (File.Exists(destFile))
+          {
+            var overwriteResult = MessageBox.Show(
+              $"File '{item.FileName}' already exists in release directory.\n\nOverwrite?",
+              "File Exists",
+              MessageBoxButtons.YesNoCancel,
+              MessageBoxIcon.Warning);
+
+            if (overwriteResult == DialogResult.Cancel)
+              return (movedCount, errorCount);
+            if (overwriteResult == DialogResult.No)
+              continue;
+
+            File.Delete(destFile);
+          }
+
+          File.Move(sourceFile, destFile);
+          var jobName = ExtractJobNameFromPtx(destFile);
+          releaseTracker.AddFile(item.FileName, destFile, jobName ?? item.FileName, "pending");
+          movedCount++;
+          Program.Log($"SawQueueDialog: Moved file from '{sourceFile}' to '{destFile}'");
+        }
+        catch (Exception ex)
+        {
+          errorCount++;
+          Program.Log($"SawQueueDialog: Error moving file '{item.FileName}'", ex);
+        }
+      }
+
+      return (movedCount, errorCount);
+    }
+
+    private static List<FileDisplayItem> GetSelectedStagingItems(DataGridView grid)
+    {
+      var list = new List<FileDisplayItem>();
+      if (grid?.SelectedRows == null) return list;
+      foreach (DataGridViewRow row in grid.SelectedRows)
+      {
+        if (row.Tag is FileDisplayItem fileItem)
+          list.Add(fileItem);
+      }
+      return list;
+    }
+
     private void BtnMoveToRelease_Click(object sender, EventArgs e)
     {
       try
       {
-        // Check if any rows are selected
         if (stagingDataGrid.SelectedRows.Count == 0)
         {
           MessageBox.Show("Please select one or more files from the staging list to move to release.",
@@ -1444,178 +1588,15 @@ namespace WorkOrderBlender
           return;
         }
 
-        // Confirm the move operation
-        // var result = MessageBox.Show(
-        //   $"Are you sure you want to move {stagingDataGrid.SelectedRows.Count} file(s) from staging to release?",
-        //   "Confirm Move",
-        //   MessageBoxButtons.YesNo,
-        //   MessageBoxIcon.Question);
-
-        // if (result != DialogResult.Yes)
-        //   return;
-
-        // Ensure release directory exists
-        if (!Directory.Exists(releaseDir))
+        var selectedItems = GetSelectedStagingItems(stagingDataGrid);
+        if (selectedItems.Count == 0)
         {
-          Directory.CreateDirectory(releaseDir);
-          Program.Log($"SawQueueDialog: Created release directory: {releaseDir}");
+          MessageBox.Show("No valid files selected.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
         }
 
-        // Move selected files
-        var movedCount = 0;
-        var errorCount = 0;
-
-        // Get selected FileDisplayItem objects from the DataGridView
-        var selectedItems = new List<FileDisplayItem>();
-        foreach (DataGridViewRow row in stagingDataGrid.SelectedRows)
-        {
-          // Store FileDisplayItem in row Tag for easy access
-          if (row.Tag is FileDisplayItem fileItem)
-          {
-            selectedItems.Add(fileItem);
-          }
-        }
-
-        foreach (var item in selectedItems)
-        {
-          try
-          {
-            // Validate both job name fields before moving
-            var (isValid, jobName1, jobName2, errorMessage) = ValidateJobNameFields(item.FilePath);
-
-            // If validation failed, prompt user to edit
-            if (!isValid)
-            {
-              var editResult = MessageBox.Show(
-                $"The job name for '{item.FileName}' has validation issues:\n\n{errorMessage}\n\n" +
-
-                "Would you like to edit the job name now?",
-                "Job Name Too Long",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
-
-              if (editResult == DialogResult.Yes)
-              {
-                // Get the current job name from the file (use validated jobName1 if available, otherwise extract)
-                var currentJobName = jobName1 ?? ExtractJobNameFromPtx(item.FilePath) ?? item.JobName;
-
-                // Suggest a condensed version
-                var condensedJobName = CondenseName(currentJobName);
-
-                string newJobName = null;
-
-                // If condensed name is 50 or fewer characters, offer to accept or edit
-                if (condensedJobName.Length <= 50)
-                {
-                  var acceptResult = MessageBox.Show(
-                    "We have suggested a job name that will fit within the 50 character limit. Would you like to use this name?" + "\n\n" +
-                    "Suggested job name: \n\n" + condensedJobName + "\n\n" +
-                    "Click 'Yes' to accept this name, or 'No' to edit it.",
-                    "Accept Suggested Name?",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Question);
-
-                  if (acceptResult == DialogResult.Yes)
-                  {
-                    // User accepted the condensed name - update the PTX file directly
-                    UpdateJobNameInPtx(item.FilePath, condensedJobName);
-                    newJobName = condensedJobName;
-                    Program.Log($"SawQueueDialog: Accepted condensed job name '{condensedJobName}' for file '{item.FileName}'");
-                  }
-                  else
-                  {
-                    // User wants to edit - show the edit dialog with condensed name pre-filled
-                    item.JobName = condensedJobName;
-                    newJobName = EditJobNameForFileItem(item);
-                  }
-                }
-                else
-                {
-                  // Condensed name is still too long - show edit dialog with condensed name as starting point
-                  item.JobName = condensedJobName;
-                  newJobName = EditJobNameForFileItem(item);
-                }
-
-                if (newJobName == null)
-                {
-                  // User cancelled or didn't change - skip this file
-                  Program.Log($"SawQueueDialog: Skipping file '{item.FileName}' - job name not updated");
-                  continue;
-                }
-
-                // Re-validate after update to verify both fields are now valid
-                var (isValidAfterEdit, updatedJobName1, updatedJobName2, updatedErrorMessage) = ValidateJobNameFields(item.FilePath);
-
-                if (!isValidAfterEdit)
-                {
-                  MessageBox.Show(
-                    $"The job name for '{item.FileName}' still has validation issues:\n\n{updatedErrorMessage}\n\n" +
-                    (updatedJobName1 != null && updatedJobName2 != null
-                      ? $"Field 1: '{updatedJobName1}'\nField 2: '{updatedJobName2}'\n\n"
-                      : "") +
-                    "This file will be skipped. Please edit the job name manually and try again.",
-                    "Job Name Still Invalid",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                  continue;
-                }
-              }
-              else
-              {
-                // User chose not to edit - skip this file
-                Program.Log($"SawQueueDialog: Skipping file '{item.FileName}' - job name validation failed and user declined to edit");
-                continue;
-              }
-            }
-
-            var sourceFile = item.FilePath;
-            var destFile = Path.Combine(releaseDir, item.FileName);
-
-            // Check if destination file already exists
-            if (File.Exists(destFile))
-            {
-              var overwriteResult = MessageBox.Show(
-                $"File '{item.FileName}' already exists in release directory.\n\nOverwrite?",
-                "File Exists",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Warning);
-
-              if (overwriteResult == DialogResult.Cancel)
-                break;
-              if (overwriteResult == DialogResult.No)
-                continue;
-
-              File.Delete(destFile);
-            }
-
-            // Move the file
-            File.Move(sourceFile, destFile);
-
-            // Track the file in release history with "pending" status
-            // Re-extract job name from moved file to ensure we have the latest value
-            var jobName = ExtractJobNameFromPtx(destFile);
-            releaseTracker.AddFile(item.FileName, destFile, jobName ?? item.FileName, "pending");
-
-            movedCount++;
-            Program.Log($"SawQueueDialog: Moved file from '{sourceFile}' to '{destFile}'");
-          }
-          catch (Exception ex)
-          {
-            errorCount++;
-            Program.Log($"SawQueueDialog: Error moving file '{item.FileName}'", ex);
-          }
-        }
-
-        // Refresh the lists
+        var (movedCount, errorCount) = MoveSelectedItemsToRelease(selectedItems);
         LoadFiles();
-
-        // Show summary
-        var message = $"Moved {movedCount} file(s) successfully.";
-        if (errorCount > 0)
-          message += $"\n{errorCount} file(s) failed to move. Check the log for details.";
-
-        // MessageBox.Show(message, "Move Complete",
-        //   MessageBoxButtons.OK, errorCount > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
       }
       catch (Exception ex)
       {
@@ -1971,12 +1952,11 @@ namespace WorkOrderBlender
       }
     }
 
-    // Context menu handler for staging grid - Move to Release
+    // Context menu handler for staging grid - Move to Release (same logic as BtnMoveToRelease)
     private void StagingContextMenu_Move_Click(object sender, EventArgs e)
     {
       try
       {
-        // Check if any rows are selected
         if (stagingDataGrid.SelectedRows.Count == 0)
         {
           MessageBox.Show("Please select one or more files to move to release.",
@@ -1984,23 +1964,13 @@ namespace WorkOrderBlender
           return;
         }
 
-        // Get selected FileDisplayItem objects
-        var selectedItems = new List<FileDisplayItem>();
-        foreach (DataGridViewRow row in stagingDataGrid.SelectedRows)
-        {
-          if (row.Tag is FileDisplayItem fileItem)
-          {
-            selectedItems.Add(fileItem);
-          }
-        }
-
+        var selectedItems = GetSelectedStagingItems(stagingDataGrid);
         if (selectedItems.Count == 0)
         {
           MessageBox.Show("No valid files selected.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
           return;
         }
 
-        // Confirm the move operation
         var result = MessageBox.Show(
           $"Are you sure you want to move {selectedItems.Count} file(s) from staging to release?",
           "Confirm Move",
@@ -2010,68 +1980,8 @@ namespace WorkOrderBlender
         if (result != DialogResult.Yes)
           return;
 
-        // Ensure release directory exists
-        if (!Directory.Exists(releaseDir))
-        {
-          Directory.CreateDirectory(releaseDir);
-          Program.Log($"SawQueueDialog: Created release directory: {releaseDir}");
-        }
-
-        // Move selected files
-        var movedCount = 0;
-        var errorCount = 0;
-
-        foreach (var item in selectedItems)
-        {
-          try
-          {
-            var sourceFile = item.FilePath;
-            var destFile = Path.Combine(releaseDir, item.FileName);
-
-            // Check if destination file already exists
-            if (File.Exists(destFile))
-            {
-              var overwriteResult = MessageBox.Show(
-                $"File '{item.FileName}' already exists in release directory.\n\nOverwrite?",
-                "File Exists",
-                MessageBoxButtons.YesNoCancel,
-                MessageBoxIcon.Warning);
-
-              if (overwriteResult == DialogResult.Cancel)
-                break;
-              if (overwriteResult == DialogResult.No)
-                continue;
-
-              File.Delete(destFile);
-            }
-
-            // Move the file
-            File.Move(sourceFile, destFile);
-
-            // Track the file in release history with "pending" status
-            var jobName = ExtractJobNameFromPtx(destFile);
-            releaseTracker.AddFile(item.FileName, destFile, jobName ?? item.FileName, "pending");
-
-            movedCount++;
-            Program.Log($"SawQueueDialog: Moved file from '{sourceFile}' to '{destFile}'");
-          }
-          catch (Exception ex)
-          {
-            errorCount++;
-            Program.Log($"SawQueueDialog: Error moving file '{item.FileName}'", ex);
-          }
-        }
-
-        // Refresh the lists
+        var (movedCount, errorCount) = MoveSelectedItemsToRelease(selectedItems);
         LoadFiles();
-
-        // Show summary
-        var message = $"Moved {movedCount} file(s) successfully.";
-        if (errorCount > 0)
-          message += $"\n{errorCount} file(s) failed to move. Check the log for details.";
-
-        // MessageBox.Show(message, "Move Complete",
-        //   MessageBoxButtons.OK, errorCount > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
       }
       catch (Exception ex)
       {
