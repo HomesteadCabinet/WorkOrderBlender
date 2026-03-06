@@ -176,6 +176,13 @@ namespace WorkOrderBlender
       });
       stagingDataGrid.Columns.Add(new DataGridViewTextBoxColumn
       {
+        Name = "FileName",
+        HeaderText = "File",
+        DataPropertyName = "FileName",
+        FillWeight = 35
+      });
+      stagingDataGrid.Columns.Add(new DataGridViewTextBoxColumn
+      {
         Name = "FileSize",
         HeaderText = "Size",
         DataPropertyName = "FileSize",
@@ -197,6 +204,9 @@ namespace WorkOrderBlender
       var editJobNameMenuItem = new ToolStripMenuItem("Edit Job Name");
       editJobNameMenuItem.Click += StagingContextMenu_EditJobName_Click;
 
+      var renameFileMenuItem = new ToolStripMenuItem("Rename file");
+      renameFileMenuItem.Click += StagingContextMenu_RenameFile_Click;
+
       var showPartsMenuItem = new ToolStripMenuItem("Show Parts");
       showPartsMenuItem.Click += StagingContextMenu_ShowParts_Click;
 
@@ -207,6 +217,7 @@ namespace WorkOrderBlender
       deleteMenuItem.Click += StagingContextMenu_Delete_Click;
 
       stagingContextMenu.Items.Add(editJobNameMenuItem);
+      stagingContextMenu.Items.Add(renameFileMenuItem);
       stagingContextMenu.Items.Add(showPartsMenuItem);
       stagingContextMenu.Items.Add(compareFilesMenuItem);
       stagingContextMenu.Items.Add(moveMenuItem);
@@ -377,6 +388,10 @@ namespace WorkOrderBlender
       var archiveMenuItem = new ToolStripMenuItem("Archive");
       archiveMenuItem.Click += ReleaseContextMenu_Archive_Click;
       releaseContextMenu.Items.Add(archiveMenuItem);
+
+      var releaseDeleteMenuItem = new ToolStripMenuItem("Delete");
+      releaseDeleteMenuItem.Click += ReleaseContextMenu_Delete_Click;
+      releaseContextMenu.Items.Add(releaseDeleteMenuItem);
 
       // Add Opening event handler to enable/disable menu items based on selection
       releaseContextMenu.Opening += ReleaseContextMenu_Opening;
@@ -1206,7 +1221,7 @@ namespace WorkOrderBlender
       return items;
     }
 
-    // Extract job name from PTX file by reading the JOBS line
+    // Extract job name from PTX file by reading the JOBS line; appends batch ID (column 7) when present
     private string ExtractJobNameFromPtx(string filePath)
     {
       try
@@ -1220,11 +1235,19 @@ namespace WorkOrderBlender
             // Check if this is a JOBS line (starts with "JOBS,")
             if (line.StartsWith("JOBS,", StringComparison.OrdinalIgnoreCase))
             {
-              // Split by comma and get the third field (index 2) which contains the job name
+              // JOBS format: JOBS,JobIndex,JobName1,JobName2,Date1,Date2,BatchId,... ; column 7 = index 6
               var fields = line.Split(',');
               if (fields.Length >= 3 && !string.IsNullOrWhiteSpace(fields[2]))
               {
-                return fields[2].Trim();
+                var jobName = fields[2].Trim();
+                // Append batch ID from column 7 (index 6) when present
+                if (fields.Length >= 7 && !string.IsNullOrWhiteSpace(fields[6]))
+                {
+                  var batchId = fields[6].Trim();
+                  if (!jobName.EndsWith("_" + batchId, StringComparison.OrdinalIgnoreCase))
+                    jobName = jobName + "_" + batchId;
+                }
+                return jobName;
               }
             }
           }
@@ -1723,6 +1746,7 @@ namespace WorkOrderBlender
         if (!string.IsNullOrEmpty(stagingSortColumnName))
         {
           IEnumerable<FileDisplayItem> ordered = stagingSortColumnName == "JobName" ? filteredFiles.OrderBy(f => f.JobName, StringComparer.OrdinalIgnoreCase)
+            : stagingSortColumnName == "FileName" ? filteredFiles.OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase)
             : stagingSortColumnName == "FileSize" ? filteredFiles.OrderBy(f => f.FileSize)
             : stagingSortColumnName == "LastModified" ? filteredFiles.OrderBy(f => f.LastModified)
             : (IEnumerable<FileDisplayItem>)filteredFiles;
@@ -1734,6 +1758,7 @@ namespace WorkOrderBlender
         var displayItems = filteredFiles.Select(f => new
         {
           JobName = f.JobName,
+          FileName = f.FileName,
           FileSize = FormatFileSize(f.FileSize),
           LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
         }).ToList();
@@ -1864,6 +1889,7 @@ namespace WorkOrderBlender
           stagingSortAscending = true;
         }
         IEnumerable<FileDisplayItem> ordered = colName == "JobName" ? items.OrderBy(f => f.JobName, StringComparer.OrdinalIgnoreCase)
+          : colName == "FileName" ? items.OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase)
           : colName == "FileSize" ? items.OrderBy(f => f.FileSize)
           : colName == "LastModified" ? items.OrderBy(f => f.LastModified)
           : (IEnumerable<FileDisplayItem>)items;
@@ -1874,6 +1900,7 @@ namespace WorkOrderBlender
         var displayItems = sorted.Select(f => new
         {
           JobName = f.JobName,
+          FileName = f.FileName,
           FileSize = FormatFileSize(f.FileSize),
           LastModified = f.LastModified.ToString("yyyy-MM-dd HH:mm")
         }).ToList();
@@ -1996,19 +2023,21 @@ namespace WorkOrderBlender
     {
       try
       {
-        // Only handle double-click on JobName column
-        if (e.RowIndex >= 0 && e.ColumnIndex >= 0 &&
-            stagingDataGrid.Columns[e.ColumnIndex].Name == "JobName")
-        {
-          // Select the row that was double-clicked
-          if (e.RowIndex < stagingDataGrid.Rows.Count)
-          {
-            stagingDataGrid.ClearSelection();
-            stagingDataGrid.Rows[e.RowIndex].Selected = true;
+        if (e.RowIndex < 0 || e.ColumnIndex < 0 || e.RowIndex >= stagingDataGrid.Rows.Count)
+          return;
 
-            // Call the edit job name method
-            EditJobNameForSelectedRow();
-          }
+        var colName = stagingDataGrid.Columns[e.ColumnIndex].Name;
+        stagingDataGrid.ClearSelection();
+        stagingDataGrid.Rows[e.RowIndex].Selected = true;
+
+        if (colName == "JobName")
+        {
+          EditJobNameForSelectedRow();
+        }
+        else if (colName == "FileName")
+        {
+          // Open rename file dialog (same as context menu "Rename file")
+          StagingContextMenu_RenameFile_Click(sender, EventArgs.Empty);
         }
       }
       catch (Exception ex)
@@ -2153,6 +2182,125 @@ namespace WorkOrderBlender
       EditJobNameForSelectedRow();
     }
 
+    // Context menu handler for staging grid - Rename file (change filename on disk)
+    private void StagingContextMenu_RenameFile_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        if (stagingDataGrid.SelectedRows.Count != 1)
+        {
+          MessageBox.Show("Please select exactly one file to rename.",
+            "Selection Required", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var selectedRow = stagingDataGrid.SelectedRows[0];
+        if (!(selectedRow.Tag is FileDisplayItem fileItem))
+        {
+          MessageBox.Show("Unable to get file information.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        var currentFileName = fileItem.FileName;
+        var dir = Path.GetDirectoryName(fileItem.FilePath);
+        const string ptxExt = ".PTX";
+
+        string newFileName = null;
+        using (var inputDialog = new Form
+        {
+          Text = "Rename file",
+          Width = 400,
+          Height = 150,
+          FormBorderStyle = FormBorderStyle.FixedDialog,
+          StartPosition = FormStartPosition.CenterParent,
+          MaximizeBox = false,
+          MinimizeBox = false
+        })
+        {
+          var label = new Label
+          {
+            Text = "Enter new filename (e.g. MyJob.PTX):",
+            Left = 10,
+            Top = 10,
+            Width = 360,
+            Height = 25
+          };
+          var textBox = new TextBox
+          {
+            Left = 10,
+            Top = 40,
+            Width = 360,
+            Text = currentFileName
+          };
+          var okButton = new Button
+          {
+            Text = "OK",
+            Left = 200,
+            Top = 75,
+            Width = 80,
+            DialogResult = DialogResult.OK
+          };
+          var cancelButton = new Button
+          {
+            Text = "Cancel",
+            Left = 290,
+            Top = 75,
+            Width = 80,
+            DialogResult = DialogResult.Cancel
+          };
+          inputDialog.Controls.Add(label);
+          inputDialog.Controls.Add(textBox);
+          inputDialog.Controls.Add(okButton);
+          inputDialog.Controls.Add(cancelButton);
+          inputDialog.AcceptButton = okButton;
+          inputDialog.CancelButton = cancelButton;
+
+          if (inputDialog.ShowDialog(this) == DialogResult.OK)
+            newFileName = textBox.Text.Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(newFileName))
+          return;
+
+        // Ensure extension is .PTX (case-insensitive)
+        if (!newFileName.EndsWith(ptxExt, StringComparison.OrdinalIgnoreCase))
+          newFileName = newFileName + ptxExt;
+
+        if (string.Equals(newFileName, currentFileName, StringComparison.OrdinalIgnoreCase))
+        {
+          MessageBox.Show("Filename unchanged.", "Rename", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        if (newFileName.IndexOfAny(invalidChars) >= 0)
+        {
+          MessageBox.Show("The filename contains invalid characters.", "Invalid filename",
+            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        var newPath = Path.Combine(dir, newFileName);
+        if (File.Exists(newPath))
+        {
+          MessageBox.Show($"A file named '{newFileName}' already exists in the staging folder.",
+            "Rename", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        File.Move(fileItem.FilePath, newPath);
+        Program.Log($"SawQueueDialog: Renamed staging file from '{currentFileName}' to '{newFileName}'");
+        LoadFiles();
+        MessageBox.Show($"File renamed to '{newFileName}'.", "Rename", MessageBoxButtons.OK, MessageBoxIcon.Information);
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error renaming staging file", ex);
+        MessageBox.Show($"Error renaming file: {ex.Message}", "Rename Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     // Context menu handler for staging grid - Show Parts
     private void StagingContextMenu_ShowParts_Click(object sender, EventArgs e)
     {
@@ -2206,6 +2354,9 @@ namespace WorkOrderBlender
         var editJobNameMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
           .FirstOrDefault(item => item.Text == "Edit Job Name");
 
+        var renameFileMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Rename file");
+
         var showPartsMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
           .FirstOrDefault(item => item.Text == "Show Parts");
 
@@ -2214,10 +2365,14 @@ namespace WorkOrderBlender
 
         var selectedCount = stagingDataGrid.SelectedRows.Count;
 
-        // "Edit Job Name" is only enabled if exactly one file is selected
+        // "Edit Job Name" and "Rename file" are only enabled if exactly one file is selected
         if (editJobNameMenuItem != null)
         {
           editJobNameMenuItem.Enabled = selectedCount == 1;
+        }
+        if (renameFileMenuItem != null)
+        {
+          renameFileMenuItem.Enabled = selectedCount == 1;
         }
 
         // "Show Parts" is only enabled if exactly one file is selected
@@ -2630,7 +2785,10 @@ namespace WorkOrderBlender
         var archiveMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
           .FirstOrDefault(item => item.Text == "Archive");
 
-        if (moveToStagingMenuItem == null && archiveMenuItem == null) return;
+        var deleteMenuItem = contextMenu.Items.OfType<ToolStripMenuItem>()
+          .FirstOrDefault(item => item.Text == "Delete");
+
+        if (moveToStagingMenuItem == null && archiveMenuItem == null && deleteMenuItem == null) return;
 
         // Check selected rows' statuses
         bool hasSentToSawStatus = false;
@@ -2658,10 +2816,14 @@ namespace WorkOrderBlender
           moveToStagingMenuItem.Enabled = !hasSentToSawStatus && validRowCount > 0;
         }
 
-        // "Archive" is enabled if any files are selected
+        // "Archive" and "Delete" are enabled if any files are selected
         if (archiveMenuItem != null)
         {
           archiveMenuItem.Enabled = validRowCount > 0;
+        }
+        if (deleteMenuItem != null)
+        {
+          deleteMenuItem.Enabled = validRowCount > 0;
         }
       }
       catch (Exception ex)
@@ -2887,7 +3049,56 @@ namespace WorkOrderBlender
       }
     }
 
-    // Context menu handler for release grid - Remove
+    // Context menu handler for release grid - Delete (remove record from tracking only, no archive)
+    private void ReleaseContextMenu_Delete_Click(object sender, EventArgs e)
+    {
+      try
+      {
+        if (releaseDataGrid.SelectedRows.Count == 0)
+        {
+          MessageBox.Show("Please select one or more files to delete from the list.",
+            "No Files Selected", MessageBoxButtons.OK, MessageBoxIcon.Information);
+          return;
+        }
+
+        var selectedFiles = new List<TrackedReleaseFile>();
+        foreach (DataGridViewRow row in releaseDataGrid.SelectedRows)
+        {
+          if (row.Tag is TrackedReleaseFile trackedFile)
+            selectedFiles.Add(trackedFile);
+        }
+
+        if (selectedFiles.Count == 0)
+        {
+          MessageBox.Show("No valid files selected.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+          return;
+        }
+
+        var result = MessageBox.Show(
+          $"Remove {selectedFiles.Count} record(s) from the release list?\n\nThis only removes the tracking record; it does not archive or move files.",
+          "Confirm Delete",
+          MessageBoxButtons.YesNo,
+          MessageBoxIcon.Question);
+
+        if (result != DialogResult.Yes)
+          return;
+
+        foreach (var trackedFile in selectedFiles)
+          releaseTracker.RemoveFile(trackedFile.FileName);
+
+        RefreshReleaseList();
+        Program.Log($"SawQueueDialog: Deleted {selectedFiles.Count} record(s) from release list");
+        MessageBox.Show($"Removed {selectedFiles.Count} record(s) from the release list.",
+          "Delete Complete", MessageBoxButtons.OK, MessageBoxIcon.Information);
+      }
+      catch (Exception ex)
+      {
+        Program.Log("SawQueueDialog: Error in release delete operation", ex);
+        MessageBox.Show($"Error removing records: {ex.Message}", "Delete Error",
+          MessageBoxButtons.OK, MessageBoxIcon.Error);
+      }
+    }
+
     // Helper class to represent file display items with metadata
     private class FileDisplayItem
     {
