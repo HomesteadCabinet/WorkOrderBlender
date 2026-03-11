@@ -133,6 +133,7 @@ namespace WorkOrderBlender
     public string StagingDir { get; set; } = @"P:\CadLinkPTX\staging";
     public string ReleaseDir { get; set; } = @"P:\CadLinkPTX\release";
     public int MaxTrackedFiles { get; set; } = 100; // Maximum number of tracked release files to keep
+    public int MaxStagingFileAgeDays { get; set; } = 45; // Delete staging files older than this many days when user chooses auto-clean
 
     // Update management
     public string SkippedVersion { get; set; } = string.Empty;
