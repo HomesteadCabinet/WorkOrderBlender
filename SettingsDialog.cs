@@ -27,6 +27,7 @@ namespace WorkOrderBlender
     public string StagingDir { get; set; }
     public string ReleaseDir { get; set; }
     public int MaxTrackedFiles { get; set; }
+    public int MaxStagingFileAgeDays { get; set; }
 
     // Event for Check for Updates functionality
     public event EventHandler CheckForUpdatesRequested;
@@ -50,6 +51,7 @@ namespace WorkOrderBlender
     private string originalStagingDir;
     private string originalReleaseDir;
     private int originalMaxTrackedFiles;
+    private int originalMaxStagingFileAgeDays;
 
     public SettingsDialog()
     {
@@ -91,6 +93,7 @@ namespace WorkOrderBlender
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Staging Dir
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Release Dir
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Max Tracked Files
+      table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // Max Staging File Age
 
       table.RowStyles.Add(new RowStyle(SizeType.Percent, 100F)); // 100% vertical spacer
       table.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // MSSQL Header
@@ -284,6 +287,19 @@ namespace WorkOrderBlender
       table.Controls.Add(lblMaxTrackedFiles, 0, 8);
       table.Controls.Add(numMaxTrackedFiles, 1, 8);
 
+      // Saw Queue Max Staging File Age (days) - used when user chooses to auto-clean old staging files
+      var lblMaxStagingFileAge = new Label { Text = "Max staging file age (days) for auto-clean:", AutoSize = true, Anchor = AnchorStyles.Left };
+      var numMaxStagingFileAge = new NumericUpDown
+      {
+        Minimum = 1,
+        Maximum = 3650,
+        Value = 30,
+        Anchor = AnchorStyles.Left,
+        Width = 100
+      };
+      table.Controls.Add(lblMaxStagingFileAge, 0, 9);
+      table.Controls.Add(numMaxStagingFileAge, 1, 9);
+
       // Empty row for spacing between Saw Queue and MSSQL sections
       // Row 9 is intentionally left empty
 
@@ -298,7 +314,7 @@ namespace WorkOrderBlender
         Padding = new Padding(0, 16, 0, 0),
         Font = new System.Drawing.Font(this.Font, System.Drawing.FontStyle.Bold)
       };
-      table.Controls.Add(lblMssqlHeader, 0, 10);
+      table.Controls.Add(lblMssqlHeader, 0, 11);
       table.SetColumnSpan(lblMssqlHeader, 4);
 
       // MSSQL Enable checkbox
@@ -308,35 +324,35 @@ namespace WorkOrderBlender
         AutoSize = true,
         Anchor = AnchorStyles.Left
       };
-      table.Controls.Add(chkMssqlEnabled, 0, 11);
+      table.Controls.Add(chkMssqlEnabled, 0, 12);
       table.SetColumnSpan(chkMssqlEnabled, 4);
 
       // MSSQL Server
       var lblMssqlServer = new Label { Text = "Server:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlServer = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlServer, 0, 12);
-      table.Controls.Add(txtMssqlServer, 1, 12);
+      table.Controls.Add(lblMssqlServer, 0, 13);
+      table.Controls.Add(txtMssqlServer, 1, 13);
       table.SetColumnSpan(txtMssqlServer, 3);
 
       // MSSQL Database
       var lblMssqlDatabase = new Label { Text = "Database:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlDatabase = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlDatabase, 0, 13);
-      table.Controls.Add(txtMssqlDatabase, 1, 13);
+      table.Controls.Add(lblMssqlDatabase, 0, 14);
+      table.Controls.Add(txtMssqlDatabase, 1, 14);
       table.SetColumnSpan(txtMssqlDatabase, 3);
 
       // MSSQL Username
       var lblMssqlUsername = new Label { Text = "Username:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlUsername = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200 };
-      table.Controls.Add(lblMssqlUsername, 0, 14);
-      table.Controls.Add(txtMssqlUsername, 1, 14);
+      table.Controls.Add(lblMssqlUsername, 0, 15);
+      table.Controls.Add(txtMssqlUsername, 1, 15);
       table.SetColumnSpan(txtMssqlUsername, 3);
 
       // MSSQL Password
       var lblMssqlPassword = new Label { Text = "Password:", AutoSize = true, Anchor = AnchorStyles.Left };
       var txtMssqlPassword = new TextBox { Anchor = AnchorStyles.Left | AnchorStyles.Right, Width = 200, UseSystemPasswordChar = true };
-      table.Controls.Add(lblMssqlPassword, 0, 15);
-      table.Controls.Add(txtMssqlPassword, 1, 15);
+      table.Controls.Add(lblMssqlPassword, 0, 16);
+      table.Controls.Add(txtMssqlPassword, 1, 16);
       table.SetColumnSpan(txtMssqlPassword, 3);
 
       // Store control references
@@ -468,6 +484,7 @@ namespace WorkOrderBlender
       this.txtStagingDir = txtStagingDir;
       this.txtReleaseDir = txtReleaseDir;
       this.numMaxTrackedFiles = numMaxTrackedFiles;
+      this.numMaxStagingFileAge = numMaxStagingFileAge;
       this.btnSave = btnSave;
       this.btnDiscard = btnDiscard;
 
@@ -496,6 +513,7 @@ namespace WorkOrderBlender
       StagingDir = cfg.StagingDir ?? @"P:\CadLinkPTX\staging";
       ReleaseDir = cfg.ReleaseDir ?? @"P:\CadLinkPTX\release";
       MaxTrackedFiles = cfg.MaxTrackedFiles;
+      MaxStagingFileAgeDays = cfg.MaxStagingFileAgeDays;
 
       // Clean up any existing duplicated values in the configuration
       FrontFilterKeywords = (cfg.FrontFilterKeywords ?? new List<string> { "Slab", "Drawer Front" })
@@ -524,6 +542,7 @@ namespace WorkOrderBlender
       originalStagingDir = StagingDir;
       originalReleaseDir = ReleaseDir;
       originalMaxTrackedFiles = MaxTrackedFiles;
+      originalMaxStagingFileAgeDays = MaxStagingFileAgeDays;
 
       // Update UI controls - ensure clean values without duplication
       if (txtRootLocal != null) txtRootLocal.Text = DefaultRoot;
@@ -543,6 +562,7 @@ namespace WorkOrderBlender
       if (txtStagingDir != null) txtStagingDir.Text = StagingDir;
       if (txtReleaseDir != null) txtReleaseDir.Text = ReleaseDir;
       if (numMaxTrackedFiles != null) numMaxTrackedFiles.Value = MaxTrackedFiles;
+      if (numMaxStagingFileAge != null) numMaxStagingFileAge.Value = Math.Max(1, Math.Min(3650, MaxStagingFileAgeDays));
 
       // Set filter text fields with proper values, ensuring no duplication
       if (txtFrontFilter != null)
@@ -610,6 +630,7 @@ namespace WorkOrderBlender
       cfg.StagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
       cfg.ReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
       cfg.MaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 100);
+      cfg.MaxStagingFileAgeDays = (int)(numMaxStagingFileAge?.Value ?? 30);
 
       // Parse and save front filter keywords - remove duplicates
       var frontFilterText = (txtFrontFilter?.Text ?? string.Empty).Trim();
@@ -796,6 +817,7 @@ namespace WorkOrderBlender
       if (txtStagingDir != null) txtStagingDir.TextChanged += OnSettingChanged;
       if (txtReleaseDir != null) txtReleaseDir.TextChanged += OnSettingChanged;
       if (numMaxTrackedFiles != null) numMaxTrackedFiles.ValueChanged += OnSettingChanged;
+      if (numMaxStagingFileAge != null) numMaxStagingFileAge.ValueChanged += OnSettingChanged;
     }
 
     private void OnSettingChanged(object sender, EventArgs e)
@@ -840,6 +862,7 @@ namespace WorkOrderBlender
       hasChanges |= (txtStagingDir?.Text ?? string.Empty).Trim() != originalStagingDir;
       hasChanges |= (txtReleaseDir?.Text ?? string.Empty).Trim() != originalReleaseDir;
       hasChanges |= (int)(numMaxTrackedFiles?.Value ?? 100) != originalMaxTrackedFiles;
+      hasChanges |= (int)(numMaxStagingFileAge?.Value ?? 30) != originalMaxStagingFileAgeDays;
 
       hasUnsavedChanges = hasChanges;
       UpdateButtonStates();
@@ -891,6 +914,7 @@ namespace WorkOrderBlender
         originalStagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
         originalReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
         originalMaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 100);
+        originalMaxStagingFileAgeDays = (int)(numMaxStagingFileAge?.Value ?? 30);
 
         hasUnsavedChanges = false;
         UpdateButtonStates();
@@ -950,6 +974,7 @@ namespace WorkOrderBlender
       if (txtStagingDir != null) txtStagingDir.Text = originalStagingDir;
       if (txtReleaseDir != null) txtReleaseDir.Text = originalReleaseDir;
       if (numMaxTrackedFiles != null) numMaxTrackedFiles.Value = originalMaxTrackedFiles;
+      if (numMaxStagingFileAge != null) numMaxStagingFileAge.Value = originalMaxStagingFileAgeDays;
 
       hasUnsavedChanges = false;
       UpdateButtonStates();
@@ -967,6 +992,7 @@ namespace WorkOrderBlender
     private TextBox txtStagingDir;
     private TextBox txtReleaseDir;
     private NumericUpDown numMaxTrackedFiles;
+    private NumericUpDown numMaxStagingFileAge;
     private CheckBox chkMssqlEnabled;
     private TextBox txtMssqlServer;
     private TextBox txtMssqlDatabase;

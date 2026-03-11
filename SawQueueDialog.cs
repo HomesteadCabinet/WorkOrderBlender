@@ -1149,11 +1149,48 @@ namespace WorkOrderBlender
         // Prompt user to clean up staging if too many files (improve system speed)
         if (allStagingFiles != null && allStagingFiles.Count > StagingFileCountWarningThreshold)
         {
-          MessageBox.Show(
-            $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {StagingFileCountWarningThreshold} files in staging is recommended.",
+          var cfg = UserConfig.LoadOrDefault();
+          var maxAgeDays = Math.Max(1, Math.Min(3650, cfg.MaxStagingFileAgeDays));
+          var cutoff = DateTime.Now.AddDays(-maxAgeDays);
+          var olderCount = allStagingFiles.Count(f => f.LastModified < cutoff);
+
+          var result = MessageBox.Show(
+            $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {StagingFileCountWarningThreshold} files in staging is recommended.\n\n" +
+            (olderCount > 0
+              ? $"Delete {olderCount} file(s) older than {maxAgeDays} days?"
+              : "No files older than the configured age were found to delete."),
             "Staging File Count",
-            MessageBoxButtons.OK,
+            olderCount > 0 ? MessageBoxButtons.YesNo : MessageBoxButtons.OK,
             MessageBoxIcon.Information);
+
+          if (olderCount > 0 && result == DialogResult.Yes)
+          {
+            var deleted = 0;
+            var errors = 0;
+            foreach (var f in allStagingFiles.Where(x => x.LastModified < cutoff).ToList())
+            {
+              try
+              {
+                if (File.Exists(f.FilePath))
+                {
+                  File.Delete(f.FilePath);
+                  deleted++;
+                }
+              }
+              catch (Exception ex)
+              {
+                errors++;
+                Program.Log($"SawQueueDialog: Error deleting old staging file '{f.FilePath}'", ex);
+              }
+            }
+            RefreshStagingList();
+            allStagingFiles = GetFilesWithMetadata(stagingDir);
+            if (errors > 0)
+              MessageBox.Show($"Deleted {deleted} old file(s). {errors} file(s) could not be deleted.", "Staging Cleanup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            else
+              MessageBox.Show($"Deleted {deleted} old file(s) from staging.", "Staging Cleanup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            Program.Log($"SawQueueDialog: Auto-clean deleted {deleted} staging file(s) older than {maxAgeDays} days");
+          }
         }
 
         // Load release tracking history instead of current files
@@ -3295,7 +3332,7 @@ namespace WorkOrderBlender
       // Event fired when CSV file changes (from another instance)
       public event EventHandler CsvFileChanged;
 
-      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 200)
+      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 100)
       {
         this.maxTrackedFiles = maxTrackedFiles;
 
