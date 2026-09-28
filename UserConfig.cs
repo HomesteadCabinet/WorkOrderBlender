@@ -132,8 +132,9 @@ namespace WorkOrderBlender
     // Saw Queue directories
     public string StagingDir { get; set; } = @"P:\CadLinkPTX\staging";
     public string ReleaseDir { get; set; } = @"P:\CadLinkPTX\release";
-    public int MaxTrackedFiles { get; set; } = 100; // Maximum number of tracked release files to keep
+    public int MaxTrackedFiles { get; set; } = 500; // Max release files to keep, and the staging file-count warning threshold
     public int MaxStagingFileAgeDays { get; set; } = 45; // Delete staging files older than this many days when user chooses auto-clean
+    public DateTime LastStagingFileCountWarning { get; set; } = DateTime.MinValue; // Last time the staging file-count warning was shown
 
     // Update management
     public string SkippedVersion { get; set; } = string.Empty;

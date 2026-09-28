@@ -280,10 +280,13 @@ namespace WorkOrderBlender
       {
         Minimum = 1,
         Maximum = 10000,
-        Value = 200,
+        Value = 500,
         Anchor = AnchorStyles.Left,
         Width = 100
       };
+      var toolTipMaxTrackedFiles = new ToolTip();
+      toolTipMaxTrackedFiles.SetToolTip(numMaxTrackedFiles, "Maximum release files to keep in the saw queue. Also the staging file count that triggers the weekly cleanup warning.");
+      toolTipMaxTrackedFiles.SetToolTip(lblMaxTrackedFiles, "Maximum release files to keep in the saw queue. Also the staging file count that triggers the weekly cleanup warning.");
       table.Controls.Add(lblMaxTrackedFiles, 0, 8);
       table.Controls.Add(numMaxTrackedFiles, 1, 8);
 
@@ -629,7 +632,7 @@ namespace WorkOrderBlender
       // Save Saw Queue directories
       cfg.StagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
       cfg.ReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
-      cfg.MaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 100);
+      cfg.MaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 500);
       cfg.MaxStagingFileAgeDays = (int)(numMaxStagingFileAge?.Value ?? 30);
 
       // Parse and save front filter keywords - remove duplicates
@@ -861,7 +864,7 @@ namespace WorkOrderBlender
       // Check Saw Queue directories
       hasChanges |= (txtStagingDir?.Text ?? string.Empty).Trim() != originalStagingDir;
       hasChanges |= (txtReleaseDir?.Text ?? string.Empty).Trim() != originalReleaseDir;
-      hasChanges |= (int)(numMaxTrackedFiles?.Value ?? 100) != originalMaxTrackedFiles;
+      hasChanges |= (int)(numMaxTrackedFiles?.Value ?? 500) != originalMaxTrackedFiles;
       hasChanges |= (int)(numMaxStagingFileAge?.Value ?? 30) != originalMaxStagingFileAgeDays;
 
       hasUnsavedChanges = hasChanges;
@@ -913,7 +916,7 @@ namespace WorkOrderBlender
         originalMssqlEnabled = chkMssqlEnabled?.Checked ?? true;
         originalStagingDir = (txtStagingDir?.Text ?? string.Empty).Trim();
         originalReleaseDir = (txtReleaseDir?.Text ?? string.Empty).Trim();
-        originalMaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 100);
+        originalMaxTrackedFiles = (int)(numMaxTrackedFiles?.Value ?? 500);
         originalMaxStagingFileAgeDays = (int)(numMaxStagingFileAge?.Value ?? 30);
 
         hasUnsavedChanges = false;

@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.24</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.24/WorkOrderBlender-v1.7.24.zip</url>
+  <version>1.7.26</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.26/WorkOrderBlender-v1.7.26.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>Nothing super cool </releaseNotes>
+  <releaseNotes>Less annoying popup</releaseNotes>
 </item>
