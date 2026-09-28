@@ -35,7 +35,7 @@ namespace WorkOrderBlender
     private bool releaseSortAscending = true;
     private string releaseSortColumnName = null;
 
-    private const int StagingFileCountWarningThreshold = 200;
+    private const int StagingFileCountWarningIntervalDays = 7;
 
     public SawQueueDialog()
     {
@@ -1146,50 +1146,62 @@ namespace WorkOrderBlender
         // Load staging files - RefreshStagingList will handle the display and filtering
         RefreshStagingList();
 
-        // Prompt user to clean up staging if too many files (improve system speed)
-        if (allStagingFiles != null && allStagingFiles.Count > StagingFileCountWarningThreshold)
+        // Prompt user to clean up staging when over Max Released Files, at most once a week
+        var cfg = UserConfig.LoadOrDefault();
+        var stagingFileLimit = Math.Max(1, cfg.MaxTrackedFiles);
+        if (allStagingFiles != null && allStagingFiles.Count > stagingFileLimit)
         {
-          var cfg = UserConfig.LoadOrDefault();
-          var maxAgeDays = Math.Max(1, Math.Min(3650, cfg.MaxStagingFileAgeDays));
-          var cutoff = DateTime.Now.AddDays(-maxAgeDays);
-          var olderCount = allStagingFiles.Count(f => f.LastModified < cutoff);
-
-          var result = MessageBox.Show(
-            $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {StagingFileCountWarningThreshold} files in staging is recommended.\n\n" +
-            (olderCount > 0
-              ? $"Delete {olderCount} file(s) older than {maxAgeDays} days?"
-              : "No files older than the configured age were found to delete."),
-            "Staging File Count",
-            olderCount > 0 ? MessageBoxButtons.YesNo : MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
-
-          if (olderCount > 0 && result == DialogResult.Yes)
+          var daysSinceWarning = (DateTime.Now - cfg.LastStagingFileCountWarning).TotalDays;
+          if (daysSinceWarning < StagingFileCountWarningIntervalDays)
           {
-            var deleted = 0;
-            var errors = 0;
-            foreach (var f in allStagingFiles.Where(x => x.LastModified < cutoff).ToList())
+            Program.Log($"SawQueueDialog: Staging file count warning suppressed ({allStagingFiles.Count} files, limit {stagingFileLimit}, last shown {cfg.LastStagingFileCountWarning:yyyy-MM-dd HH:mm})");
+          }
+          else
+          {
+            // Record the show time before the dialog so a later open this week stays quiet
+            cfg.LastStagingFileCountWarning = DateTime.Now;
+            cfg.Save();
+            var maxAgeDays = Math.Max(1, Math.Min(3650, cfg.MaxStagingFileAgeDays));
+            var cutoff = DateTime.Now.AddDays(-maxAgeDays);
+            var olderCount = allStagingFiles.Count(f => f.LastModified < cutoff);
+
+            var result = MessageBox.Show(
+              $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {stagingFileLimit} files in staging is recommended.\n\n" +
+              (olderCount > 0
+                ? $"Delete {olderCount} file(s) older than {maxAgeDays} days?"
+                : "No files older than the configured age were found to delete."),
+              "Staging File Count",
+              olderCount > 0 ? MessageBoxButtons.YesNo : MessageBoxButtons.OK,
+              MessageBoxIcon.Information);
+
+            if (olderCount > 0 && result == DialogResult.Yes)
             {
-              try
+              var deleted = 0;
+              var errors = 0;
+              foreach (var f in allStagingFiles.Where(x => x.LastModified < cutoff).ToList())
               {
-                if (File.Exists(f.FilePath))
+                try
                 {
-                  File.Delete(f.FilePath);
-                  deleted++;
+                  if (File.Exists(f.FilePath))
+                  {
+                    File.Delete(f.FilePath);
+                    deleted++;
+                  }
+                }
+                catch (Exception ex)
+                {
+                  errors++;
+                  Program.Log($"SawQueueDialog: Error deleting old staging file '{f.FilePath}'", ex);
                 }
               }
-              catch (Exception ex)
-              {
-                errors++;
-                Program.Log($"SawQueueDialog: Error deleting old staging file '{f.FilePath}'", ex);
-              }
+              RefreshStagingList();
+              allStagingFiles = GetFilesWithMetadata(stagingDir);
+              if (errors > 0)
+                MessageBox.Show($"Deleted {deleted} old file(s). {errors} file(s) could not be deleted.", "Staging Cleanup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+              else
+                MessageBox.Show($"Deleted {deleted} old file(s) from staging.", "Staging Cleanup", MessageBoxButtons.OK, MessageBoxIcon.Information);
+              Program.Log($"SawQueueDialog: Auto-clean deleted {deleted} staging file(s) older than {maxAgeDays} days");
             }
-            RefreshStagingList();
-            allStagingFiles = GetFilesWithMetadata(stagingDir);
-            if (errors > 0)
-              MessageBox.Show($"Deleted {deleted} old file(s). {errors} file(s) could not be deleted.", "Staging Cleanup", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            else
-              MessageBox.Show($"Deleted {deleted} old file(s) from staging.", "Staging Cleanup", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            Program.Log($"SawQueueDialog: Auto-clean deleted {deleted} staging file(s) older than {maxAgeDays} days");
           }
         }
 
@@ -3332,7 +3344,7 @@ namespace WorkOrderBlender
       // Event fired when CSV file changes (from another instance)
       public event EventHandler CsvFileChanged;
 
-      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 100)
+      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 500)
       {
         this.maxTrackedFiles = maxTrackedFiles;
 
