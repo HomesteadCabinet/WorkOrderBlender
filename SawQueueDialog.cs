@@ -35,6 +35,7 @@ namespace WorkOrderBlender
     private bool releaseSortAscending = true;
     private string releaseSortColumnName = null;
 
+    private const int StagingFileCountWarningThreshold = 500;
     private const int StagingFileCountWarningIntervalDays = 7;
 
     public SawQueueDialog()
@@ -1146,15 +1147,14 @@ namespace WorkOrderBlender
         // Load staging files - RefreshStagingList will handle the display and filtering
         RefreshStagingList();
 
-        // Prompt user to clean up staging when over Max Released Files, at most once a week
-        var cfg = UserConfig.LoadOrDefault();
-        var stagingFileLimit = Math.Max(1, cfg.MaxTrackedFiles);
-        if (allStagingFiles != null && allStagingFiles.Count > stagingFileLimit)
+        // Prompt user to clean up staging if too many files (improve system speed), at most once a week
+        if (allStagingFiles != null && allStagingFiles.Count > StagingFileCountWarningThreshold)
         {
+          var cfg = UserConfig.LoadOrDefault();
           var daysSinceWarning = (DateTime.Now - cfg.LastStagingFileCountWarning).TotalDays;
           if (daysSinceWarning < StagingFileCountWarningIntervalDays)
           {
-            Program.Log($"SawQueueDialog: Staging file count warning suppressed ({allStagingFiles.Count} files, limit {stagingFileLimit}, last shown {cfg.LastStagingFileCountWarning:yyyy-MM-dd HH:mm})");
+            Program.Log($"SawQueueDialog: Staging file count warning suppressed ({allStagingFiles.Count} files, last shown {cfg.LastStagingFileCountWarning:yyyy-MM-dd HH:mm})");
           }
           else
           {
@@ -1166,7 +1166,7 @@ namespace WorkOrderBlender
             var olderCount = allStagingFiles.Count(f => f.LastModified < cutoff);
 
             var result = MessageBox.Show(
-              $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {stagingFileLimit} files in staging is recommended.\n\n" +
+              $"Staging has {allStagingFiles.Count} file(s). Consider deleting old files to improve system speed.\n\nKeeping fewer than {StagingFileCountWarningThreshold} files in staging is recommended.\n\n" +
               (olderCount > 0
                 ? $"Delete {olderCount} file(s) older than {maxAgeDays} days?"
                 : "No files older than the configured age were found to delete."),
@@ -3344,7 +3344,7 @@ namespace WorkOrderBlender
       // Event fired when CSV file changes (from another instance)
       public event EventHandler CsvFileChanged;
 
-      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 500)
+      public ReleaseFileTracker(string releaseDirectory, int maxTrackedFiles = 100)
       {
         this.maxTrackedFiles = maxTrackedFiles;
 
