@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -88,11 +89,34 @@ namespace WorkOrderBlender
       try { return File.ReadAllText(path); } catch { return null; }
     }
 
+    [DllImport("kernel32")]
+    private static extern bool AllocConsole();
+
+    [DllImport("kernel32")]
+    private static extern bool AttachConsole(int dwProcessId);
+
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
       // Ensure SQL CE native binaries and managed assemblies can be resolved from bundled lib/ folders
       try { ConfigureSqlCeProbing(); } catch { }
+
+      // Headless mode: if arguments are provided, run without UI and exit
+      if (args.Length > 0)
+      {
+        // Attach to the parent console (e.g. cmd.exe / PowerShell) so output is visible.
+        // Fall back to allocating a new console window if there is no parent.
+        if (!AttachConsole(-1))
+          AllocConsole();
+
+        // Redirect Console.Out / Console.Error to the now-attached console
+        Console.SetOut(new System.IO.StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+        Console.SetError(new System.IO.StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+
+        int exitCode = RunHeadless(args);
+        Environment.Exit(exitCode);
+        return;
+      }
 
       Application.EnableVisualStyles();
       Application.SetCompatibleTextRenderingDefault(false);
@@ -152,6 +176,122 @@ namespace WorkOrderBlender
         Log("Main crash", ex);
         MessageBox.Show("Startup error: " + ex.Message, "WorkOrderBlender", MessageBoxButtons.OK, MessageBoxIcon.Error);
       }
+    }
+
+    // Headless (CLI) consolidation mode.
+    // Usage: WorkOrderBlender.exe --output <name> <workorder1> [workorder2 ...]
+    //        WorkOrderBlender.exe <workorder1> [workorder2 ...] --output <name>
+    // The work order names are resolved as subdirectories under DefaultRoot from settings.xml.
+    private static int RunHeadless(string[] args)
+    {
+      string outputName = null;
+      var workOrders = new List<string>();
+
+      for (int i = 0; i < args.Length; i++)
+      {
+        if ((args[i] == "--output" || args[i] == "-o") && i + 1 < args.Length)
+        {
+          outputName = args[++i];
+        }
+        else if (!args[i].StartsWith("-"))
+        {
+          workOrders.Add(args[i]);
+        }
+        else
+        {
+          Console.Error.WriteLine($"Unknown option: {args[i]}");
+          PrintHeadlessUsage();
+          return 1;
+        }
+      }
+
+      if (string.IsNullOrWhiteSpace(outputName))
+      {
+        Console.Error.WriteLine("Error: --output <name> is required.");
+        PrintHeadlessUsage();
+        return 1;
+      }
+
+      if (workOrders.Count == 0)
+      {
+        Console.Error.WriteLine("Error: at least one work order name is required.");
+        PrintHeadlessUsage();
+        return 1;
+      }
+
+      if (outputName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+      {
+        Console.Error.WriteLine("Error: output name contains invalid file system characters.");
+        return 1;
+      }
+
+      var config = UserConfig.LoadOrDefault();
+      string root = config.DefaultRoot ?? @"M:\Homestead_Library\Work Orders";
+      string sdfFile = !string.IsNullOrWhiteSpace(config.SdfFileName) ? config.SdfFileName : "MicrovellumWorkOrder.sdf";
+
+      // Resolve source SDF paths
+      var sources = new List<(string WorkOrderDir, string SdfPath)>();
+      foreach (var wo in workOrders)
+      {
+        string dir = Path.Combine(root, wo);
+        string sdf = Path.Combine(dir, sdfFile);
+        if (!File.Exists(sdf))
+        {
+          Console.Error.WriteLine($"Error: '{sdf}' not found for work order '{wo}'.");
+          return 1;
+        }
+        sources.Add((dir, sdf));
+      }
+
+      string destDir = Path.Combine(root, outputName);
+      string destPath = Path.Combine(destDir, sdfFile);
+
+      try
+      {
+        Directory.CreateDirectory(destDir);
+      }
+      catch (Exception ex)
+      {
+        Console.Error.WriteLine($"Error: could not create output directory '{destDir}': {ex.Message}");
+        return 1;
+      }
+
+      Console.WriteLine($"Consolidating {sources.Count} work order(s) into '{outputName}'...");
+
+      int step = 0;
+      try
+      {
+        MainForm.RunConsolidation(sources, destPath, _ =>
+        {
+          step++;
+          Console.WriteLine($"  [{step}/{sources.Count}] {new DirectoryInfo(sources[step - 1].WorkOrderDir).Name}");
+        });
+      }
+      catch (MainForm.ConsolidationException cex)
+      {
+        if (cex.IsPartialSuccess)
+        {
+          Console.Error.WriteLine($"Warning: consolidation completed with errors:\n{cex.Message}");
+          Console.WriteLine($"Output (partial): {destPath}");
+          return 2; // partial success
+        }
+        Console.Error.WriteLine($"Error: consolidation failed:\n{cex.Message}");
+        return 1;
+      }
+      catch (Exception ex)
+      {
+        Console.Error.WriteLine($"Error: {MainForm.GetDetailedErrorMessage(ex)}");
+        return 1;
+      }
+
+      Console.WriteLine($"Done. Output: {destPath}");
+      return 0;
+    }
+
+    private static void PrintHeadlessUsage()
+    {
+      Console.Error.WriteLine("Usage: WorkOrderBlender.exe --output <name> <workorder1> [workorder2 ...]");
+      Console.Error.WriteLine("       WorkOrderBlender.exe <workorder1> [workorder2 ...] --output <name>");
     }
 
     // Configure probing for local SQL CE native and managed binaries to support portable (no-install) packaging

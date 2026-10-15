@@ -999,7 +999,9 @@ namespace WorkOrderBlender
           Directory.CreateDirectory(workBase);
         workDestPath = Path.Combine(workBase, SdfFileName);
         Program.Log($"MainForm: Consolidate starting - {sourcesList.Count} source(s), output to work: {workDestPath}");
-        RunConsolidation(sourcesList, workDestPath);
+        progress.Value = 0;
+        progress.Maximum = sourcesList.Count;
+        RunConsolidation(sourcesList, workDestPath, _ => progress.Value++);
         MoveConsolidatedToDestination(workDestPath, destPath);
         MessageBox.Show(
           $"Consolidation complete!\n\n" +
@@ -5583,10 +5585,8 @@ namespace WorkOrderBlender
       }
     }
 
-    private void RunConsolidation(List<(string WorkOrderDir, string SdfPath)> sources, string destinationPath)
+    internal static void RunConsolidation(List<(string WorkOrderDir, string SdfPath)> sources, string destinationPath, Action<int> onProgressStep = null)
     {
-      progress.Value = 0;
-      progress.Maximum = sources.Count;
 
       // Track consolidation results for each source
       var successfulSources = new List<string>();
@@ -5627,7 +5627,7 @@ namespace WorkOrderBlender
             failedSources.Add((sourceTag, errorDetail));
           }
 
-          progress.Value += 1;
+          onProgressStep?.Invoke(1);
         }
       }
 
@@ -5660,7 +5660,7 @@ namespace WorkOrderBlender
     }
 
     // Custom exception to carry consolidation error details
-    private class ConsolidationException : Exception
+    internal class ConsolidationException : Exception
     {
       public List<(string SourceName, string ErrorMessage)> FailedSources { get; }
       public bool IsPartialSuccess { get; }
@@ -5674,7 +5674,7 @@ namespace WorkOrderBlender
     }
 
     // Extract detailed error message including inner exceptions
-    private static string GetDetailedErrorMessage(Exception ex)
+    internal static string GetDetailedErrorMessage(Exception ex)
     {
       var messages = new List<string>();
       var current = ex;
