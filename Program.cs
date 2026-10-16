@@ -226,7 +226,14 @@ namespace WorkOrderBlender
       }
 
       var config = UserConfig.LoadOrDefault();
-      string root = config.DefaultRoot ?? @"M:\Homestead_Library\Work Orders";
+      string root = (config.DefaultRoot ?? string.Empty).Trim();
+      if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+      {
+        Console.Error.WriteLine(string.IsNullOrEmpty(root)
+          ? "Error: work order directory is not set. Choose one in Settings."
+          : $"Error: work order directory '{root}' not found. Check the path in Settings.");
+        return 1;
+      }
       string sdfFile = !string.IsNullOrWhiteSpace(config.SdfFileName) ? config.SdfFileName : "MicrovellumWorkOrder.sdf";
 
       // Resolve source SDF paths

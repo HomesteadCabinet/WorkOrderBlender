@@ -15,8 +15,6 @@ namespace WorkOrderBlender
 {
   public partial class MainForm : Form
   {
-    private const string DefaultRoot = @"M:\Homestead_Library\Work Orders";
-    private const string DefaultOutput = @"M:\Homestead_Library\Work Orders";
     private const string SdfFileName = "MicrovellumWorkOrder.sdf";
     private const string WorkDirName = "work";
     private UserConfig userConfig;
@@ -141,15 +139,13 @@ namespace WorkOrderBlender
       // Load user config once and cache it
       try
       {
-        userConfig = UserConfig.Load(DefaultRoot, DefaultOutput, SdfFileName);
+        userConfig = UserConfig.LoadOrDefault();
       }
       catch
       {
-        userConfig = UserConfig.LoadOrDefault();
-        if (string.IsNullOrWhiteSpace(userConfig.DefaultRoot)) userConfig.DefaultRoot = DefaultRoot;
-        if (string.IsNullOrWhiteSpace(userConfig.DefaultOutput)) userConfig.DefaultOutput = DefaultOutput;
-        if (string.IsNullOrWhiteSpace(userConfig.SdfFileName)) userConfig.SdfFileName = SdfFileName;
+        userConfig = new UserConfig();
       }
+      if (string.IsNullOrWhiteSpace(userConfig.SdfFileName)) userConfig.SdfFileName = SdfFileName;
 
       // Show work order name field
       txtOutput.Text = userConfig.WorkOrderName ?? string.Empty;
@@ -457,6 +453,13 @@ namespace WorkOrderBlender
 
     // SQL CE connection helpers are centralized in SqlCeUtils
 
+    // Work order root directory as configured in Settings (no hard-coded fallback)
+    private static string GetWorkOrderRoot()
+    {
+      try { return (UserConfig.LoadOrDefault().DefaultRoot ?? string.Empty).Trim(); }
+      catch { return string.Empty; }
+    }
+
     private string GetSdfFileName()
     {
       var name = userConfig != null ? (userConfig.SdfFileName ?? string.Empty).Trim() : string.Empty;
@@ -469,7 +472,6 @@ namespace WorkOrderBlender
       {
         // Reload latest config to avoid overwriting metrics dialog persisted settings
         var cfg = UserConfig.LoadOrDefault();
-        cfg.DefaultRoot = DefaultRoot;
         try
         {
           var workOrderName = (txtOutput.Text ?? string.Empty).Trim();
@@ -666,7 +668,7 @@ namespace WorkOrderBlender
     {
       if (string.IsNullOrEmpty(absoluteDir)) return absoluteDir;
       string root = string.Empty;
-      try { root = DefaultRoot; }
+      try { root = GetWorkOrderRoot(); }
       catch { }
       if (string.IsNullOrEmpty(root)) return absoluteDir;
       string absNorm = absoluteDir.Replace('/', '\\');
@@ -694,14 +696,24 @@ namespace WorkOrderBlender
 
       ShowLoadingIndicator(true, "Scanning work orders...");
       listWorkOrders.Items.Clear();
-      string root = DefaultRoot;
+      string root = GetWorkOrderRoot();
       Program.Log($"Scanning root directory: {root}");
+
+      if (string.IsNullOrEmpty(root))
+      {
+        Program.Log("Work order directory is not configured");
+        MessageBox.Show("Work order directory is not set. Please choose one in Settings.");
+        ShowLoadingIndicator(false);
+        isScanningWorkOrders = false;
+        return;
+      }
 
       if (!Directory.Exists(root))
       {
         Program.Log($"Root directory not found: {root}");
-        MessageBox.Show("Root directory not found.");
+        MessageBox.Show($"Work order directory not found:\n{root}\n\nPlease check the path in Settings.");
         ShowLoadingIndicator(false);
+        isScanningWorkOrders = false;
         return;
       }
 
@@ -946,8 +958,16 @@ namespace WorkOrderBlender
         Program.Log("User chose to proceed despite database connection issue");
       }
 
-      // Create subfolder in DefaultRoot based on work order name
-      string workOrderDir = Path.Combine(userConfig.DefaultRoot ?? DefaultRoot, workOrderName);
+      // Create subfolder in the work order directory from Settings based on work order name
+      string outputRoot = GetWorkOrderRoot();
+      if (string.IsNullOrEmpty(outputRoot) || !Directory.Exists(outputRoot))
+      {
+        MessageBox.Show(string.IsNullOrEmpty(outputRoot)
+          ? "Work order directory is not set. Please choose one in Settings."
+          : $"Work order directory not found:\n{outputRoot}\n\nPlease check the path in Settings.");
+        return;
+      }
+      string workOrderDir = Path.Combine(outputRoot, workOrderName);
       string destPath = Path.Combine(workOrderDir, SdfFileName);
 
       // Create the work order directory if it doesn't exist
@@ -1170,8 +1190,17 @@ namespace WorkOrderBlender
 
           if (dlg.ShowDialog(this) == DialogResult.OK)
           {
+            var previousRoot = GetWorkOrderRoot();
             dlg.SaveSettings();
-            FilterWorkOrders(); // apply filter immediately if changed
+            userConfig = UserConfig.LoadOrDefault();
+            if (!string.Equals(previousRoot, GetWorkOrderRoot(), StringComparison.OrdinalIgnoreCase))
+            {
+              ScanWorkOrders(); // work order directory changed; rescan from new location
+            }
+            else
+            {
+              FilterWorkOrders(); // apply filter immediately if changed
+            }
           }
         }
       }
@@ -2451,7 +2480,7 @@ namespace WorkOrderBlender
     {
       if (string.IsNullOrEmpty(directoryPath)) return string.Empty;
       string root = string.Empty;
-      try { root = DefaultRoot; }
+      try { root = GetWorkOrderRoot(); }
       catch { }
       if (string.IsNullOrEmpty(root)) return Path.GetFileName(directoryPath);
       string absNorm = directoryPath.Replace('/', '\\');

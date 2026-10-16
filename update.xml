@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.27</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.27/WorkOrderBlender-v1.7.27.zip</url>
+  <version>1.7.30</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.30/WorkOrderBlender-v1.7.30.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>less annoying max directory size notifications </releaseNotes>
+  <releaseNotes>Improvements to headless mode </releaseNotes>
 </item>
