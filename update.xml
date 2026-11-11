@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <item>
-  <version>1.7.30</version>
-  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.30/WorkOrderBlender-v1.7.30.zip</url>
+  <version>1.7.32</version>
+  <url>https://github.com/HomesteadCabinet/WorkOrderBlender/releases/download/v1.7.32/WorkOrderBlender-v1.7.32.zip</url>
   <mandatory>false</mandatory>
-  <releaseNotes>Improvements to headless mode </releaseNotes>
+  <releaseNotes>Added JSON export: drag a work order onto the exe, or use --export-json. Much more detailed --help.</releaseNotes>
 </item>

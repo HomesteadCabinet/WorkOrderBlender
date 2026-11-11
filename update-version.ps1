@@ -55,6 +55,13 @@ function Remove-OldTags {
     }
 }
 
+# Always operate relative to the repo (the script's folder), regardless of where it was launched from.
+# Set both the PowerShell location and the .NET process directory: cmdlets (Get/Set-Content) use the
+# former, while .NET calls such as XmlDocument.Save("update.xml") use the latter. If they differ,
+# update.xml would be written to the wrong folder and the auto-updater would never see the new version.
+Set-Location -LiteralPath $PSScriptRoot
+[System.Environment]::CurrentDirectory = $PSScriptRoot
+
 # Function to validate version format (e.g., "1.0.2")
 function Test-VersionFormat {
     param([string]$Version)
@@ -299,6 +306,13 @@ if (Test-Path "WorkOrderBlender.Installer.wxs") {
 
 if (-not $success) {
     Write-Error "[ERROR] Failed to update version files"
+    exit 1
+}
+
+# Verify update.xml really carries the new version before committing (the auto-updater reads it from GitHub)
+$writtenVersion = ([xml](Get-Content -LiteralPath (Join-Path $PSScriptRoot "update.xml"))).item.version
+if ($writtenVersion -ne $NewVersion) {
+    Write-Error "[ERROR] update.xml version is '$writtenVersion', expected '$NewVersion'. Aborting before commit."
     exit 1
 }
 
