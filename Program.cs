@@ -95,6 +95,8 @@ namespace WorkOrderBlender
     [DllImport("kernel32")]
     private static extern bool AttachConsole(int dwProcessId);
 
+    private static bool ownsConsole;
+
     [STAThread]
     private static void Main(string[] args)
     {
@@ -107,13 +109,23 @@ namespace WorkOrderBlender
         // Attach to the parent console (e.g. cmd.exe / PowerShell) so output is visible.
         // Fall back to allocating a new console window if there is no parent.
         if (!AttachConsole(-1))
+        {
           AllocConsole();
+          ownsConsole = true;
+        }
 
         // Redirect Console.Out / Console.Error to the now-attached console
         Console.SetOut(new System.IO.StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
         Console.SetError(new System.IO.StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
 
         int exitCode = RunHeadless(args);
+        if (ownsConsole)
+        {
+          // Launched via drag-and-drop/double-click: keep our console window open so the result can be read.
+          Console.Error.WriteLine();
+          Console.Error.WriteLine("Press any key to close...");
+          try { Console.ReadKey(true); } catch { }
+        }
         Environment.Exit(exitCode);
         return;
       }
@@ -184,8 +196,19 @@ namespace WorkOrderBlender
     // The work order names are resolved as subdirectories under DefaultRoot from settings.xml.
     private static int RunHeadless(string[] args)
     {
+      if (args.Any(a => a == "--help" || a == "-h" || a == "-?" || a == "/?" || string.Equals(a, "help", StringComparison.OrdinalIgnoreCase)))
+      {
+        PrintHelp();
+        return 0;
+      }
+
       if (args.Any(a => string.Equals(a, "--export-json", StringComparison.OrdinalIgnoreCase)))
         return RunExportJson(args);
+
+      // Drag-and-drop: every argument is an existing absolute path to a work order folder or .sdf file
+      // (and no option flags) -> export all tables of each to JSON next to the source.
+      if (args.All(a => !a.StartsWith("-") && Path.IsPathRooted(a) && (Directory.Exists(a) || File.Exists(a))))
+        return RunDroppedExport(args);
 
       string outputName = null;
       var workOrders = new List<string>();
@@ -298,6 +321,50 @@ namespace WorkOrderBlender
       return 0;
     }
 
+    // Drag-and-drop handler: exports all tables of each dropped work order folder / .sdf to
+    // <work order folder>\<name>.json (folder name for a work order folder, file name for a bare .sdf).
+    private static int RunDroppedExport(string[] paths)
+    {
+      var config = UserConfig.LoadOrDefault();
+      string sdfName = !string.IsNullOrWhiteSpace(config.SdfFileName) ? config.SdfFileName : "MicrovellumWorkOrder.sdf";
+      int failures = 0;
+
+      foreach (var p in paths)
+      {
+        try
+        {
+          string sdf, jsonPath;
+          if (Directory.Exists(p))
+          {
+            var dir = new DirectoryInfo(p.TrimEnd('\\', '/'));
+            sdf = Path.Combine(dir.FullName, sdfName);
+            jsonPath = Path.Combine(dir.FullName, dir.Name + ".json");
+          }
+          else
+          {
+            sdf = p;
+            jsonPath = Path.ChangeExtension(p, ".json");
+          }
+          if (!File.Exists(sdf))
+          {
+            Console.Error.WriteLine($"Error: '{sdf}' not found.");
+            failures++;
+            continue;
+          }
+
+          Console.Error.WriteLine($"Exporting '{sdf}'...");
+          JsonExporter.Export(sdf, null, jsonPath, (t, c) => Console.Error.WriteLine($"  {t}: {c} row(s)"));
+          Console.Error.WriteLine($"Done. Output: {jsonPath}");
+        }
+        catch (Exception ex)
+        {
+          Console.Error.WriteLine($"Error: {MainForm.GetDetailedErrorMessage(ex)}");
+          failures++;
+        }
+      }
+      return failures == 0 ? 0 : 1;
+    }
+
     // Headless JSON export.
     // Usage: WorkOrderBlender.exe --export-json <source.sdf|workorder-dir> [--tables Parts,Products,...] [--output <file.json>]
     // --tables defaults to every table; --output defaults to stdout (progress/errors go to stderr).
@@ -382,12 +449,92 @@ namespace WorkOrderBlender
       }
     }
 
+    // Short hint shown after a usage error.
     private static void PrintHeadlessUsage()
     {
-      Console.Error.WriteLine("Usage: WorkOrderBlender.exe --export-json <source.sdf|workorder-dir> [--tables Parts,Products,...] [--output <file.json>]");
-      Console.Error.WriteLine("       WorkOrderBlender.exe --export-json <source.sdf> --list-tables");
-      Console.Error.WriteLine("Usage: WorkOrderBlender.exe --output <name> <workorder1> [workorder2 ...]");
-      Console.Error.WriteLine("       WorkOrderBlender.exe <workorder1> [workorder2 ...] --output <name>");
+      Console.Error.WriteLine();
+      Console.Error.WriteLine("Run 'WorkOrderBlender.exe --help' for full usage and examples.");
+    }
+
+    // Full help text (--help / -h / -? / /?). Written to stdout so it can be piped or redirected.
+    private static void PrintHelp()
+    {
+      var v = Assembly.GetExecutingAssembly().GetName().Version;
+      Console.WriteLine($@"
+WorkOrderBlender {v.Major}.{v.Minor}.{v.Build}
+Combine Microvellum work orders into one, or pull their data out as JSON.
+
+Run with no arguments to open the normal window. Everything below runs
+without a window (command line / drag-and-drop).
+
+QUICK START
+  Drag a work order folder (or its .sdf file) onto WorkOrderBlender.exe.
+  Every table is exported to a JSON file next to the .sdf, named after the
+  folder, e.g.  ...\Work Orders\26512-Smith\26512-Smith.json
+  You can drop several at once; each gets its own JSON file.
+
+COMMANDS
+
+  1) Export data to JSON
+     WorkOrderBlender.exe --export-json <source> [--tables <list>] [--output <file>]
+     WorkOrderBlender.exe --export-json <source> --list-tables
+
+     <source>         A work order folder, or a path to an .sdf file.
+                      A folder uses the SDF file name from Settings
+                      (normally MicrovellumWorkOrder.sdf).
+     --tables, -t     Only these tables. Comma-separated, not case-sensitive,
+                      e.g. Parts,Products,Hardware. Default: all tables.
+     --output, -o     Write the JSON to this file. Default: print to the
+                      screen (stdout) so you can pipe it into other tools.
+     --list-tables    Just print the table names in the source and exit.
+                      Use it to see what you can pass to --tables.
+
+     The JSON looks like:
+       {{ ""source"": ""..."", ""exportedAt"": ""..."",
+         ""tables"": {{ ""Parts"": [ {{ ""Name"": ""..."", ... }}, ... ] }} }}
+     Each row is an object keyed by column name. Empty values are null,
+     dates are ISO-8601 text, and binary columns (e.g. images) are base64.
+     Progress messages go to stderr, so they never end up in the JSON.
+
+  2) Consolidate several work orders into one
+     WorkOrderBlender.exe --output <name> <workorder1> [workorder2 ...]
+
+     <workorderN>     Work order folder names (not full paths). They are looked
+                      up under the work order directory set in Settings.
+     --output, -o     Name of the new combined work order folder to create
+                      there. Required.
+
+  --help, -h, -?     Show this help.
+
+EXAMPLES
+  Export everything from a work order to a file:
+    WorkOrderBlender.exe --export-json ""M:\Work Orders\26512-Smith"" -o smith.json
+
+  Export only parts and hardware:
+    WorkOrderBlender.exe --export-json ""M:\Work Orders\26512-Smith"" --tables Parts,Hardware -o smith.json
+
+  See which tables exist:
+    WorkOrderBlender.exe --export-json ""M:\Work Orders\26512-Smith"" --list-tables
+
+  Use the JSON in a script (PowerShell):
+    $wo = .\WorkOrderBlender.exe --export-json ""M:\Work Orders\26512-Smith"" -t Parts 2>$null | ConvertFrom-Json
+    $wo.tables.Parts.Count
+
+  Merge two work orders into a new one called 26512-Combined:
+    WorkOrderBlender.exe --output 26512-Combined 26512-Smith 26512-Smith-Addon
+
+EXIT CODES
+  0  success
+  1  error (bad arguments, file not found, export/consolidation failed)
+  2  consolidation finished with errors (partial result written)
+
+NOTES
+  * Run from a terminal and results print right there. When started by
+    drag-and-drop, a console window opens and waits for a key press.
+  * Source files are opened read-only; your work orders are never modified.
+  * In PowerShell, call it as .\WorkOrderBlender.exe and quote paths that
+    contain spaces or parentheses.
+");
     }
 
     // Configure probing for local SQL CE native and managed binaries to support portable (no-install) packaging
