@@ -184,6 +184,9 @@ namespace WorkOrderBlender
     // The work order names are resolved as subdirectories under DefaultRoot from settings.xml.
     private static int RunHeadless(string[] args)
     {
+      if (args.Any(a => string.Equals(a, "--export-json", StringComparison.OrdinalIgnoreCase)))
+        return RunExportJson(args);
+
       string outputName = null;
       var workOrders = new List<string>();
 
@@ -295,8 +298,94 @@ namespace WorkOrderBlender
       return 0;
     }
 
+    // Headless JSON export.
+    // Usage: WorkOrderBlender.exe --export-json <source.sdf|workorder-dir> [--tables Parts,Products,...] [--output <file.json>]
+    // --tables defaults to every table; --output defaults to stdout (progress/errors go to stderr).
+    // --list-tables prints the table names in the source and exits.
+    private static int RunExportJson(string[] args)
+    {
+      string source = null, outputPath = null;
+      var tables = new List<string>();
+      bool listOnly = false;
+
+      for (int i = 0; i < args.Length; i++)
+      {
+        var a = args[i];
+        if (string.Equals(a, "--export-json", StringComparison.OrdinalIgnoreCase))
+        {
+          if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) source = args[++i];
+        }
+        else if ((a == "--tables" || a == "-t") && i + 1 < args.Length)
+        {
+          // Accept comma-separated and/or repeated values
+          tables.AddRange(args[++i].Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).Where(s => s.Length > 0));
+        }
+        else if ((a == "--output" || a == "-o") && i + 1 < args.Length)
+        {
+          outputPath = args[++i];
+        }
+        else if (a == "--list-tables")
+        {
+          listOnly = true;
+        }
+        else
+        {
+          Console.Error.WriteLine($"Unknown option: {a}");
+          PrintHeadlessUsage();
+          return 1;
+        }
+      }
+
+      if (string.IsNullOrWhiteSpace(source))
+      {
+        Console.Error.WriteLine("Error: --export-json requires a source .sdf file (or work order directory).");
+        PrintHeadlessUsage();
+        return 1;
+      }
+
+      // A directory means "work order folder": resolve the SDF inside it.
+      if (Directory.Exists(source))
+      {
+        var config = UserConfig.LoadOrDefault();
+        string sdfFile = !string.IsNullOrWhiteSpace(config.SdfFileName) ? config.SdfFileName : "MicrovellumWorkOrder.sdf";
+        source = Path.Combine(source, sdfFile);
+      }
+      if (!File.Exists(source))
+      {
+        Console.Error.WriteLine($"Error: source file '{source}' not found.");
+        return 1;
+      }
+
+      try
+      {
+        if (listOnly)
+        {
+          foreach (var t in JsonExporter.ListTables(source)) Console.WriteLine(t);
+          return 0;
+        }
+
+        Console.Error.WriteLine($"Exporting {(tables.Count == 0 ? "all tables" : string.Join(", ", tables))} from '{source}'...");
+        var result = JsonExporter.Export(source, tables, outputPath,
+          (table, count) => Console.Error.WriteLine($"  {table}: {count} row(s)"));
+        if (outputPath != null) Console.Error.WriteLine($"Done. Output: {Path.GetFullPath(outputPath)}");
+        return 0;
+      }
+      catch (ArgumentException aex)
+      {
+        Console.Error.WriteLine($"Error: {aex.Message}");
+        return 1;
+      }
+      catch (Exception ex)
+      {
+        Console.Error.WriteLine($"Error: {MainForm.GetDetailedErrorMessage(ex)}");
+        return 1;
+      }
+    }
+
     private static void PrintHeadlessUsage()
     {
+      Console.Error.WriteLine("Usage: WorkOrderBlender.exe --export-json <source.sdf|workorder-dir> [--tables Parts,Products,...] [--output <file.json>]");
+      Console.Error.WriteLine("       WorkOrderBlender.exe --export-json <source.sdf> --list-tables");
       Console.Error.WriteLine("Usage: WorkOrderBlender.exe --output <name> <workorder1> [workorder2 ...]");
       Console.Error.WriteLine("       WorkOrderBlender.exe <workorder1> [workorder2 ...] --output <name>");
     }

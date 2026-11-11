@@ -23,8 +23,37 @@ param(
 
     [switch]$SkipGitPush,
 
-    [switch]$Force
+    [switch]$Force,
+
+    # Number of most recent tags to keep when pruning old tags (default: 5)
+    [int]$KeepTags = 5,
+
+    # Skip deleting the pruned tags on origin (remote pruning is on by default)
+    [switch]$KeepRemoteTags
 )
+
+# Function to delete all but the newest $Keep tags (local, optionally remote)
+function Remove-OldTags {
+    param(
+        [int]$Keep,
+        [bool]$Remote
+    )
+
+    $oldTags = @(git tag --sort=-creatordate | Select-Object -Skip $Keep)
+    if ($oldTags.Count -eq 0) { return }
+
+    foreach ($t in $oldTags) { git tag -d $t | Out-Null }
+    Write-Host "[OK] Removed $($oldTags.Count) old local tag(s), kept newest $Keep" -ForegroundColor Green
+
+    if ($Remote) {
+        $remoteTags = @(git ls-remote --tags origin | ForEach-Object { ($_ -split "`t")[1] -replace '^refs/tags/', '' } | Where-Object { $_ -notmatch '\^\{\}$' })
+        $toDelete = @($remoteTags | Where-Object { $oldTags -contains $_ })
+        if ($toDelete.Count -gt 0) {
+            git push origin --delete @toDelete 2>&1 | Out-Null
+            Write-Host "[OK] Removed $($toDelete.Count) old tag(s) from origin" -ForegroundColor Green
+        }
+    }
+}
 
 # Function to validate version format (e.g., "1.0.2")
 function Test-VersionFormat {
@@ -323,10 +352,13 @@ try {
         git push origin refs/tags/$tagName
         Write-Host "[OK] Pushed tag: $tagName" -ForegroundColor Green
 
+        Remove-OldTags -Keep $KeepTags -Remote (-not $KeepRemoteTags)
+
         Write-Host "`n[SUCCESS] Release workflow should start automatically." -ForegroundColor Green
         Write-Host "[INFO] Check progress at: https://github.com/HomesteadCabinet/WorkOrderBlender/actions" -ForegroundColor Cyan
         Write-Host "[INFO] Release will be available at: https://github.com/HomesteadCabinet/WorkOrderBlender/releases/tag/$tagName" -ForegroundColor Cyan
     } else {
+        Remove-OldTags -Keep $KeepTags -Remote $false
         Write-Host "`n[INFO] Git push skipped (use -SkipGitPush:`$false to push)" -ForegroundColor Yellow
         Write-Host "[INFO] To manually push: git push origin main; git push origin $tagName" -ForegroundColor Cyan
     }

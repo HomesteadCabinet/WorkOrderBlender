@@ -29,6 +29,7 @@ namespace WorkOrderBlender
     {
       ("Products", "Products"),
       ("Parts", "Parts"),
+      ("Prompts", "Prompts"),
       ("Subassemblies", "Subassemblies"),
       ("Sheets", "Sheets"),
       ("PlacedSheets", "PlacedSheets"),
